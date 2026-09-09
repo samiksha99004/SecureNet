@@ -1,0 +1,58 @@
+/**
+ * SecureNet — MainLayout
+ *
+ * Wraps all protected pages.
+ *
+ * Structure:
+ *   ┌─────────────────────────────────────┐
+ *   │  Sidebar │  TopBar                  │
+ *   │          ├─────────────────────────┤
+ *   │          │  <children>             │
+ *   └──────────┴─────────────────────────┘
+ *
+ * Usage in page components:
+ *   <MainLayout title="Dashboard">
+ *     <DashboardContent />
+ *   </MainLayout>
+ */
+
+import { type ReactNode, useState } from 'react';
+import { Sidebar } from './Sidebar';
+import { TopBar } from './TopBar';
+import { useLocalStorage } from '../../hooks/useLocalStorage';
+import styles from './MainLayout.module.css';
+
+interface MainLayoutProps {
+  title: string;
+  children: ReactNode;
+}
+
+export function MainLayout({ title, children }: MainLayoutProps) {
+  // Persist collapse state across sessions
+  const [sidebarCollapsed, setSidebarCollapsed] = useLocalStorage(
+    'sn_sidebar_collapsed',
+    false
+  );
+  const [mobileOpen, setMobileOpen] = useState(false);
+
+  return (
+    <div className={styles.root}>
+      <Sidebar
+        collapsed={sidebarCollapsed}
+        onToggleCollapse={() => setSidebarCollapsed((v) => !v)}
+        mobileOpen={mobileOpen}
+        onCloseMobile={() => setMobileOpen(false)}
+      />
+
+      <div className={styles.body}>
+        <TopBar
+          title={title}
+          onMenuClick={() => setMobileOpen((v) => !v)}
+        />
+        <main className={styles.content} id="main-content">
+          {children}
+        </main>
+      </div>
+    </div>
+  );
+}

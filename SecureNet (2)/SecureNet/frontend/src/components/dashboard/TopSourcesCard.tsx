@@ -1,0 +1,76 @@
+/**
+ * SecureNet — TopSourcesCard
+ *
+ * Lists the top source IPs by anomaly/flow count.
+ * IP addresses rendered in IBM Plex Mono.
+ * No IP addresses are invented — empty state until backend connects.
+ */
+
+import type { TopSource } from '../../types/security.types';
+import { LoadingState } from '../common/LoadingState';
+import { EmptyState } from '../common/EmptyState';
+import { ErrorState } from '../common/ErrorState';
+import { SeverityBadge } from '../common/SeverityBadge';
+import { formatTimestamp } from '../../utils/format';
+import styles from './TopSourcesCard.module.css';
+
+interface TopSourcesCardProps {
+  data: TopSource[];
+  isLoading: boolean;
+  isError: boolean;
+  onRetry?: () => void;
+}
+
+export function TopSourcesCard({
+  data,
+  isLoading,
+  isError,
+  onRetry,
+}: TopSourcesCardProps) {
+  return (
+    <div className={styles.card}>
+      <h3 className={styles.title}>Top Sources</h3>
+
+      {isLoading && <LoadingState message="Loading sources…" />}
+
+      {isError && !isLoading && (
+        <ErrorState
+          title="Unable to load sources"
+          message="Backend not connected."
+          onRetry={onRetry}
+        />
+      )}
+
+      {!isLoading && !isError && data.length === 0 && (
+        <EmptyState
+          title="No source data"
+          description="Top source IPs will appear once the backend is connected."
+        />
+      )}
+
+      {!isLoading && !isError && data.length > 0 && (
+        <ul className={styles.list} role="list" aria-label="Top source IP addresses">
+          {data.map((source, i) => (
+            <li key={source.sourceIp} className={styles.item}>
+              <span className={styles.rank} aria-hidden="true">{i + 1}</span>
+              <div className={styles.info}>
+                <span className={styles.ip}>{source.sourceIp}</span>
+                <span className={styles.meta}>
+                  Last seen: {formatTimestamp(source.lastSeen)}
+                </span>
+              </div>
+              <div className={styles.stats}>
+                <span className={styles.stat} title="Total flows">
+                  {source.flowCount.toLocaleString()} flows
+                </span>
+                {source.highSeverityCount > 0 && (
+                  <SeverityBadge severity="high" />
+                )}
+              </div>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}

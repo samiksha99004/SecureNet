@@ -1,0 +1,132 @@
+/* SecureNet — ContactForm */
+
+.header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-bottom: var(--space-5);
+}
+
+.headerIcon {
+  color: var(--color-peach-dark);
+  flex-shrink: 0;
+}
+
+.heading {
+  font-family: var(--font-heading);
+  font-size: 0.9375rem;
+  font-weight: 600;
+  color: var(--color-text);
+}
+
+/* ── Unavailable notice ─────────────────────────────────────────── */
+.unavailableNotice {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-4) var(--space-5);
+  background-color: var(--color-peach-light);
+  border: 1px solid var(--color-peach-accent);
+  border-radius: var(--radius-md);
+  margin-bottom: var(--space-5);
+}
+
+.noticeTitle {
+  font-size: 0.875rem;
+  font-weight: 600;
+  color: var(--color-peach-dark);
+}
+
+.noticeBody {
+  font-size: 0.8125rem;
+  color: var(--color-text-muted);
+  line-height: 1.55;
+}
+
+/* ── Form ────────────────────────────────────────────────────────── */
+.form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.row2 {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--space-4);
+}
+
+.fieldGroup {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.label {
+  font-size: 0.875rem;
+  font-weight: 500;
+  color: var(--color-text);
+}
+
+.input,
+.select,
+.textarea {
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  font-family: var(--font-body);
+  font-size: 0.875rem;
+  color: var(--color-text);
+  background-color: var(--color-white);
+  transition: border-color var(--transition-fast);
+}
+
+.input:focus,
+.select:focus,
+.textarea:focus {
+  outline: 2px solid var(--color-peach-dark);
+  outline-offset: 2px;
+  border-color: var(--color-peach-accent);
+}
+
+.select {
+  appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%237a6d65' stroke-width='2'%3E%3Cpolyline points='6 9 12 15 18 9'%3E%3C/polyline%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 10px center;
+  padding-right: 30px;
+}
+
+.textarea {
+  resize: vertical;
+  min-height: 100px;
+}
+
+.error {
+  font-size: 0.8125rem;
+  color: var(--color-severity-high);
+}
+
+/* ── Actions ────────────────────────────────────────────────────── */
+.actions {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.submitBtn {
+  padding: var(--space-2) var(--space-6);
+  border: none;
+  border-radius: var(--radius-md);
+  background-color: var(--color-border);
+  font-family: var(--font-body);
+  font-size: 0.875rem;
+  font-weight: 600;
+  color: var(--color-text-muted);
+  cursor: not-allowed;
+  opacity: 0.7;
+}
+
+/* ── Responsive ─────────────────────────────────────────────────── */
+@media (max-width: 560px) {
+  .row2 { grid-template-columns: 1fr; }
+}

@@ -1,0 +1,119 @@
+/* SecureNet — SupportInfoCard */
+
+.heading {
+  font-family: var(--font-heading);
+  font-size: 0.9375rem;
+  font-weight: 600;
+  color: var(--color-text);
+  margin-bottom: var(--space-5);
+}
+
+.sections {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-6);
+}
+
+/* ── Section header ─────────────────────────────────────────────── */
+.sectionHeader {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-bottom: var(--space-3);
+}
+
+.sectionIcon {
+  color: var(--color-peach-dark);
+  flex-shrink: 0;
+}
+
+.sectionTitle {
+  font-size: 0.875rem;
+  font-weight: 600;
+  color: var(--color-text);
+}
+
+/* ── List ────────────────────────────────────────────────────────── */
+.list {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: 0;
+}
+
+.list li {
+  font-size: 0.875rem;
+  color: var(--color-text-muted);
+  line-height: 1.55;
+  padding-left: var(--space-4);
+  position: relative;
+}
+
+.list li::before {
+  content: '–';
+  position: absolute;
+  left: 0;
+  color: var(--color-peach-accent);
+}
+
+.code {
+  font-family: var(--font-mono);
+  font-size: 0.8125rem;
+  background-color: var(--color-peach-lightest);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  padding: 1px 5px;
+  color: var(--color-peach-dark);
+}
+
+/* ── Status list ────────────────────────────────────────────────── */
+.statusList {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.statusRow {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  font-size: 0.875rem;
+}
+
+.dotGreen {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background-color: var(--color-severity-low);
+  flex-shrink: 0;
+}
+
+.dotAmber {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background-color: var(--color-severity-medium);
+  flex-shrink: 0;
+}
+
+.statusLabel {
+  font-weight: 600;
+  color: var(--color-text);
+  min-width: 80px;
+  flex-shrink: 0;
+}
+
+.statusValue {
+  font-family: var(--font-mono);
+  font-size: 0.8rem;
+  color: var(--color-text-muted);
+  word-break: break-all;
+}
+
+/* ── Prose ───────────────────────────────────────────────────────── */
+.prose {
+  font-size: 0.875rem;
+  color: var(--color-text-muted);
+  line-height: 1.6;
+}

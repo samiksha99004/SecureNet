@@ -1,0 +1,39 @@
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 10px;
+  border-radius: var(--radius-full);
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+}
+
+.dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+/* Low */
+.low {
+  background-color: rgba(76, 154, 106, 0.12);
+  color: #2d7a4f;
+}
+.low .dot { background-color: var(--color-severity-low); }
+
+/* Medium */
+.medium {
+  background-color: rgba(217, 140, 43, 0.12);
+  color: #a96920;
+}
+.medium .dot { background-color: var(--color-severity-medium); }
+
+/* High */
+.high {
+  background-color: rgba(194, 75, 63, 0.12);
+  color: #9e2a1f;
+}
+.high .dot { background-color: var(--color-severity-high); }
