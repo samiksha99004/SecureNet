@@ -1,0 +1,34 @@
+{
+  "name": "securenet-ids",
+  "version": "1.0.0",
+  "description": "Network-Based IDS Application",
+  "main": "electron/main.js",
+  "scripts": {
+    "start": "electron .",
+    "dev": "electron . --dev",
+    "build": "electron-builder"
+  },
+  "author": "SecureNet Team",
+  "license": "MIT",
+  "dependencies": {
+    "electron": "^33.3.0"
+  },
+  "devDependencies": {
+    "electron-builder": "^26.1.0"
+  },
+  "build": {
+    "appId": "com.securenet.ids",
+    "productName": "SecureNet IDS",
+    "directories": {
+      "output": "dist-electron"
+    },
+    "files": [
+      "electron/**/*",
+      "frontend/dist/**/*"
+    ],
+    "win": {
+      "target": "nsis",
+      "icon": "frontend/public/favicon.ico"
+    }
+  }
+}

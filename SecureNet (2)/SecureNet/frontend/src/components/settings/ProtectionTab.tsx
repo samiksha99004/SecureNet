@@ -1,7 +1,10 @@
 /**
  * SecureNet — ProtectionTab
  *
- * Settings tab for protection mode and auto-block configuration.
+ * Settings tab for auto-block configuration.
+ * 
+ * Note: Protection mode is automatically enabled when IDS is ON.
+ * This tab only configures auto-blocking behavior.
  */
 
 import { useCallback, useEffect, useState } from 'react';
@@ -74,21 +77,9 @@ export function ProtectionTab() {
   return (
     <div className={styles.tabContent}>
       <SettingsSection
-        title="Operation Mode"
-        description="Choose how SecureNet responds to detected threats."
+        title="Protection Configuration"
+        description="Configure automatic threat blocking behavior. Protection is automatically active when IDS is ON."
       >
-        <SettingsField
-          id="prot-mode"
-          label="Protection Mode"
-          hint="Monitor — log only. Protect — actively block threats."
-          type="select"
-          value={local.mode}
-          onChange={(v) => update('mode', v as ProtectionSettings['mode'])}
-          options={[
-            { value: 'monitor', label: 'Monitor — log and alert only' },
-            { value: 'protect', label: 'Protect — block threats automatically' },
-          ]}
-        />
         <SettingsField
           id="prot-notify-block"
           label="Notify on Block"
@@ -110,7 +101,6 @@ export function ProtectionTab() {
           type="toggle"
           checked={local.autoBlock}
           onChange={(v) => update('autoBlock', v)}
-          disabled={local.mode !== 'protect'}
         />
         <SettingsField
           id="prot-block-duration"
@@ -120,7 +110,7 @@ export function ProtectionTab() {
           value={local.blockDurationSeconds}
           onChange={(v) => update('blockDurationSeconds', parseInt(v, 10) || 0)}
           min={1}
-          disabled={!local.autoBlock || local.mode !== 'protect'}
+          disabled={!local.autoBlock}
         />
         <SettingsField
           id="prot-max-blocked"
@@ -130,7 +120,7 @@ export function ProtectionTab() {
           value={local.maxBlockedIps}
           onChange={(v) => update('maxBlockedIps', parseInt(v, 10) || 0)}
           min={1}
-          disabled={!local.autoBlock || local.mode !== 'protect'}
+          disabled={!local.autoBlock}
         />
       </SettingsSection>
 

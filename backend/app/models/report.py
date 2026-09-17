@@ -3,8 +3,8 @@ SecureNet Backend — Report Model
 """
 
 from datetime import datetime
-from sqlalchemy import Column, String, DateTime, Integer, Enum as SQLEnum, ForeignKey, Text
-from sqlalchemy.dialects.postgresql import UUID, JSONB
+from sqlalchemy import Column, String, DateTime, Integer, Enum as SQLEnum, ForeignKey, Text, JSON
+from sqlalchemy.dialects.postgresql import UUID
 import uuid
 import enum
 
@@ -46,7 +46,7 @@ class Report(Base):
     download_url = Column(String(512), nullable=True)
     
     # Filters applied to report
-    filters = Column(JSONB, nullable=False)
+    filters = Column(JSON, nullable=False)  # Use JSON instead of JSONB for SQLite compatibility
     
     # Creator
     created_by = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)

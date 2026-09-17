@@ -20,7 +20,7 @@ export interface IDSStatus {
 
 export interface IDSControlRequest {
   enabled: boolean;
-  mode?: 'monitor' | 'protect';
+  // mode removed - backend handles internally
 }
 
 // ── API Calls ─────────────────────────────────────────────────────────────────
@@ -45,8 +45,8 @@ export async function controlIDS(request: IDSControlRequest): Promise<IDSStatus>
  * Start IDS (automatically enables detection and protection)
  */
 export async function startIDS(): Promise<IDSStatus> {
-  // Always use protect mode internally - user only sees ON/OFF
-  return controlIDS({ enabled: true, mode: 'protect' });
+  // Backend automatically uses protect mode internally
+  return controlIDS({ enabled: true });
 }
 
 /**

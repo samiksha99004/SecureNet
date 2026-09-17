@@ -88,6 +88,20 @@ async function request<T>(
   });
 
   if (!response.ok) {
+    // Handle 401 Unauthorized - session expired
+    if (response.status === 401 && !skipAuth) {
+      // Clear stored tokens
+      localStorage.removeItem('sn_access_token');
+      localStorage.removeItem('sn_refresh_token');
+      localStorage.removeItem('sn_user');
+      
+      // Redirect to login if not already on login/signup pages
+      if (!window.location.pathname.includes('/login') && 
+          !window.location.pathname.includes('/signup')) {
+        window.location.href = '/login?expired=true';
+      }
+    }
+    
     throw await parseErrorResponse(response);
   }
 

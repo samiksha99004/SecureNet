@@ -22,31 +22,36 @@ class ContributingFeature(BaseModel):
 
 class SecurityEventResponse(BaseModel):
     """Security event data returned to frontend"""
+    model_config = {
+        "from_attributes": True,
+        "populate_by_name": True,
+        "by_alias": True,  # This ensures serialization uses aliases
+    }
+    
     id: str
     timestamp: datetime
-    sourceIp: str = Field(..., alias="source_ip")
-    sourcePort: int = Field(..., alias="source_port")
-    destinationIp: str = Field(..., alias="destination_ip")
-    destinationPort: int = Field(..., alias="destination_port")
+    sourceIp: str = Field(..., serialization_alias="sourceIp", validation_alias="source_ip")
+    sourcePort: int = Field(..., serialization_alias="sourcePort", validation_alias="source_port")
+    destinationIp: str = Field(..., serialization_alias="destinationIp", validation_alias="destination_ip")
+    destinationPort: int = Field(..., serialization_alias="destinationPort", validation_alias="destination_port")
     protocol: Protocol
-    anomalyScore: float = Field(..., alias="anomaly_score")
+    anomalyScore: float = Field(..., serialization_alias="anomalyScore", validation_alias="anomaly_score")
     severity: SeverityLevel
-    attackType: Optional[str] = Field(None, alias="attack_type")
+    attackType: Optional[str] = Field(None, serialization_alias="attackType", validation_alias="attack_type")
     confidence: Optional[float] = None
     mode: DetectionMode
     state: EventState
-    actionTaken: ActionTaken = Field(..., alias="action_taken")
-    detectionReason: Optional[str] = Field(None, alias="detection_reason")
-    contributingFeatures: List[ContributingFeature] = Field(default_factory=list, alias="contributing_features")
-    flowDurationMs: Optional[int] = Field(None, alias="flow_duration_ms")
-    bytesSent: Optional[int] = Field(None, alias="bytes_sent")
-    bytesReceived: Optional[int] = Field(None, alias="bytes_received")
-    packetsSent: Optional[int] = Field(None, alias="packets_sent")
-    packetsReceived: Optional[int] = Field(None, alias="packets_received")
-    
-    class Config:
-        from_attributes = True
-        populate_by_name = True
+    actionTaken: ActionTaken = Field(..., serialization_alias="actionTaken", validation_alias="action_taken")
+    detectionReason: Optional[str] = Field(None, serialization_alias="detectionReason", validation_alias="detection_reason")
+    contributingFeatures: List[ContributingFeature] = Field(default_factory=list, serialization_alias="contributingFeatures", validation_alias="contributing_features")
+    flowDurationMs: Optional[int] = Field(None, serialization_alias="flowDurationMs", validation_alias="flow_duration_ms")
+    bytesSent: Optional[int] = Field(None, serialization_alias="bytesSent", validation_alias="bytes_sent")
+    bytesReceived: Optional[int] = Field(None, serialization_alias="bytesReceived", validation_alias="bytes_received")
+    packetsSent: Optional[int] = Field(None, serialization_alias="packetsSent", validation_alias="packets_sent")
+    packetsReceived: Optional[int] = Field(None, serialization_alias="packetsReceived", validation_alias="packets_received")
+
+
+# Removed SecurityEventResponseModel as it's no longer needed
 
 
 # ── Dashboard Summary ─────────────────────────────────────────────────────────

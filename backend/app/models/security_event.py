@@ -3,7 +3,7 @@ SecureNet Backend — Security Event Models
 """
 
 from datetime import datetime
-from sqlalchemy import Column, String, DateTime, Float, Integer, Enum as SQLEnum, ForeignKey, Text
+from sqlalchemy import Column, String, DateTime, Float, Integer, Enum as SQLEnum, ForeignKey, Text, JSON
 from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.orm import relationship
 import uuid
@@ -80,7 +80,7 @@ class SecurityEvent(Base):
     
     # Additional context
     detection_reason = Column(Text, nullable=True)
-    contributing_features = Column(JSONB, nullable=True)  # Array of feature objects
+    contributing_features = Column(JSON, nullable=True)  # Use JSON instead of JSONB for SQLite compatibility
     
     # Flow statistics (optional)
     flow_duration_ms = Column(Integer, nullable=True)
@@ -108,7 +108,7 @@ class EventFeature(Base):
     
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     event_id = Column(UUID(as_uuid=True), ForeignKey("security_events.id", ondelete="CASCADE"), nullable=False, unique=True, index=True)
-    feature_vector = Column(JSONB, nullable=False)  # Full 78-feature array
+    feature_vector = Column(JSON, nullable=False)  # Use JSON instead of JSONB for SQLite compatibility
     created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
     
     def __repr__(self):

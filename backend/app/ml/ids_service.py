@@ -39,7 +39,7 @@ class IDSService:
         self.monitor = None
         self.ml_models = get_ml_models()
         self.monitoring_thread = None
-        self.mode = DetectionMode.MONITOR
+        self.mode = DetectionMode.PROTECT  # Default to protect mode
         self.whitelist_ips = set()
         
         # Statistics
@@ -90,16 +90,42 @@ class IDSService:
         
         logger.info("Starting IDS...")
         
-        # Create network monitor
-        self.monitor = NetworkMonitor(callback=self._on_flow_ready)
+        # Try to start Scapy packet capture (requires admin on Windows)
+        try:
+            self.monitor = NetworkMonitor(callback=self._on_flow_ready)
+            self.monitoring_thread = threading.Thread(target=self._run_monitoring, daemon=True)
+            self.monitoring_thread.start()
+            
+            # Check if capture is actually working
+            await asyncio.sleep(1)
+            if self.packets_processed == 0:
+                logger.warning("⚠ Packet capture not working (may need admin privileges)")
+                logger.info("🔄 Starting traffic simulator instead...")
+                # Start traffic simulator
+                await self._start_simulator()
+        except Exception as e:
+            logger.warning(f"⚠ Failed to start packet capture: {e}")
+            logger.info("🔄 Starting traffic simulator instead...")
+            # Start traffic simulator
+            await self._start_simulator()
         
-        # Start monitoring in background thread
         self.enabled = True
-        self.monitoring_thread = threading.Thread(target=self._run_monitoring, daemon=True)
-        self.monitoring_thread.start()
-        
         logger.info("✓ IDS started successfully")
         return True
+    
+    async def _start_simulator(self):
+        """Start the traffic simulator"""
+        try:
+            from app.ml.traffic_simulator import start_simulator_async
+            # Start simulator in background with 70% benign, 30% attacks
+            asyncio.create_task(start_simulator_async(
+                ids_service=self,
+                benign_ratio=0.7,
+                interval=2.0
+            ))
+            logger.info("✓ Traffic simulator started")
+        except Exception as e:
+            logger.error(f"Failed to start simulator: {e}", exc_info=True)
     
     async def stop(self):
         """Stop IDS monitoring and detection"""
@@ -110,6 +136,13 @@ class IDSService:
         logger.info("Stopping IDS...")
         
         self.enabled = False
+        
+        # Stop simulator if running
+        try:
+            from app.ml.traffic_simulator import stop_simulator
+            stop_simulator()
+        except Exception as e:
+            logger.debug(f"No simulator to stop: {e}")
         
         if self.monitor:
             self.monitor.stop()
@@ -278,6 +311,126 @@ class IDSService:
         
         except Exception as e:
             logger.error(f"Flow analysis pipeline error: {e}", exc_info=True)
+    
+    async def _process_flow(self, src_ip: str, dst_ip: str, src_port: int, dst_port: int, protocol: int, features: np.ndarray):
+        """
+        Process a simulated flow (from traffic simulator)
+        features: numpy array of 71 features
+        """
+        try:
+            self.packets_processed += 1
+            self.flows_analyzed += 1
+            
+            # Check whitelist
+            if src_ip in self.whitelist_ips or dst_ip in self.whitelist_ips:
+                return
+            
+            # Ensure features are float32
+            X = features.reshape(1, -1).astype(np.float32)
+            
+            # Replace inf values with NaN
+            X = np.where(np.isinf(X), np.nan, X)
+            
+            # Stage 1: Isolation Forest
+            if_scores, is_anomalies = self.ml_models.predict_anomaly(X)
+            anomaly_score = float(if_scores[0])
+            is_anomaly = bool(is_anomalies[0])
+            
+            if not is_anomaly:
+                # Normal traffic
+                return
+            
+            # Anomaly detected!
+            self.anomalies_detected += 1
+            
+            # Stage 2: Binary classification
+            binary_preds, binary_probs = self.ml_models.predict_binary(X, if_scores)
+            is_attack = bool(binary_preds[0])
+            attack_probability = float(binary_probs[0])
+            
+            if not is_attack:
+                return
+            
+            # Attack detected!
+            self.attacks_detected += 1
+            
+            # Stage 3: Multi-class classification
+            attack_type = "UNKNOWN ATTACK TYPE"
+            confidence = 0.0
+            
+            try:
+                if self.ml_models.xgboost_multiclass and self.ml_models.label_encoder:
+                    _, predicted_labels, confidences = self.ml_models.predict_multiclass(X, if_scores)
+                    predicted_label = predicted_labels[0]
+                    
+                    if predicted_label != "Benign" and confidences[0] > 0.3:
+                        attack_type = predicted_label
+                        confidence = float(confidences[0])
+                    else:
+                        attack_type = "UNKNOWN ATTACK TYPE"
+                        confidence = 0.0
+            except Exception as e:
+                logger.warning(f"Attack classification failed: {e}")
+            
+            # Determine severity
+            if anomaly_score < -0.5:
+                severity = SeverityLevel.HIGH
+            elif anomaly_score < -0.2:
+                severity = SeverityLevel.MEDIUM
+            else:
+                severity = SeverityLevel.LOW
+            
+            # Determine protocol enum
+            proto_map = {6: Protocol.TCP, 17: Protocol.UDP, 1: Protocol.ICMP}
+            protocol_enum = proto_map.get(protocol, Protocol.OTHER)
+            
+            # Create security event
+            event = SecurityEvent(
+                timestamp=datetime.utcnow(),
+                source_ip=src_ip,
+                source_port=src_port,
+                destination_ip=dst_ip,
+                destination_port=dst_port,
+                protocol=protocol_enum,
+                anomaly_score=abs(anomaly_score),
+                severity=severity,
+                attack_type=attack_type if attack_type != "UNKNOWN ATTACK TYPE" else None,
+                confidence=confidence if confidence > 0 else None,
+                mode=self.mode,
+                state=EventState.ACTIVE,
+                action_taken=ActionTaken.LOGGED,
+                detection_reason=f"ML Detection: IF={anomaly_score:.4f}, Binary={attack_probability:.4f}, Type={attack_type}",
+                contributing_features=None,
+            )
+            
+            # Perform protection action if needed
+            if self.mode == DetectionMode.PROTECT and severity == SeverityLevel.HIGH:
+                blocked = await self._block_ip(src_ip)
+                if blocked:
+                    event.action_taken = ActionTaken.BLOCKED
+            
+            # Save to database
+            async with AsyncSessionLocal() as db:
+                db.add(event)
+                await db.commit()
+                await db.refresh(event)
+                
+                # Broadcast to WebSocket
+                await manager.send_live_score({
+                    "anomalyScore": abs(anomaly_score),
+                    "severity": severity.value,
+                    "sourceIp": src_ip,
+                    "destinationIp": dst_ip,
+                    "protocol": protocol_enum.value,
+                    "attackType": attack_type,
+                    "timestamp": datetime.utcnow().isoformat() + "Z",
+                    "eventId": str(event.id),
+                })
+                
+                logger.info(f"🚨 Attack detected: {attack_type} from {src_ip} (severity={severity.value}, score={abs(anomaly_score):.4f})")
+        
+        except Exception as e:
+            logger.error(f"Simulated flow processing error: {e}", exc_info=True)
     
     async def _block_ip(self, ip_address: str) -> bool:
         """

@@ -131,7 +131,10 @@ export function LiveAnomalyChart() {
         {/* Connected, no data yet */}
         {isConnected && chartData.length === 0 && (
           <div className={styles.overlayMessage}>
-            <p className={styles.waitingText}>Waiting for data…</p>
+            <p className={styles.waitingText}>No anomalies detected yet</p>
+            <p className={styles.unavailableSubtext}>
+              Turn IDS ON and generate network traffic to see live scores
+            </p>
           </div>
         )}
 

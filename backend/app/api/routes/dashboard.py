@@ -2,14 +2,17 @@
 SecureNet Backend — Dashboard Routes
 
 Provides summary statistics, protocol distribution, and top sources
-for the dashboard view.
+for the dashboard view. Implements simple caching for performance.
 """
 
 from datetime import datetime, timedelta
-from typing import List
+from typing import List, Optional
 from fastapi import APIRouter, Depends
+from fastapi.responses import JSONResponse
+from fastapi.encoders import jsonable_encoder
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, and_, desc
+import time
 
 from app.db.base import get_db
 from app.models.user import User
@@ -30,16 +33,52 @@ import psutil
 
 router = APIRouter(prefix="/dashboard", tags=["Dashboard"])
 
+# Configure router to use aliases in responses (camelCase)
+router.response_model_by_alias = True
 
-@router.get("/summary", response_model=DashboardSummary)
+# Simple cache for dashboard summary (30 second TTL)
+_summary_cache: Optional[DashboardSummary] = None
+_summary_cache_time: float = 0
+CACHE_TTL = 30  # seconds
+
+
+@router.get("/summary")
 async def get_dashboard_summary(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
     """
     Get dashboard summary with KPIs and recent events.
-    Returns actual data from the database.
+    Returns actual data from the database ONLY when IDS is enabled.
+    When IDS is OFF, returns zeros/empty data.
+    Cached for 30 seconds for performance.
+    Returns camelCase JSON.
     """
+    from app.ml.ids_service_ensemble import get_ids_service
+    
+    global _summary_cache, _summary_cache_time
+    
+    # Check if IDS is enabled
+    ids = get_ids_service()
+    if not ids.is_enabled():
+        # Return empty summary when IDS is OFF
+        empty_summary = DashboardSummary(
+            activeFlows=0,
+            anomaliesLastHour=0,
+            highSeverityCount=0,
+            blockedCount=0,
+            averageAnomalyScore=0.0,
+            severityBreakdown=SeverityBreakdown(low=0, medium=0, high=0),
+            attackTypeDistribution=[],
+            recentEvents=[]
+        )
+        return JSONResponse(content=jsonable_encoder(empty_summary.model_dump(by_alias=True)))
+    
+    # Check cache (only when IDS is ON)
+    current_time = time.time()
+    if _summary_cache and (current_time - _summary_cache_time) < CACHE_TTL:
+        return JSONResponse(content=jsonable_encoder(_summary_cache.model_dump(by_alias=True)))
+    
     now = datetime.utcnow()
     one_hour_ago = now - timedelta(hours=1)
     
@@ -129,7 +168,7 @@ async def get_dashboard_summary(
     recent_events_models = result.scalars().all()
     recent_events = [convert_event_to_response(event) for event in recent_events_models]
     
-    return DashboardSummary(
+    summary = DashboardSummary(
         activeFlows=active_flows,
         anomaliesLastHour=anomalies_last_hour,
         highSeverityCount=high_severity_count,
@@ -139,6 +178,13 @@ async def get_dashboard_summary(
         attackTypeDistribution=attack_distribution,
         recentEvents=recent_events
     )
+    
+    # Update cache
+    _summary_cache = summary
+    _summary_cache_time = current_time
+    
+    # Return with camelCase field names
+    return JSONResponse(content=jsonable_encoder(summary.model_dump(by_alias=True)))
 
 
 @router.get("/host-status", response_model=HostStatus)
@@ -218,16 +264,18 @@ async def get_top_sources(
     Get top source IPs by event count.
     Returns actual data from database.
     """
+    from sqlalchemy import case
+    
     # Aggregate by source IP
     result = await db.execute(
         select(
             SecurityEvent.source_ip,
             func.count().label('flow_count'),
             func.sum(
-                func.cast(SecurityEvent.anomaly_score > 0.5, func.Integer())
+                case((SecurityEvent.anomaly_score > 0.5, 1), else_=0)
             ).label('anomaly_count'),
             func.sum(
-                func.cast(SecurityEvent.severity == SeverityLevel.HIGH, func.Integer())
+                case((SecurityEvent.severity == SeverityLevel.HIGH, 1), else_=0)
             ).label('high_severity_count'),
             func.max(SecurityEvent.timestamp).label('last_seen')
         )

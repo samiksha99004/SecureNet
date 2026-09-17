@@ -75,12 +75,29 @@ export function isAuthenticated(): boolean {
  * TODO (backend): POST /auth/login
  */
 export async function login(request: LoginRequest): Promise<AuthResponse> {
-  const response = await apiClient.post<AuthResponse>('/auth/login', request, {
+  const response = await apiClient.post<any>('/auth/login', request, {
     skipAuth: true,
   });
-  storeTokens(response.tokens.accessToken, response.tokens.refreshToken);
-  storeUser(response.user);
-  return response;
+  
+  // Transform snake_case to camelCase
+  const transformedResponse: AuthResponse = {
+    user: {
+      id: response.user.id,
+      email: response.user.email,
+      fullName: response.user.full_name,
+      role: response.user.role,
+      accountStatus: response.user.account_status,
+      authProvider: response.user.auth_provider,
+      createdAt: response.user.created_at,
+      lastLoginAt: response.user.last_login_at,
+      avatarUrl: response.user.avatar_url
+    },
+    tokens: response.tokens
+  };
+  
+  storeTokens(transformedResponse.tokens.accessToken, transformedResponse.tokens.refreshToken);
+  storeUser(transformedResponse.user);
+  return transformedResponse;
 }
 
 /**
@@ -98,18 +115,41 @@ export async function signup(request: SignupRequest): Promise<MessageResponse> {
  * TODO (backend): POST /auth/otp/verify
  */
 export async function verifyOtp(request: OtpVerifyRequest): Promise<OtpVerifyResponse> {
-  const response = await apiClient.post<OtpVerifyResponse>(
+  const response = await apiClient.post<any>(
     '/auth/otp/verify',
     request,
     { skipAuth: true }
   );
-  if (response.authResponse) {
+  
+  if (response.authResponse && response.authResponse.user) {
+    // Transform snake_case to camelCase
+    const transformedUser: User = {
+      id: response.authResponse.user.id,
+      email: response.authResponse.user.email,
+      fullName: response.authResponse.user.full_name,
+      role: response.authResponse.user.role,
+      accountStatus: response.authResponse.user.account_status,
+      authProvider: response.authResponse.user.auth_provider,
+      createdAt: response.authResponse.user.created_at,
+      lastLoginAt: response.authResponse.user.last_login_at,
+      avatarUrl: response.authResponse.user.avatar_url
+    };
+    
     storeTokens(
       response.authResponse.tokens.accessToken,
       response.authResponse.tokens.refreshToken
     );
-    storeUser(response.authResponse.user);
+    storeUser(transformedUser);
+    
+    return {
+      verified: response.verified,
+      authResponse: {
+        user: transformedUser,
+        tokens: response.authResponse.tokens
+      }
+    };
   }
+  
   return response;
 }
 
@@ -142,7 +182,20 @@ export async function logout(): Promise<void> {
  * TODO (backend): GET /auth/me
  */
 export async function getCurrentUser(): Promise<User> {
-  return apiClient.get<User>('/auth/me');
+  const response = await apiClient.get<any>('/auth/me');
+  
+  // Transform snake_case to camelCase
+  return {
+    id: response.id,
+    email: response.email,
+    fullName: response.full_name,
+    role: response.role,
+    accountStatus: response.account_status,
+    authProvider: response.auth_provider,
+    createdAt: response.created_at,
+    lastLoginAt: response.last_login_at,
+    avatarUrl: response.avatar_url
+  };
 }
 
 /**

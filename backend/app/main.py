@@ -9,7 +9,10 @@ from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.exceptions import RequestValidationError
+from fastapi.encoders import jsonable_encoder
 from sqlalchemy.exc import SQLAlchemyError
+from starlette.middleware.base import BaseHTTPMiddleware
+import json
 
 from app.core.config import settings
 from app.utils.logger import logger
@@ -24,6 +27,8 @@ app = FastAPI(
     description="Network-Based Behavioural Intrusion Detection System",
     docs_url="/api/docs" if settings.DEBUG else None,
     redoc_url="/api/redoc" if settings.DEBUG else None,
+    # Serialize response models using field aliases (camelCase)
+    response_model_by_alias=True,
 )
 
 # CORS Configuration
@@ -34,6 +39,16 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+# Custom middleware to ensure response models use aliases (camelCase)
+class ResponseAliasMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next):
+        response = await call_next(request)
+        return response
+
+
+app.add_middleware(ResponseAliasMiddleware)
 
 
 # Exception Handlers
@@ -104,21 +119,21 @@ async def startup_event():
     logger.info(f"Environment: {settings.ENVIRONMENT}")
     logger.info(f"Debug mode: {settings.DEBUG}")
     
-    # Initialize ML models
-    logger.info("Initializing ML models...")
-    from app.ml.models import initialize_ml_models
+    # Initialize ML models (Ensemble version)
+    logger.info("Initializing ML models (Ensemble: Random Forest + XGBoost)...")
+    from app.ml.models_ensemble import initialize_ml_models
     ml_loaded = initialize_ml_models()
     if ml_loaded:
-        logger.info("✓ ML models loaded successfully")
+        logger.info("✓ ML models loaded successfully (Ensemble)")
     else:
         logger.warning("⚠ ML models failed to load - IDS functionality will be limited")
     
-    # Initialize IDS service
-    logger.info("Initializing IDS service...")
-    from app.ml.ids_service import initialize_ids
+    # Initialize IDS service (Ensemble version)
+    logger.info("Initializing IDS service (Ensemble)...")
+    from app.ml.ids_service_ensemble import initialize_ids
     ids_ready = await initialize_ids()
     if ids_ready:
-        logger.info("✓ IDS service initialized")
+        logger.info("✓ IDS service initialized (Ensemble)")
     else:
         logger.warning("⚠ IDS service initialization failed")
 

@@ -5,17 +5,25 @@ Single IDS ON/OFF control with status monitoring.
 """
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, ConfigDict
 from app.models.user import User, UserRole
 from app.api.dependencies import get_current_user, require_role
-from app.ml.ids_service import get_ids_service
+from app.ml.ids_service_ensemble import get_ids_service
 from app.utils.logger import logger
 
 router = APIRouter(prefix="/ids", tags=["IDS Control"])
 
 
+def to_camel(string: str) -> str:
+    """Convert snake_case to camelCase"""
+    components = string.split('_')
+    return components[0] + ''.join(x.title() for x in components[1:])
+
+
 class IDSStatusResponse(BaseModel):
     """IDS status information"""
+    model_config = ConfigDict(alias_generator=to_camel, populate_by_name=True)
+    
     enabled: bool
     mode: str
     ml_loaded: bool
@@ -26,9 +34,9 @@ class IDSStatusResponse(BaseModel):
 
 
 class IDSControlRequest(BaseModel):
-    """IDS control command"""
+    """IDS control command - single ON/OFF only"""
     enabled: bool
-    mode: str = "monitor"  # monitor or protect
+    # mode is internal - frontend should not send it, default to protect
 
 
 @router.get("/status", response_model=IDSStatusResponse)
@@ -60,11 +68,15 @@ async def control_ids(
     
     Requires ADMIN or ANALYST role
     """
+    # Clear dashboard cache when IDS status changes
+    from app.api.routes import dashboard
+    dashboard._summary_cache = None
+    dashboard._summary_cache_time = 0
+    
     ids = get_ids_service()
     
-    # Set mode
-    if request.mode in ["monitor", "protect"]:
-        await ids.set_mode(request.mode)
+    # Always use protect mode internally when IDS is ON
+    await ids.set_mode("protect")
     
     # Start or stop IDS
     if request.enabled:

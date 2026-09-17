@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Test CORS</title>
+</head>
+<body>
+    <h1>Testing CORS from Frontend to Backend</h1>
+    <button onclick="testLogin()">Test Login</button>
+    <pre id="result"></pre>
+
+    <script>
+        async function testLogin() {
+            const resultEl = document.getElementById('result');
+            resultEl.textContent = 'Testing...';
+            
+            try {
+                const response = await fetch('http://127.0.0.1:8000/api/auth/login', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        email: 'admin@securenet.com',
+                        password: 'Admin@123456'
+                    })
+                });
+                
+                if (response.ok) {
+                    const data = await response.json();
+                    resultEl.textContent = '✓ SUCCESS!\n\n' + JSON.stringify(data, null, 2);
+                } else {
+                    resultEl.textContent = '✗ HTTP ' + response.status + '\n\n' + await response.text();
+                }
+            } catch (error) {
+                resultEl.textContent = '✗ ERROR: ' + error.message;
+            }
+        }
+    </script>
+</body>
+</html>

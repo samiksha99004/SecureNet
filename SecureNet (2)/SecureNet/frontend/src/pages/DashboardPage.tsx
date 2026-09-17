@@ -15,7 +15,7 @@
  * Components show loading/empty/error states appropriately.
  */
 
-import { useCallback, useState, useEffect } from 'react';
+import { useCallback, useState, useEffect, Suspense, lazy } from 'react';
 import {
   Activity,
   AlertTriangle,
@@ -28,7 +28,8 @@ import { IDSControlWidget } from '../components/dashboard/IDSControlWidget';
 import { KPICard } from '../components/common/KPICard';
 import { HostStatusCard } from '../components/dashboard/HostStatusCard';
 import { SecuritySummaryCard } from '../components/dashboard/SecuritySummaryCard';
-import { LiveAnomalyChart } from '../components/dashboard/LiveAnomalyChart';
+import { LoadingState } from '../components/common/LoadingState';
+const LiveAnomalyChart = lazy(() => import('../components/dashboard/LiveAnomalyChart').then(m => ({ default: m.LiveAnomalyChart })));
 import { DetectionReasonCard } from '../components/dashboard/DetectionReasonCard';
 import { ProtocolDistributionCard } from '../components/dashboard/ProtocolDistributionCard';
 import { TopSourcesCard } from '../components/dashboard/TopSourcesCard';
@@ -48,21 +49,48 @@ export function DashboardPage() {
   const [refreshTrigger, setRefreshTrigger] = useState(0);
 
   // ── Data fetching ───────────────────────────────────────────────────────────
-  const summary = useAsyncData(useCallback(() => getDashboardSummary(), [refreshTrigger]));
-  const host = useAsyncData(useCallback(() => getHostStatus(), [refreshTrigger]));
-  const protocol = useAsyncData(useCallback(() => getProtocolDistribution(), [refreshTrigger]));
-  const sources = useAsyncData(useCallback(() => getTopSources(5), [refreshTrigger]));
-  const idsStatus = useAsyncData(useCallback(() => getIDSStatus(), [refreshTrigger]));
+  // Fetch data with refreshTrigger dependency
+  const summary = useAsyncData(
+    useCallback(() => getDashboardSummary(), []),
+    { fetchOnMount: true }
+  );
+  const host = useAsyncData(
+    useCallback(() => getHostStatus(), []),
+    { fetchOnMount: true }
+  );
+  const protocol = useAsyncData(
+    useCallback(() => getProtocolDistribution(), []),
+    { fetchOnMount: true }
+  );
+  const sources = useAsyncData(
+    useCallback(() => getTopSources(5), []),
+    { fetchOnMount: true }
+  );
+  const idsStatus = useAsyncData(
+    useCallback(() => getIDSStatus(), []),
+    { fetchOnMount: true }
+  );
 
-  // Refresh IDS status periodically when enabled
+  // Refresh all data when refreshTrigger changes
+  useEffect(() => {
+    if (refreshTrigger > 0) {
+      summary.refetch();
+      host.refetch();
+      protocol.refetch();
+      sources.refetch();
+      idsStatus.refetch();
+    }
+  }, [refreshTrigger]);
+
+  // Refresh IDS status periodically when enabled (less frequently)
   useEffect(() => {
     if (idsStatus.data?.enabled) {
       const interval = setInterval(() => {
         void idsStatus.refetch();
-      }, 5000); // Poll every 5 seconds
+      }, 30000); // Poll every 30 seconds (was too frequent before)
       return () => clearInterval(interval);
     }
-  }, [idsStatus.data?.enabled, idsStatus]);
+  }, [idsStatus.data?.enabled]);
 
   const s = summary.data;
 
@@ -162,7 +190,9 @@ export function DashboardPage() {
 
         {/* ── Row 3: Live chart ────────────────────────────────────────────── */}
         <section aria-label="Live anomaly monitoring">
-          <LiveAnomalyChart />
+          <Suspense fallback={<LoadingState message="Loading live chart..." />}>
+            <LiveAnomalyChart />
+          </Suspense>
         </section>
 
         {/* ── Row 4: Detection reason + Top sources ────────────────────────── */}

@@ -45,11 +45,24 @@ export function IDSControlWidget({
         showToast({ message: 'IDS started — monitoring and protection active', variant: 'success' });
       }
       onStatusChange();
-    } catch (err) {
+    } catch (err: any) {
+      // Check if it's an authentication error
+      const isAuthError = err?.status === 401 || err?.code === 'UNAUTHORIZED';
+      const message = isAuthError 
+        ? 'Session expired — please log in again'
+        : `Failed to ${isEnabled ? 'stop' : 'start'} IDS — ${err?.message || 'backend not connected'}`;
+      
       showToast({
-        message: `Failed to ${isEnabled ? 'stop' : 'start'} IDS — backend not connected`,
+        message,
         variant: 'error',
       });
+      
+      // If auth error, redirect to login after a short delay
+      if (isAuthError) {
+        setTimeout(() => {
+          window.location.href = '/login';
+        }, 2000);
+      }
     } finally {
       setIsToggling(false);
     }

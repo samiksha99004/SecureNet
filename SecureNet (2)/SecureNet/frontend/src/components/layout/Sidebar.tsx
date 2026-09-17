@@ -131,10 +131,10 @@ export function Sidebar({
         {!collapsed && user && (
           <div className={styles.userSummary}>
             <div className={styles.userAvatar} aria-hidden="true">
-              {user.fullName.charAt(0).toUpperCase()}
+              {(user.fullName || user.email || 'U').charAt(0).toUpperCase()}
             </div>
             <div className={styles.userInfo}>
-              <span className={styles.userName}>{user.fullName}</span>
+              <span className={styles.userName}>{user.fullName || user.email}</span>
               <span className={styles.userRole}>{user.role}</span>
             </div>
           </div>

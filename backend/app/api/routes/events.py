@@ -24,36 +24,37 @@ router = APIRouter(prefix="/events", tags=["Security Events"])
 
 
 def convert_event_to_response(event: SecurityEvent) -> SecurityEventResponse:
-    """Convert SecurityEvent model to response schema"""
+    """Convert SecurityEvent model to response schema with proper camelCase output"""
     contributing_features = []
     if event.contributing_features:
         contributing_features = [
             ContributingFeature(**feat) for feat in event.contributing_features
         ]
     
-    return SecurityEventResponse(
-        id=str(event.id),
-        timestamp=event.timestamp,
-        source_ip=event.source_ip,
-        source_port=event.source_port,
-        destination_ip=event.destination_ip,
-        destination_port=event.destination_port,
-        protocol=event.protocol,
-        anomaly_score=event.anomaly_score,
-        severity=event.severity,
-        attack_type=event.attack_type,
-        confidence=event.confidence,
-        mode=event.mode,
-        state=event.state,
-        action_taken=event.action_taken,
-        detection_reason=event.detection_reason,
-        contributing_features=contributing_features,
-        flow_duration_ms=event.flow_duration_ms,
-        bytes_sent=event.bytes_sent,
-        bytes_received=event.bytes_received,
-        packets_sent=event.packets_sent,
-        packets_received=event.packets_received
-    )
+    # Use model_validate to leverage from_attributes and auto-aliasing
+    return SecurityEventResponse.model_validate({
+        'id': str(event.id),
+        'timestamp': event.timestamp,
+        'source_ip': event.source_ip,
+        'source_port': event.source_port,
+        'destination_ip': event.destination_ip,
+        'destination_port': event.destination_port,
+        'protocol': event.protocol,
+        'anomaly_score': event.anomaly_score,
+        'severity': event.severity,
+        'attack_type': event.attack_type,
+        'confidence': event.confidence,
+        'mode': event.mode,
+        'state': event.state,
+        'action_taken': event.action_taken,
+        'detection_reason': event.detection_reason,
+        'contributing_features': contributing_features,
+        'flow_duration_ms': event.flow_duration_ms,
+        'bytes_sent': event.bytes_sent,
+        'bytes_received': event.bytes_received,
+        'packets_sent': event.packets_sent,
+        'packets_received': event.packets_received
+    })
 
 
 @router.get("", response_model=PaginatedResponse[SecurityEventResponse])

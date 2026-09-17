@@ -3,8 +3,8 @@ SecureNet Backend — Settings Models
 """
 
 from datetime import datetime
-from sqlalchemy import Column, String, DateTime, Boolean, Float, Integer, Enum as SQLEnum, ForeignKey, Text
-from sqlalchemy.dialects.postgresql import UUID, ARRAY
+from sqlalchemy import Column, String, DateTime, Boolean, Float, Integer, Enum as SQLEnum, ForeignKey, Text, JSON
+from sqlalchemy.dialects.postgresql import UUID
 import uuid
 import enum
 
@@ -56,7 +56,7 @@ class ProtectionSettings(Base):
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     mode = Column(SQLEnum(ProtectionMode), nullable=False, default=ProtectionMode.MONITOR)
     auto_block = Column(Boolean, nullable=False, default=False)
-    auto_block_severities = Column(ARRAY(String), nullable=False, default=["high"])
+    auto_block_severities = Column(JSON, nullable=False, default=lambda: ["high"])  # Use JSON instead of ARRAY for SQLite
     block_duration_seconds = Column(Integer, nullable=False, default=3600)
     max_blocked_ips = Column(Integer, nullable=False, default=1000)
     notify_on_block = Column(Boolean, nullable=False, default=True)
