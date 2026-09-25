@@ -1,496 +1,408 @@
 """
-SecureNet IDS Service - Complete Detection Pipeline
+SecureNet — IDS service (live detection loop)
 
-Orchestrates:
-1. Network monitoring
-2. Feature extraction
-3. ML inference (Isolation Forest + XGBoost)
-4. Security event creation
-5. Protection actions
-6. Database persistence
-7. WebSocket broadcasting
+Pipeline for every finished network flow (paper, Algorithm 1):
+
+    capture thread ──FlowRecord──▶ asyncio queue ──▶ worker
+        worker: whitelist check → Detector.analyze (thread pool)
+              → broadcast live score → if alert: store SecurityEvent,
+                apply Protection mode, notify, broadcast alert
+
+Modes:
+    OFF      – IDS stopped (no capture)
+    monitor  – "Detection" mode: score, store and alert
+    protect  – "Protection" mode: as monitor + automatic IP blocking
+
+If no model is loaded the IDS still captures and counts flows, but nothing is
+scored — the status endpoint reports `detector = "none"`.
 """
 
-import asyncio
-import threading
-import numpy as np
-import pandas as pd
-from typing import Optional, Dict
-from datetime import datetime
-from sqlalchemy.ext.asyncio import AsyncSession
+from __future__ import annotations
 
-from app.ml.models import get_ml_models
-from app.ml.network_monitor import NetworkMonitor, FlowKey
-from app.models.security_event import (
-    SecurityEvent, SeverityLevel, EventState, DetectionMode,
-    ActionTaken, Protocol
-)
-# ProtectionMode not used - IDS ON automatically enables protection
+import asyncio
+import ipaddress
+import time
+from dataclasses import dataclass, field
+from typing import Optional
+
+from sqlalchemy import select
+
+from app.core.config import settings
 from app.db.base import AsyncSessionLocal
-from app.websocket.manager import manager
+from app.ml.detector import Detection, get_detector
+from app.ml.features import FlowRecord
+from app.ml.network_monitor import CaptureUnavailable, NetworkMonitor
+from app.ml.protection import FirewallBlocker
+from app.models.security_event import (
+    ActionTaken, DetectionMode, EventState, Protocol, SecurityEvent, SeverityLevel,
+)
+from app.models.settings import (
+    DetectionSettings, ProtectionSettings, WhitelistEntry, WhitelistEntryType,
+)
 from app.utils.logger import logger
+from app.utils.timeutil import to_iso_z, utcnow
+from app.services.notifier import get_notifier
+from app.websocket.manager import manager
+
+QUEUE_SIZE = 10_000
+
+
+def alert_payload(event: SecurityEvent) -> dict:
+    """WebSocket `alert` payload (same shape as GET /api/notifications items)."""
+    title = event.attack_type or "Unclassified anomaly"
+    return {
+        "eventId": str(event.id),
+        "timestamp": to_iso_z(event.timestamp),
+        "severity": event.severity.value,
+        "attackType": event.attack_type,
+        "sourceIp": event.source_ip,
+        "sourcePort": event.source_port,
+        "destinationIp": event.destination_ip,
+        "destinationPort": event.destination_port,
+        "protocol": event.protocol.value,
+        "anomalyScore": round(float(event.anomaly_score), 4),
+        "actionTaken": event.action_taken.value,
+        "message": f"{title} from {event.source_ip} → {event.destination_ip}:{event.destination_port} "
+                   f"(score {event.anomaly_score:.2f}, {event.action_taken.value})",
+    }
+
+
+@dataclass
+class IDSConfig:
+    """Runtime configuration, refreshed from the Settings tables."""
+    detection_enabled: bool = True
+    anomaly_threshold: float = settings.ANOMALY_THRESHOLD
+    stage2_enabled: bool = True
+    stage2_confidence: float = settings.CLASSIFICATION_CONFIDENCE_THRESHOLD
+    default_mode: DetectionMode = DetectionMode.MONITOR
+    auto_block: bool = False
+    auto_block_severities: set = field(default_factory=lambda: {"high"})
+    block_duration_seconds: int = 3600
+    max_blocked_ips: int = 1000
+    wl_ips: set = field(default_factory=set)
+    wl_networks: list = field(default_factory=list)
+    wl_ports: set = field(default_factory=set)
+    wl_protocols: set = field(default_factory=set)
 
 
 class IDSService:
-    """Main IDS detection and protection service"""
-    
-    def __init__(self):
+    def __init__(self) -> None:
+        self.detector = get_detector()
+        self.config = IDSConfig()
+        self.mode: DetectionMode = DetectionMode.MONITOR
         self.enabled = False
-        self.monitor = None
-        self.ml_models = get_ml_models()
-        self.monitoring_thread = None
-        self.mode = DetectionMode.PROTECT  # Default to protect mode
-        self.whitelist_ips = set()
-        
-        # Statistics
-        self.packets_processed = 0
+        self.monitor: Optional[NetworkMonitor] = None
+        self.blocker = FirewallBlocker()
+        self.capture_error: Optional[str] = None
+        self.started_at: Optional[float] = None
+        # Who turned the IDS on (shown in the admin's alert email)
+        self.started_by: Optional[dict] = None
+
+        self._queue: Optional[asyncio.Queue] = None
+        self._loop: Optional[asyncio.AbstractEventLoop] = None
+        self._tasks: list[asyncio.Task] = []
+        self._last_score_times: list[float] = []
+
         self.flows_analyzed = 0
+        self.flows_dropped = 0
         self.anomalies_detected = 0
         self.attacks_detected = 0
-    
-    async def initialize(self):
-        """Initialize the IDS service"""
-        logger.info("Initializing IDS service...")
-        
-        # Load ML models
-        if not self.ml_models.loaded:
-            success = self.ml_models.load_models()
-            if not success:
-                logger.error("Failed to load ML models - IDS cannot start")
-                return False
-        
-        logger.info("IDS service initialized successfully")
-        return True
-    
-    def is_enabled(self) -> bool:
-        """Check if IDS is currently enabled"""
-        return self.enabled
-    
-    def get_status(self) -> Dict:
-        """Get current IDS status"""
+
+    # ── lifecycle ────────────────────────────────────────────────────────────
+
+    async def initialize(self) -> None:
+        """Called at app startup: load models only if ML_AUTOLOAD is set."""
+        if settings.ML_AUTOLOAD:
+            await self.reload_models()
+        else:
+            logger.info("ML_AUTOLOAD=false — no detection model loaded (IDS will run capture-only)")
+        try:
+            await self.reload_config()
+        except Exception as exc:  # DB may be unreachable at boot; retried on start
+            logger.warning(f"Could not load IDS settings at startup: {exc}")
+        self.mode = self.config.default_mode
+
+    async def reload_models(self) -> bool:
+        loaded = await asyncio.to_thread(self.detector.load, settings.models_dir)
+        await self.broadcast_status()
+        return loaded
+
+    async def start(self, mode: Optional[str] = None) -> None:
+        """Start capture + detection. Raises CaptureUnavailable on failure."""
+        if self.enabled:
+            if mode:
+                await self.set_mode(mode)
+            return
+        await self.reload_config()
+        await self.set_mode(mode or self.config.default_mode.value)
+
+        self._loop = asyncio.get_running_loop()
+        self._queue = asyncio.Queue(maxsize=QUEUE_SIZE)
+        self.monitor = NetworkMonitor(
+            on_flow=self._enqueue_from_thread,
+            interface=settings.CAPTURE_INTERFACE or None,
+            idle_timeout=settings.FLOW_IDLE_TIMEOUT_SECONDS,
+            active_timeout=settings.FLOW_ACTIVE_TIMEOUT_SECONDS,
+        )
+        try:
+            await asyncio.to_thread(self.monitor.start)
+        except CaptureUnavailable as exc:
+            self.capture_error = str(exc)
+            self.monitor = None
+            logger.error(f"IDS start failed: {exc}")
+            raise
+
+        self.capture_error = None
+        self.enabled = True
+        self.started_at = time.time()
+        self._tasks = [
+            asyncio.create_task(self._worker(), name="ids-worker"),
+            asyncio.create_task(self._maintenance(), name="ids-maintenance"),
+        ]
+        logger.info(f"IDS started (mode={self.mode.value}, detector={self.detector.name})")
+        await self.broadcast_status()
+
+    async def stop(self) -> None:
+        if not self.enabled:
+            return
+        self.enabled = False
+        monitor, self.monitor = self.monitor, None
+        if monitor is not None:
+            await asyncio.to_thread(monitor.stop)
+        for task in self._tasks:
+            task.cancel()
+        await asyncio.gather(*self._tasks, return_exceptions=True)
+        self._tasks = []
+        await self.blocker.unblock_all()
+        self.started_at = None
+        logger.info("IDS stopped")
+        await self.broadcast_status()
+
+    async def set_mode(self, mode: str) -> None:
+        try:
+            self.mode = DetectionMode(mode)
+        except ValueError:
+            raise ValueError(f"Unknown mode '{mode}' (expected 'monitor' or 'protect')")
+        if self.mode != DetectionMode.PROTECT:
+            await self.blocker.unblock_all()
+
+    # ── configuration ────────────────────────────────────────────────────────
+
+    async def reload_config(self) -> None:
+        """Pull detection/protection/notification settings and the whitelist from the DB."""
+        cfg = IDSConfig()
+        async with AsyncSessionLocal() as db:
+            det = (await db.execute(select(DetectionSettings).limit(1))).scalars().first()
+            prot = (await db.execute(select(ProtectionSettings).limit(1))).scalars().first()
+            entries = (await db.execute(select(WhitelistEntry).where(WhitelistEntry.active.is_(True)))).scalars().all()
+
+        if det:
+            cfg.detection_enabled = det.enabled
+            cfg.anomaly_threshold = det.anomaly_threshold
+            cfg.stage2_enabled = det.stage2_enabled
+            cfg.stage2_confidence = det.stage2_confidence_threshold
+        if prot:
+            cfg.default_mode = DetectionMode(prot.mode.value)
+            cfg.auto_block = prot.auto_block
+            cfg.auto_block_severities = set(prot.auto_block_severities or [])
+            cfg.block_duration_seconds = prot.block_duration_seconds
+            cfg.max_blocked_ips = prot.max_blocked_ips
+        else:
+            cfg.default_mode = DetectionMode(settings.DETECTION_MODE if settings.DETECTION_MODE in ("monitor", "protect") else "monitor")
+        for entry in entries:
+            try:
+                if entry.type == WhitelistEntryType.IP:
+                    cfg.wl_ips.add(str(ipaddress.ip_address(entry.value)))
+                elif entry.type == WhitelistEntryType.CIDR:
+                    cfg.wl_networks.append(ipaddress.ip_network(entry.value, strict=False))
+                elif entry.type == WhitelistEntryType.PORT:
+                    cfg.wl_ports.add(int(entry.value))
+                elif entry.type == WhitelistEntryType.PROTOCOL:
+                    cfg.wl_protocols.add(entry.value.upper())
+            except ValueError:
+                logger.warning(f"Ignoring invalid whitelist entry {entry.type.value}:{entry.value}")
+        self.config = cfg
+
+    def is_whitelisted(self, flow: FlowRecord) -> bool:
+        cfg = self.config
+        if flow.protocol_name.upper() in cfg.wl_protocols:
+            return True
+        if flow.src_port in cfg.wl_ports or flow.dst_port in cfg.wl_ports:
+            return True
+        for ip in (flow.src_ip, flow.dst_ip):
+            if ip in cfg.wl_ips:
+                return True
+            try:
+                addr = ipaddress.ip_address(ip)
+            except ValueError:
+                continue
+            if any(addr in net for net in cfg.wl_networks if net.version == addr.version):
+                return True
+        return False
+
+    # ── status ───────────────────────────────────────────────────────────────
+
+    def get_status(self) -> dict:
+        monitor = self.monitor
         return {
             "enabled": self.enabled,
-            "mode": self.mode.value if self.mode else "monitor",
-            "ml_loaded": self.ml_models.loaded,
-            "packets_processed": self.packets_processed,
+            "mode": self.mode.value,
+            "ml_loaded": self.detector.loaded,
+            "detector": self.detector.name,
+            "capture_active": bool(monitor and monitor.running),
+            "capture_error": self.capture_error or (monitor.last_error if monitor else None),
+            "packets_processed": monitor.packet_count if monitor else 0,
             "flows_analyzed": self.flows_analyzed,
+            "active_flows": monitor.active_flow_count if monitor else 0,
             "anomalies_detected": self.anomalies_detected,
             "attacks_detected": self.attacks_detected,
+            "blocked_ips": len(self.blocker.blocked),
+            "uptime_seconds": int(time.time() - self.started_at) if self.started_at else 0,
         }
-    
-    async def start(self):
-        """Start IDS monitoring and detection"""
-        if self.enabled:
-            logger.warning("IDS already enabled")
-            return True
-        
-        if not self.ml_models.loaded:
-            logger.error("Cannot start IDS - ML models not loaded")
-            return False
-        
-        logger.info("Starting IDS...")
-        
-        # Try to start Scapy packet capture (requires admin on Windows)
-        try:
-            self.monitor = NetworkMonitor(callback=self._on_flow_ready)
-            self.monitoring_thread = threading.Thread(target=self._run_monitoring, daemon=True)
-            self.monitoring_thread.start()
-            
-            # Check if capture is actually working
-            await asyncio.sleep(1)
-            if self.packets_processed == 0:
-                logger.warning("⚠ Packet capture not working (may need admin privileges)")
-                logger.info("🔄 Starting traffic simulator instead...")
-                # Start traffic simulator
-                await self._start_simulator()
-        except Exception as e:
-            logger.warning(f"⚠ Failed to start packet capture: {e}")
-            logger.info("🔄 Starting traffic simulator instead...")
-            # Start traffic simulator
-            await self._start_simulator()
-        
-        self.enabled = True
-        logger.info("✓ IDS started successfully")
-        return True
-    
-    async def _start_simulator(self):
-        """Start the traffic simulator"""
-        try:
-            from app.ml.traffic_simulator import start_simulator_async
-            # Start simulator in background with 70% benign, 30% attacks
-            asyncio.create_task(start_simulator_async(
-                ids_service=self,
-                benign_ratio=0.7,
-                interval=2.0
-            ))
-            logger.info("✓ Traffic simulator started")
-        except Exception as e:
-            logger.error(f"Failed to start simulator: {e}", exc_info=True)
-    
-    async def stop(self):
-        """Stop IDS monitoring and detection"""
-        if not self.enabled:
-            logger.warning("IDS already disabled")
-            return True
-        
-        logger.info("Stopping IDS...")
-        
-        self.enabled = False
-        
-        # Stop simulator if running
-        try:
-            from app.ml.traffic_simulator import stop_simulator
-            stop_simulator()
-        except Exception as e:
-            logger.debug(f"No simulator to stop: {e}")
-        
-        if self.monitor:
-            self.monitor.stop()
-        
-        if self.monitoring_thread:
-            self.monitoring_thread.join(timeout=5)
-        
-        logger.info("✓ IDS stopped successfully")
-        return True
-    
-    def _run_monitoring(self):
-        """Run network monitoring (blocking, runs in thread)"""
-        try:
-            if self.monitor:
-                self.monitor.start()
-                self.monitor.capture_packets()
-        except Exception as e:
-            logger.error(f"Monitoring thread error: {e}", exc_info=True)
-            self.enabled = False
-    
-    def _on_flow_ready(self, flow_key: FlowKey, features: Dict[str, float]):
-        """
-        Callback when a flow has enough packets for analysis
-        This runs in the monitoring thread
-        """
-        try:
-            # Run detection in async context
-            asyncio.run(self._analyze_flow(flow_key, features))
-        except Exception as e:
-            logger.error(f"Flow analysis error: {e}", exc_info=True)
-    
-    async def _analyze_flow(self, flow_key: FlowKey, features: Dict[str, float]):
-        """Analyze a flow through the ML pipeline"""
-        try:
-            self.flows_analyzed += 1
-            
-            # Check whitelist
-            if flow_key.src_ip in self.whitelist_ips or flow_key.dst_ip in self.whitelist_ips:
-                logger.debug(f"Flow whitelisted: {flow_key.src_ip} -> {flow_key.dst_ip}")
-                return
-            
-            # Convert features to the exact format expected by ML models
-            feature_names = self.ml_models.get_feature_names()
-            if not feature_names:
-                logger.error("Feature names not available")
-                return
-            
-            # Build feature vector in correct order
-            feature_vector = []
-            for fname in feature_names:
-                feature_vector.append(features.get(fname, 0.0))
-            
-            # Convert to numpy array
-            X = np.array([feature_vector], dtype=np.float32)
-            
-            # Replace inf values with NaN (XGBoost handles NaN natively)
-            X = np.where(np.isinf(X), np.nan, X)
-            
-            # Stage 1: Isolation Forest (Anomaly Detection)
-            if_scores, is_anomalies = self.ml_models.predict_anomaly(X)
-            anomaly_score = float(if_scores[0])
-            is_anomaly = bool(is_anomalies[0])
-            
-            if not is_anomaly:
-                # Normal traffic - no alert needed
-                return
-            
-            # Anomaly detected!
-            self.anomalies_detected += 1
-            logger.info(f"Anomaly detected: {flow_key.src_ip} -> {flow_key.dst_ip}, score={anomaly_score:.4f}")
-            
-            # Stage 2: Binary classification (normal/attack)
-            binary_preds, binary_probs = self.ml_models.predict_binary(X, if_scores)
-            is_attack = bool(binary_preds[0])
-            attack_probability = float(binary_probs[0])
-            
-            if not is_attack:
-                # Anomaly but not classified as attack
-                logger.debug(f"Anomaly classified as non-attack (prob={attack_probability:.4f})")
-                return
-            
-            # Attack detected!
-            self.attacks_detected += 1
-            
-            # Stage 3: Multi-class classification (attack type)
-            attack_type = "UNKNOWN ATTACK TYPE"
-            confidence = 0.0
-            
+
+    async def broadcast_status(self) -> None:
+        status = self.get_status()
+        await manager.send_system_status({
+            "detectionEnabled": status["enabled"],
+            "mode": status["mode"],
+            "modelStatus": status["detector"],
+            "activeFlows": status["active_flows"],
+        })
+
+    # ── flow processing ──────────────────────────────────────────────────────
+
+    def _enqueue_from_thread(self, record: FlowRecord) -> None:
+        """Called from the capture threads — hand the record to the event loop."""
+        loop, queue = self._loop, self._queue
+        if loop is None or queue is None or loop.is_closed():
+            return
+
+        def _put() -> None:
             try:
-                if self.ml_models.xgboost_multiclass and self.ml_models.label_encoder:
-                    _, predicted_labels, confidences = self.ml_models.predict_multiclass(X, if_scores)
-                    predicted_label = predicted_labels[0]
-                    
-                    # Only use classification if it's not "Benign" and has reasonable confidence
-                    if predicted_label != "Benign" and confidences[0] > 0.3:
-                        attack_type = predicted_label
-                        confidence = float(confidences[0])
-                    else:
-                        attack_type = "UNKNOWN ATTACK TYPE"
-                        confidence = 0.0
-            except Exception as e:
-                logger.warning(f"Attack classification failed: {e}")
-                attack_type = "UNKNOWN ATTACK TYPE"
-                confidence = 0.0
-            
-            # Determine severity based on anomaly score
-            if anomaly_score < -0.5:
-                severity = SeverityLevel.HIGH
-            elif anomaly_score < -0.2:
-                severity = SeverityLevel.MEDIUM
-            else:
-                severity = SeverityLevel.LOW
-            
-            # Determine protocol enum
-            proto_map = {
-                'TCP': Protocol.TCP,
-                'UDP': Protocol.UDP,
-                'ICMP': Protocol.ICMP
-            }
-            protocol = proto_map.get(flow_key.protocol, Protocol.OTHER)
-            
-            # Create security event
-            event = SecurityEvent(
-                timestamp=datetime.utcnow(),
-                source_ip=flow_key.src_ip,
-                source_port=flow_key.src_port,
-                destination_ip=flow_key.dst_ip,
-                destination_port=flow_key.dst_port,
-                protocol=protocol,
-                anomaly_score=abs(anomaly_score),  # Make positive for display
-                severity=severity,
-                attack_type=attack_type if attack_type != "UNKNOWN ATTACK TYPE" else None,
-                confidence=confidence if confidence > 0 else None,
-                mode=self.mode,
-                state=EventState.ACTIVE,
-                action_taken=ActionTaken.LOGGED,
-                detection_reason=f"Isolation Forest anomaly score: {anomaly_score:.4f}, Binary classification probability: {attack_probability:.4f}",
-                contributing_features=None,  # Could add top features
-            )
-            
-            # Perform protection action if in protect mode
-            if self.mode == DetectionMode.PROTECT and severity == SeverityLevel.HIGH:
-                blocked = await self._block_ip(flow_key.src_ip)
-                if blocked:
-                    event.action_taken = ActionTaken.BLOCKED
-            
-            # Save to database
-            async with AsyncSessionLocal() as db:
-                db.add(event)
-                await db.commit()
-                await db.refresh(event)
-                
-                # Broadcast to WebSocket clients
-                await manager.send_live_score({
-                    "anomalyScore": abs(anomaly_score),
-                    "severity": severity.value,
-                    "sourceIp": flow_key.src_ip,
-                    "destinationIp": flow_key.dst_ip,
-                    "protocol": protocol.value,
-                    "attackType": attack_type,
-                    "timestamp": datetime.utcnow().isoformat() + "Z",
-                    "eventId": str(event.id),
-                })
-                
-                logger.info(f"Security event created: {attack_type} from {flow_key.src_ip} (severity={severity.value})")
-        
-        except Exception as e:
-            logger.error(f"Flow analysis pipeline error: {e}", exc_info=True)
-    
-    async def _process_flow(self, src_ip: str, dst_ip: str, src_port: int, dst_port: int, protocol: int, features: np.ndarray):
-        """
-        Process a simulated flow (from traffic simulator)
-        features: numpy array of 71 features
-        """
-        try:
-            self.packets_processed += 1
-            self.flows_analyzed += 1
-            
-            # Check whitelist
-            if src_ip in self.whitelist_ips or dst_ip in self.whitelist_ips:
-                return
-            
-            # Ensure features are float32
-            X = features.reshape(1, -1).astype(np.float32)
-            
-            # Replace inf values with NaN
-            X = np.where(np.isinf(X), np.nan, X)
-            
-            # Stage 1: Isolation Forest
-            if_scores, is_anomalies = self.ml_models.predict_anomaly(X)
-            anomaly_score = float(if_scores[0])
-            is_anomaly = bool(is_anomalies[0])
-            
-            if not is_anomaly:
-                # Normal traffic
-                return
-            
-            # Anomaly detected!
-            self.anomalies_detected += 1
-            
-            # Stage 2: Binary classification
-            binary_preds, binary_probs = self.ml_models.predict_binary(X, if_scores)
-            is_attack = bool(binary_preds[0])
-            attack_probability = float(binary_probs[0])
-            
-            if not is_attack:
-                return
-            
-            # Attack detected!
-            self.attacks_detected += 1
-            
-            # Stage 3: Multi-class classification
-            attack_type = "UNKNOWN ATTACK TYPE"
-            confidence = 0.0
-            
+                queue.put_nowait(record)
+            except asyncio.QueueFull:
+                self.flows_dropped += 1
+
+        loop.call_soon_threadsafe(_put)
+
+    async def _worker(self) -> None:
+        assert self._queue is not None
+        while True:
+            record = await self._queue.get()
             try:
-                if self.ml_models.xgboost_multiclass and self.ml_models.label_encoder:
-                    _, predicted_labels, confidences = self.ml_models.predict_multiclass(X, if_scores)
-                    predicted_label = predicted_labels[0]
-                    
-                    if predicted_label != "Benign" and confidences[0] > 0.3:
-                        attack_type = predicted_label
-                        confidence = float(confidences[0])
-                    else:
-                        attack_type = "UNKNOWN ATTACK TYPE"
-                        confidence = 0.0
-            except Exception as e:
-                logger.warning(f"Attack classification failed: {e}")
-            
-            # Determine severity
-            if anomaly_score < -0.5:
-                severity = SeverityLevel.HIGH
-            elif anomaly_score < -0.2:
-                severity = SeverityLevel.MEDIUM
-            else:
-                severity = SeverityLevel.LOW
-            
-            # Determine protocol enum
-            proto_map = {6: Protocol.TCP, 17: Protocol.UDP, 1: Protocol.ICMP}
-            protocol_enum = proto_map.get(protocol, Protocol.OTHER)
-            
-            # Create security event
-            event = SecurityEvent(
-                timestamp=datetime.utcnow(),
-                source_ip=src_ip,
-                source_port=src_port,
-                destination_ip=dst_ip,
-                destination_port=dst_port,
-                protocol=protocol_enum,
-                anomaly_score=abs(anomaly_score),
-                severity=severity,
-                attack_type=attack_type if attack_type != "UNKNOWN ATTACK TYPE" else None,
-                confidence=confidence if confidence > 0 else None,
-                mode=self.mode,
-                state=EventState.ACTIVE,
-                action_taken=ActionTaken.LOGGED,
-                detection_reason=f"ML Detection: IF={anomaly_score:.4f}, Binary={attack_probability:.4f}, Type={attack_type}",
-                contributing_features=None,
-            )
-            
-            # Perform protection action if needed
-            if self.mode == DetectionMode.PROTECT and severity == SeverityLevel.HIGH:
-                blocked = await self._block_ip(src_ip)
-                if blocked:
-                    event.action_taken = ActionTaken.BLOCKED
-            
-            # Save to database
-            async with AsyncSessionLocal() as db:
-                db.add(event)
-                await db.commit()
-                await db.refresh(event)
-                
-                # Broadcast to WebSocket
-                await manager.send_live_score({
-                    "anomalyScore": abs(anomaly_score),
-                    "severity": severity.value,
-                    "sourceIp": src_ip,
-                    "destinationIp": dst_ip,
-                    "protocol": protocol_enum.value,
-                    "attackType": attack_type,
-                    "timestamp": datetime.utcnow().isoformat() + "Z",
-                    "eventId": str(event.id),
-                })
-                
-                logger.info(f"🚨 Attack detected: {attack_type} from {src_ip} (severity={severity.value}, score={abs(anomaly_score):.4f})")
-        
-        except Exception as e:
-            logger.error(f"Simulated flow processing error: {e}", exc_info=True)
-    
-    async def _block_ip(self, ip_address: str) -> bool:
-        """
-        Attempt to block an IP address using Windows Firewall
-        Returns True if successful, False otherwise
-        """
-        try:
-            import subprocess
-            
-            # Windows Firewall command
-            rule_name = f"SecureNet_Block_{ip_address.replace('.', '_')}"
-            cmd = [
-                "netsh", "advfirewall", "firewall", "add", "rule",
-                f"name={rule_name}",
-                "dir=in",
-                "action=block",
-                f"remoteip={ip_address}"
-            ]
-            
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=5)
-            
-            if result.returncode == 0:
-                logger.info(f"✓ Blocked IP: {ip_address}")
-                return True
-            else:
-                logger.warning(f"✗ Failed to block IP {ip_address}: {result.stderr}")
-                return False
-        
-        except Exception as e:
-            logger.error(f"Error blocking IP {ip_address}: {e}")
-            return False
-    
-    async def update_whitelist(self, whitelist_ips: set):
-        """Update the whitelist of IPs that should not be blocked"""
-        self.whitelist_ips = whitelist_ips
-        logger.info(f"Whitelist updated: {len(whitelist_ips)} entries")
-    
-    async def set_mode(self, mode: str):
-        """Set detection/protection mode"""
-        if mode == "monitor":
-            self.mode = DetectionMode.MONITOR
-        elif mode == "protect":
-            self.mode = DetectionMode.PROTECT
-        else:
-            logger.warning(f"Unknown mode: {mode}")
-            return False
-        
-        logger.info(f"IDS mode set to: {mode}")
-        return True
+                await self.process_flow(record)
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                logger.error(f"Flow processing error: {exc}", exc_info=True)
+            finally:
+                self._queue.task_done()
+
+    async def _maintenance(self) -> None:
+        while True:
+            await asyncio.sleep(5)
+            await self.blocker.unblock_expired()
+            await self.broadcast_status()
+
+    async def process_flow(self, flow: FlowRecord) -> Optional[SecurityEvent]:
+        """Run one finished flow through the detection pipeline."""
+        self.flows_analyzed += 1
+        if self.is_whitelisted(flow) or not self.config.detection_enabled or not self.detector.loaded:
+            return None
+
+        cfg = self.config
+        detection: Optional[Detection] = await asyncio.to_thread(
+            self.detector.analyze, flow.features, cfg.anomaly_threshold, cfg.stage2_enabled, cfg.stage2_confidence
+        )
+        if detection is None:
+            return None
+
+        severity = self._severity(detection.anomaly_score, cfg.anomaly_threshold)
+        if not detection.is_alert:
+            await self._broadcast_score(flow, detection, severity, throttle=True)
+            return None
+
+        self.anomalies_detected += 1
+        if detection.attack_type:
+            self.attacks_detected += 1
+
+        action = ActionTaken.ALERTED
+        reason = detection.reason
+        if (
+            self.mode == DetectionMode.PROTECT
+            and cfg.auto_block
+            and severity.value in cfg.auto_block_severities
+        ):
+            blocked, note = await self.blocker.block(flow.src_ip, cfg.block_duration_seconds, cfg.max_blocked_ips)
+            action = ActionTaken.BLOCKED if blocked else ActionTaken.ALERTED
+            reason = f"{reason}. Protection: {note}"
+
+        event = SecurityEvent(
+            timestamp=utcnow(),
+            source_ip=flow.src_ip,
+            source_port=flow.src_port,
+            destination_ip=flow.dst_ip,
+            destination_port=flow.dst_port,
+            protocol=Protocol(flow.protocol_name) if flow.protocol_name in ("TCP", "UDP", "ICMP") else Protocol.OTHER,
+            anomaly_score=round(detection.anomaly_score, 6),
+            severity=severity,
+            attack_type=detection.attack_type,
+            confidence=detection.confidence,
+            mode=self.mode,
+            state=EventState.ACTIVE,
+            action_taken=action,
+            detection_reason=reason,
+            contributing_features=detection.top_features or None,
+            flow_duration_ms=flow.duration_ms,
+            bytes_sent=flow.fwd_bytes,
+            bytes_received=flow.bwd_bytes,
+            packets_sent=flow.fwd_packets,
+            packets_received=flow.bwd_packets,
+        )
+        async with AsyncSessionLocal() as db:
+            db.add(event)
+            await db.commit()
+            await db.refresh(event)
+
+        await self._broadcast_score(flow, detection, severity, throttle=False)
+        await manager.send_alert(alert_payload(event))
+        get_notifier().enqueue(event)
+        logger.info(f"Alert: {event.attack_type or 'anomaly'} from {flow.src_ip} "
+                    f"score={detection.anomaly_score:.3f} severity={severity.value} action={action.value}")
+        return event
+
+    @staticmethod
+    def _severity(score: float, threshold: float) -> SeverityLevel:
+        """Severity from how far the score is above the threshold."""
+        span = max(1.0 - threshold, 1e-6)
+        relative = (score - threshold) / span
+        if relative >= 0.5:
+            return SeverityLevel.HIGH
+        if relative >= 0.2:
+            return SeverityLevel.MEDIUM
+        return SeverityLevel.LOW
+
+    async def _broadcast_score(self, flow: FlowRecord, detection: Detection, severity: SeverityLevel,
+                               throttle: bool) -> None:
+        if throttle:
+            now = time.time()
+            self._last_score_times = [t for t in self._last_score_times if now - t < 1.0]
+            if len(self._last_score_times) >= settings.LIVE_SCORE_MAX_PER_SECOND:
+                return
+            self._last_score_times.append(now)
+        await manager.send_live_score({
+            "anomalyScore": round(detection.anomaly_score, 4),
+            "severity": severity.value if detection.is_alert else "low",
+            "isAlert": detection.is_alert,
+            "sourceIp": flow.src_ip,
+            "destinationIp": flow.dst_ip,
+            "protocol": flow.protocol_name,
+            "attackType": detection.attack_type,
+        })
 
 
-# Global IDS service instance
 ids_service = IDSService()
 
 
-async def initialize_ids() -> bool:
-    """Initialize IDS service on startup"""
-    return await ids_service.initialize()
-
-
 def get_ids_service() -> IDSService:
-    """Get the global IDS service instance"""
     return ids_service

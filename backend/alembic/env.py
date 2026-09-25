@@ -18,7 +18,8 @@ from app.core.config import settings
 config = context.config
 
 # Set sqlalchemy.url from settings
-config.set_main_option("sqlalchemy.url", settings.DATABASE_URL)
+# "%" must be escaped for ConfigParser interpolation (URL-encoded passwords)
+config.set_main_option("sqlalchemy.url", settings.DATABASE_URL.replace("%", "%%"))
 
 # Interpret the config file for Python logging
 if config.config_file_name is not None:

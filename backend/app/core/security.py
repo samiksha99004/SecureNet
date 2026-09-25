@@ -5,26 +5,33 @@ Password hashing, JWT token generation/validation, and other
 security-related functions.
 """
 
-from datetime import datetime, timedelta
+import hashlib
+from datetime import timedelta
 from typing import Optional, Dict, Any
 
-from passlib.context import CryptContext
+import bcrypt
 from jose import JWTError, jwt
+from passlib.context import CryptContext
 
-from .config import settings
+from app.core.config import settings
+from app.utils.timeutil import utcnow
 
+# New passwords use PBKDF2-SHA256 (no 72-byte limit). Legacy bcrypt hashes
+# ("$2a$/$2b$/$2y$") are verified directly with the `bcrypt` package because
+# passlib's bcrypt backend is incompatible with bcrypt >= 4.1.
+pwd_context = CryptContext(schemes=["pbkdf2_sha256"])
 
-# Password hashing context
-#
-# PBKDF2-SHA256 is used for new passwords because it avoids the
-# bcrypt 72-byte password limitation and works reliably with the
-# current Python environment.
-#
-# bcrypt is retained so existing bcrypt hashes can still be verified.
-pwd_context = CryptContext(
-    schemes=["pbkdf2_sha256", "bcrypt"],
-    deprecated="bcrypt",
-)
+ACCESS_TOKEN_TYPE = "access"
+REFRESH_TOKEN_TYPE = "refresh"
+# Issued after the emailed OTP is verified; only lets the holder set the
+# password of that pending registration (never usable as an access token).
+SIGNUP_TOKEN_TYPE = "signup"
+SIGNUP_TOKEN_MINUTES = 15
+# Issued after a password-reset code is verified; only lets the holder set a new
+# password once (it is bound to the current password hash).
+RESET_TOKEN_TYPE = "reset"
+# Carries a requested profile change until the emailed code confirms it.
+PROFILE_TOKEN_TYPE = "profile"
 
 
 def hash_password(password: str) -> str:
@@ -34,120 +41,79 @@ def hash_password(password: str) -> str:
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
     """Verify a plaintext password against a stored password hash."""
-    return pwd_context.verify(plain_password, hashed_password)
+    if not hashed_password:
+        return False
+    try:
+        if hashed_password.startswith(("$2a$", "$2b$", "$2y$")):
+            return bcrypt.checkpw(plain_password.encode("utf-8")[:72], hashed_password.encode("utf-8"))
+        return pwd_context.verify(plain_password, hashed_password)
+    except (ValueError, TypeError):
+        return False
 
 
-def create_access_token(
-    data: Dict[str, Any],
-    expires_delta: Optional[timedelta] = None,
-) -> str:
-    """
-    Create a JWT access token.
+def _encode(data: Dict[str, Any], token_type: str, expires_delta: timedelta) -> str:
+    now = utcnow()
+    payload = {**data, "exp": now + expires_delta, "iat": now, "type": token_type}
+    return jwt.encode(payload, settings.JWT_SECRET, algorithm=settings.JWT_ALGORITHM)
 
-    Args:
-        data: Payload to encode in the token.
-        expires_delta: Optional custom expiration time.
 
-    Returns:
-        Encoded JWT token string.
-    """
-    to_encode = data.copy()
-
-    if expires_delta:
-        expire = datetime.utcnow() + expires_delta
-    else:
-        expire = datetime.utcnow() + timedelta(
-            minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES
-        )
-
-    to_encode.update({
-        "exp": expire,
-        "iat": datetime.utcnow(),
-        "type": "access",
-    })
-
-    encoded_jwt = jwt.encode(
-        to_encode,
-        settings.JWT_SECRET,
-        algorithm=settings.JWT_ALGORITHM,
+def create_access_token(data: Dict[str, Any], expires_delta: Optional[timedelta] = None) -> str:
+    """Create a short-lived JWT access token."""
+    return _encode(
+        data,
+        ACCESS_TOKEN_TYPE,
+        expires_delta or timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES),
     )
-
-    return encoded_jwt
 
 
 def create_refresh_token(data: Dict[str, Any]) -> str:
-    """
-    Create a JWT refresh token with longer expiration.
-
-    Args:
-        data: Payload to encode in the token.
-
-    Returns:
-        Encoded JWT refresh token string.
-    """
-    to_encode = data.copy()
-    expire = datetime.utcnow() + timedelta(
-        days=settings.REFRESH_TOKEN_EXPIRE_DAYS
-    )
-
-    to_encode.update({
-        "exp": expire,
-        "iat": datetime.utcnow(),
-        "type": "refresh",
-    })
-
-    encoded_jwt = jwt.encode(
-        to_encode,
-        settings.JWT_SECRET,
-        algorithm=settings.JWT_ALGORITHM,
-    )
-
-    return encoded_jwt
+    """Create a long-lived JWT refresh token."""
+    return _encode(data, REFRESH_TOKEN_TYPE, timedelta(days=settings.REFRESH_TOKEN_EXPIRE_DAYS))
 
 
-def decode_token(token: str) -> Optional[Dict[str, Any]]:
-    """
-    Decode and validate a JWT token.
+def create_signup_token(email: str) -> str:
+    """Short-lived token proving `email` was verified by OTP (for setting the password)."""
+    return _encode({"sub": email}, SIGNUP_TOKEN_TYPE, timedelta(minutes=SIGNUP_TOKEN_MINUTES))
 
-    Args:
-        token: JWT token string.
 
-    Returns:
-        Decoded payload if valid, None otherwise.
+def password_fingerprint(password_hash: Optional[str]) -> str:
+    """Short digest of the stored hash: a reset token stops working once the password changes."""
+    return hashlib.sha256((password_hash or "").encode("utf-8")).hexdigest()[:16]
+
+
+def create_reset_token(email: str, password_hash: Optional[str]) -> str:
+    """Short-lived token proving `email` was verified by OTP (for choosing a new password)."""
+    return _encode({"sub": email, "pwv": password_fingerprint(password_hash)}, RESET_TOKEN_TYPE,
+                   timedelta(minutes=SIGNUP_TOKEN_MINUTES))
+
+
+def create_profile_token(user_id: str, changes: Dict[str, str], code_email: str) -> str:
+    """Short-lived token holding a profile change that still needs its emailed code."""
+    return _encode({"sub": user_id, "changes": changes, "code_email": code_email}, PROFILE_TOKEN_TYPE,
+                   timedelta(minutes=SIGNUP_TOKEN_MINUTES))
+
+
+def decode_token(token: str, expected_type: str = ACCESS_TOKEN_TYPE) -> Optional[Dict[str, Any]]:
+    """Decode and validate a JWT token of the expected type.
+
+    Returns the payload, or None when the token is invalid, expired, or of a
+    different type (a refresh token can never be used as an access token).
     """
     try:
-        payload = jwt.decode(
-            token,
-            settings.JWT_SECRET,
-            algorithms=[settings.JWT_ALGORITHM],
-        )
-        return payload
+        payload = jwt.decode(token, settings.JWT_SECRET, algorithms=[settings.JWT_ALGORITHM])
     except JWTError:
         return None
+    if payload.get("type") != expected_type:
+        return None
+    return payload
 
 
-def validate_password_strength(
-    password: str,
-) -> tuple[bool, Optional[str]]:
-    """
-    Validate password meets minimum security requirements.
-
-    Returns:
-        Tuple of (is_valid, error_message).
-    """
+def validate_password_strength(password: str) -> tuple[bool, Optional[str]]:
+    """Validate password meets minimum security requirements."""
     if len(password) < settings.PASSWORD_MIN_LENGTH:
-        return (
-            False,
-            f"Password must be at least "
-            f"{settings.PASSWORD_MIN_LENGTH} characters long",
-        )
-
-    # Check for at least one number
+        return False, f"Password must be at least {settings.PASSWORD_MIN_LENGTH} characters long"
     if not any(char.isdigit() for char in password):
         return False, "Password must contain at least one number"
-
-    # Check for at least one letter
     if not any(char.isalpha() for char in password):
         return False, "Password must contain at least one letter"
-
     return True, None

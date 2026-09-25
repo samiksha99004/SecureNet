@@ -1,43 +1,56 @@
-"""Create an admin test user for IDS control testing"""
-import asyncio
-import sys
-from sqlalchemy import select
-from app.db.base import get_db
-from app.models.user import User, UserRole, AccountStatus
-from app.core.security import hash_password
+"""
+Create (or promote) an admin account.
 
-async def create_admin_user():
-    """Create admin test user"""
-    async for db in get_db():
-        # Check if user exists
-        result = await db.execute(
-            select(User).where(User.email == "admin@securenet.com")
-        )
-        existing = result.scalar_one_or_none()
-        
-        if existing:
-            # Update to admin role
-            existing.role = UserRole.ADMIN
-            existing.account_status = AccountStatus.ACTIVE
+Usage (from the backend folder, with the venv active):
+    python create_admin_user.py you@example.com "Your Name"
+    python create_admin_user.py existing@example.com          # promote existing user
+
+The password is prompted for (never hard-coded). Existing users keep their
+password and are promoted to admin + activated.
+"""
+
+import asyncio
+import getpass
+import sys
+
+from sqlalchemy import func, select
+
+from app.core.security import hash_password, validate_password_strength
+from app.db.base import AsyncSessionLocal
+from app.models.user import AccountStatus, AuthProvider, User, UserRole
+
+
+async def main(email: str, full_name: str) -> None:
+    email = email.strip().lower()
+    async with AsyncSessionLocal() as db:
+        user = (await db.execute(select(User).where(func.lower(User.email) == email))).scalar_one_or_none()
+        if user:
+            user.role = UserRole.ADMIN
+            user.account_status = AccountStatus.ACTIVE
             await db.commit()
-            print(f"✓ Updated existing user to admin role: admin@securenet.com")
-        else:
-            # Create new admin user
-            admin_user = User(
-                email="admin@securenet.com",
-                full_name="Admin Test User",
-                password_hash=hash_password("AdminPassword123!"),
-                role=UserRole.ADMIN,
-                account_status=AccountStatus.ACTIVE
-            )
-            db.add(admin_user)
-            await db.commit()
-            print(f"✓ Created new admin user: admin@securenet.com")
-        
-        print(f"  Email: admin@securenet.com")
-        print(f"  Password: AdminPassword123!")
-        print(f"  Role: admin")
-        break
+            print(f"Promoted existing user {email} to admin.")
+            return
+
+        password = getpass.getpass("New admin password: ")
+        ok, error = validate_password_strength(password)
+        if not ok:
+            sys.exit(f"Password rejected: {error}")
+        if password != getpass.getpass("Repeat password: "):
+            sys.exit("Passwords do not match.")
+
+        db.add(User(
+            email=email,
+            full_name=full_name,
+            password_hash=hash_password(password),
+            role=UserRole.ADMIN,
+            account_status=AccountStatus.ACTIVE,
+            auth_provider=AuthProvider.LOCAL,
+        ))
+        await db.commit()
+        print(f"Created admin user {email}.")
+
 
 if __name__ == "__main__":
-    asyncio.run(create_admin_user())
+    if len(sys.argv) < 2:
+        sys.exit(__doc__)
+    asyncio.run(main(sys.argv[1], sys.argv[2] if len(sys.argv) > 2 else "Administrator"))

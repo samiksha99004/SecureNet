@@ -2,13 +2,35 @@
 SecureNet Backend — User Model
 """
 
-from datetime import datetime
-from sqlalchemy import Column, String, DateTime, Enum as SQLEnum, Boolean
-from sqlalchemy.dialects.postgresql import UUID
+from app.utils.timeutil import utcnow
+from sqlalchemy import Column, String, DateTime, Enum as SQLEnum
+from sqlalchemy import Uuid as UUID
+from sqlalchemy.types import TypeDecorator
 import uuid
 import enum
 
 from app.db.base import Base
+
+
+class IntStoredAsString(TypeDecorator):
+    """Integer value kept in the legacy VARCHAR column.
+
+    `users.failed_login_attempts` was created as VARCHAR by the initial
+    migration. This keeps the Python side an int without needing a schema
+    migration on existing databases.
+    """
+
+    impl = String
+    cache_ok = True
+
+    def process_bind_param(self, value, dialect):
+        return None if value is None else str(int(value))
+
+    def process_result_value(self, value, dialect):
+        try:
+            return int(value) if value is not None else 0
+        except (TypeError, ValueError):
+            return 0
 
 
 class AuthProvider(str, enum.Enum):
@@ -38,21 +60,22 @@ class User(Base):
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     email = Column(String(255), unique=True, nullable=False, index=True)
     full_name = Column(String(255), nullable=False)
-    password_hash = Column(String(255), nullable=True)  # Nullable for OAuth users
+    password_hash = Column(String(255), nullable=True)  # NULL until set after OTP verification
+    phone_number = Column(String(20), nullable=True)    # E.164-style digits, optional "+"
     role = Column(SQLEnum(UserRole), nullable=False, default=UserRole.VIEWER)
     account_status = Column(SQLEnum(AccountStatus), nullable=False, default=AccountStatus.PENDING_VERIFICATION)
     auth_provider = Column(SQLEnum(AuthProvider), nullable=False, default=AuthProvider.LOCAL)
     
     # Timestamps
-    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
-    updated_at = Column(DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime, nullable=False, default=utcnow)
+    updated_at = Column(DateTime, nullable=False, default=utcnow, onupdate=utcnow)
     last_login_at = Column(DateTime, nullable=True)
     
     # Optional profile fields
     avatar_url = Column(String(512), nullable=True)
     
     # Security
-    failed_login_attempts = Column(String, nullable=False, default="0")
+    failed_login_attempts = Column(IntStoredAsString, nullable=False, default=0)
     locked_until = Column(DateTime, nullable=True)
     
     def __repr__(self):

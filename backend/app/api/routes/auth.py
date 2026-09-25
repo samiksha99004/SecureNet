@@ -4,296 +4,420 @@ SecureNet Backend — Authentication Routes
 Handles user registration, login, OTP verification, and token management.
 """
 
-from datetime import datetime, timedelta
 import secrets
 import string
-from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, and_
+import uuid
+from datetime import timedelta
 
-from app.db.base import get_db
-from app.core.security import hash_password, verify_password, create_access_token, create_refresh_token, validate_password_strength
+from fastapi import APIRouter, Depends, HTTPException, Request, status
+from sqlalchemy import func, select, update
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.api.dependencies import get_current_user
 from app.core.config import settings
-from app.models.user import User, AccountStatus, AuthProvider
+from app.core.security import (
+    REFRESH_TOKEN_TYPE,
+    PROFILE_TOKEN_TYPE,
+    RESET_TOKEN_TYPE,
+    SIGNUP_TOKEN_TYPE,
+    create_access_token,
+    create_profile_token,
+    create_refresh_token,
+    create_reset_token,
+    create_signup_token,
+    decode_token,
+    password_fingerprint,
+    hash_password,
+    validate_password_strength,
+    verify_password,
+)
+from app.db.base import get_db
 from app.models.otp import OTP
+from app.models.user import AccountStatus, AuthProvider, User, UserRole
 from app.schemas.auth import (
-    LoginRequest,
-    SignupRequest,
-    OtpVerifyRequest,
-    OtpResendRequest,
-    ChangePasswordRequest,
     AuthResponse,
     AuthTokens,
+    ChangePasswordRequest,
+    CompleteSignupRequest,
+    ForgotPasswordRequest,
+    LoginRequest,
+    OtpResendRequest,
+    OtpVerifyRequest,
+    OtpVerifyResponse,
+    PasswordResetVerifyResponse,
+    ProfileChangeConfirm,
+    ProfileChangeRequest,
+    ProfileChangeStarted,
+    RefreshRequest,
+    ResetPasswordRequest,
+    SignupRequest,
     UserResponse,
-    OtpVerifyResponse
 )
 from app.schemas.common import MessageResponse
-from app.api.dependencies import get_current_user
-from app.utils.email import send_otp_email
+from app.utils.email import (
+    EmailDeliveryError,
+    email_delivery_status,
+    send_email,
+    send_otp_email,
+    send_password_reset_email,
+    send_profile_change_email,
+)
+from app.utils import ratelimit
 from app.utils.logger import logger
+from app.utils.timeutil import utcnow
 
 router = APIRouter(prefix="/auth", tags=["Authentication"])
+
+GENERIC_RESEND_MESSAGE = "If this email has a pending registration, a new code has been sent."
+GENERIC_RESET_MESSAGE = "If an account exists for this email, a verification code has been sent to it."
 
 
 def generate_otp(length: int = 6) -> str:
     """Generate a random numeric OTP"""
-    return ''.join(secrets.choice(string.digits) for _ in range(length))
+    return "".join(secrets.choice(string.digits) for _ in range(length))
+
+
+def normalize_email(email: str) -> str:
+    return email.strip().lower()
 
 
 def create_auth_response(user: User) -> AuthResponse:
-    """Create authentication response with tokens"""
-    access_token = create_access_token(data={"sub": str(user.id)})
-    refresh_token = create_refresh_token(data={"sub": str(user.id)})
-    
+    """Create authentication response with a fresh token pair"""
     return AuthResponse(
-        user=UserResponse(
-            id=str(user.id),
-            email=user.email,
-            full_name=user.full_name,
-            role=user.role,
-            account_status=user.account_status,
-            auth_provider=user.auth_provider,
-            created_at=user.created_at,
-            last_login_at=user.last_login_at,
-            avatar_url=user.avatar_url
-        ),
+        user=UserResponse.model_validate(user),
         tokens=AuthTokens(
-            accessToken=access_token,
-            refreshToken=refresh_token,
-            expiresIn=settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60
-        )
+            access_token=create_access_token(data={"sub": str(user.id)}),
+            refresh_token=create_refresh_token(data={"sub": str(user.id)}),
+            expires_in=settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60,
+        ),
     )
+
+
+async def _latest_otp(db: AsyncSession, email: str, unused_only: bool) -> OTP | None:
+    query = select(OTP).where(OTP.email == email)
+    if unused_only:
+        query = query.where(OTP.is_used.is_(False))
+    result = await db.execute(query.order_by(OTP.created_at.desc()).limit(1))
+    return result.scalars().first()
+
+
+async def _issue_otp(db: AsyncSession, email: str) -> str:
+    """Invalidate any outstanding OTPs for `email` and create a new one."""
+    await db.execute(
+        update(OTP).where(OTP.email == email, OTP.is_used.is_(False)).values(is_used=True, used_at=utcnow())
+    )
+    code = generate_otp(settings.OTP_LENGTH)
+    db.add(OTP(email=email, otp_code=code))
+    return code
+
+
+async def _consume_otp(db: AsyncSession, email: str, code: str, http: Request | None = None) -> None:
+    """Check `code` against the latest unused OTP for `email` and mark it used.
+
+    Raises 400 with a user-facing message when there is no code, it expired,
+    it is wrong (attempts are counted and committed) or attempts ran out.
+    """
+    ratelimit.enforce("code-fail", http)
+    otp = await _latest_otp(db, email, unused_only=True)
+    if not otp:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
+                            detail="No verification code found. Please request a new one.")
+    if not otp.is_valid():
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
+                            detail="Verification code has expired or exceeded maximum attempts. Request a new one.")
+
+    otp.attempts += 1
+    if not secrets.compare_digest(otp.otp_code, code):
+        ratelimit.record("code-fail", http)
+        await db.commit()
+        remaining = settings.OTP_MAX_ATTEMPTS - otp.attempts
+        if remaining <= 0:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
+                                detail="Maximum attempts exceeded. Please request a new code.")
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
+                            detail=f"Invalid code. {remaining} attempt(s) remaining.")
+    otp.is_used = True
+    otp.used_at = utcnow()
+
+
+async def _check_resend_cooldown(db: AsyncSession, email: str) -> None:
+    """At most one new code per cooldown while the previous one is still outstanding."""
+    last_otp = await _latest_otp(db, email, unused_only=True)
+    if last_otp:
+        elapsed = (utcnow() - last_otp.created_at).total_seconds()
+        if elapsed < settings.OTP_RESEND_COOLDOWN_SECONDS:
+            remaining = int(settings.OTP_RESEND_COOLDOWN_SECONDS - elapsed) + 1
+            raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                                detail=f"Please wait {remaining} seconds before requesting a new code")
+
+
+def _role_for_new_account(email: str, active_users: int) -> UserRole:
+    """ADMIN_EMAILS decides admins; without it the first account becomes admin."""
+    if settings.admin_emails:
+        return UserRole.ADMIN if email in settings.admin_emails else UserRole.VIEWER
+    return UserRole.ADMIN if active_users == 0 else UserRole.VIEWER
+
+
+def _email_failure_detail() -> str:
+    # The technical reason is logged; users get a plain message.
+    if email_delivery_status() != "enabled":
+        return ("SecureNet can't send emails yet, so the verification code could not be sent. "
+                "Please contact the SecureNet admin.")
+    return "We could not send the verification email right now. Please try again in a few minutes."
 
 
 @router.post("/signup", response_model=MessageResponse)
-async def signup(
-    request: SignupRequest,
-    db: AsyncSession = Depends(get_db)
-):
+async def signup(request: SignupRequest, http: Request, db: AsyncSession = Depends(get_db)):
+    """Registration step 1: full name, email and phone number -> a code is emailed.
+
+    Steps 2-3 are /otp/verify (code) and /signup/complete (password). The
+    account only becomes usable once the password is set.
     """
-    Register a new user account.
-    Sends OTP to email for verification.
+    email = normalize_email(request.email)
+    existing = (await db.execute(select(User).where(func.lower(User.email) == email))).scalar_one_or_none()
+    if existing and existing.account_status != AccountStatus.PENDING_VERIFICATION:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
+                            detail="This email is already registered. Please sign in.")
+
+    if existing:
+        # Unfinished registration: refresh the details and send a new code.
+        existing.full_name = request.full_name
+        existing.phone_number = request.phone_number
+        existing.password_hash = None
+    else:
+        db.add(User(
+            email=email,
+            full_name=request.full_name,
+            phone_number=request.phone_number,
+            password_hash=None,
+            role=UserRole.VIEWER,  # decided when the account is completed
+            account_status=AccountStatus.PENDING_VERIFICATION,
+            auth_provider=AuthProvider.LOCAL,
+        ))
+
+    ratelimit.enforce("code-send", http)
+    otp_code = await _issue_otp(db, email)
+    try:
+        await send_otp_email(email, otp_code)
+    except EmailDeliveryError as exc:
+        await db.rollback()
+        logger.error(f"Signup email failed for {email}: {exc}")
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=_email_failure_detail())
+    await db.commit()
+    ratelimit.record("code-send", http)
+    logger.info(f"Registration started, code emailed to: {email}")
+    return MessageResponse(message=f"A verification code has been sent to {email}.")
+
+
+@router.post("/signup/complete", response_model=AuthResponse)
+async def complete_signup(request: CompleteSignupRequest, db: AsyncSession = Depends(get_db)):
+    """Registration step 3: set the password; the account is created and signed in.
+
+    Emails listed in ADMIN_EMAILS become admin, everyone else a normal user
+    (viewer). Without ADMIN_EMAILS the first account becomes the admin.
     """
-    # Check if email already exists
-    result = await db.execute(select(User).where(User.email == request.email))
-    existing_user = result.scalar_one_or_none()
-    
-    if existing_user:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Email already registered"
-        )
-    
-    # Validate password strength
+    payload = decode_token(request.setup_token, expected_type=SIGNUP_TOKEN_TYPE)
+    if not payload:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
+                            detail="This link has expired. Please start the registration again.")
+    email = normalize_email(str(payload.get("sub", "")))
+    user = (await db.execute(select(User).where(func.lower(User.email) == email))).scalar_one_or_none()
+    if user is None or user.account_status != AccountStatus.PENDING_VERIFICATION:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
+                            detail="This registration is already complete. Please sign in.")
+
     is_valid, error_msg = validate_password_strength(request.password)
     if not is_valid:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=error_msg
-        )
-    
-    # Create user
-    user = User(
-        email=request.email,
-        full_name=request.fullName,
-        password_hash=hash_password(request.password),
-        account_status=AccountStatus.PENDING_VERIFICATION,
-        auth_provider=AuthProvider.LOCAL
-    )
-    
-    db.add(user)
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=error_msg)
+
+    active_users = (await db.execute(
+        select(func.count()).select_from(User).where(User.account_status == AccountStatus.ACTIVE)
+    )).scalar() or 0
+    user.role = _role_for_new_account(email, active_users)
+    user.password_hash = hash_password(request.password)
+    user.account_status = AccountStatus.ACTIVE
+    user.failed_login_attempts = 0
+    user.last_login_at = utcnow()
     await db.commit()
-    
-    # Generate and store OTP
-    otp_code = generate_otp(settings.OTP_LENGTH)
-    otp = OTP(
-        email=request.email,
-        otp_code=otp_code
-    )
-    
-    db.add(otp)
-    await db.commit()
-    
-    # Send OTP email
-    await send_otp_email(request.email, otp_code)
-    
-    logger.info(f"User registered: {request.email}")
-    
-    return MessageResponse(message="Registration successful. Please check your email for OTP.")
+    logger.info(f"Account created: {email} ({user.role.value})")
+    return create_auth_response(user)
 
 
 @router.post("/login", response_model=AuthResponse)
-async def login(
-    request: LoginRequest,
-    db: AsyncSession = Depends(get_db)
-):
-    """
-    Authenticate user with email and password.
-    Returns JWT tokens and user data.
-    """
-    # Find user
-    result = await db.execute(select(User).where(User.email == request.email))
-    user = result.scalar_one_or_none()
-    
+async def login(request: LoginRequest, http: Request, db: AsyncSession = Depends(get_db)):
+    """Authenticate with email + password (with temporary lockout after repeated failures)."""
+    ratelimit.enforce("login-fail", http)
+    email = normalize_email(request.email)
+    user = (await db.execute(select(User).where(func.lower(User.email) == email))).scalar_one_or_none()
+    invalid = HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid email or password")
+
     if not user or not user.password_hash:
+        ratelimit.record("login-fail", http)
+        raise invalid
+
+    now = utcnow()
+    if user.locked_until and user.locked_until > now:
+        minutes = max(1, int((user.locked_until - now).total_seconds() // 60) + 1)
         raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid email or password"
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail=f"Too many failed attempts. Try again in {minutes} minute(s).",
         )
-    
-    # Verify password
+
     if not verify_password(request.password, user.password_hash):
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid email or password"
-        )
-    
-    # Check account status
+        ratelimit.record("login-fail", http)
+        user.failed_login_attempts = (user.failed_login_attempts or 0) + 1
+        if user.failed_login_attempts >= settings.MAX_LOGIN_ATTEMPTS:
+            user.locked_until = now + timedelta(minutes=settings.ACCOUNT_LOCKOUT_MINUTES)
+            user.failed_login_attempts = 0
+            logger.warning(f"Account locked after repeated failures: {email}")
+        await db.commit()
+        raise invalid
+
     if user.account_status == AccountStatus.PENDING_VERIFICATION:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Account not verified. Please check your email for OTP."
+            detail="Registration not finished. Please create your account again to get a new code.",
         )
-    
     if user.account_status == AccountStatus.SUSPENDED:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Account is suspended"
-        )
-    
-    # Update last login
-    user.last_login_at = datetime.utcnow()
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Account is suspended")
+
+    user.failed_login_attempts = 0
+    user.locked_until = None
+    user.last_login_at = now
     await db.commit()
-    
-    logger.info(f"User logged in: {user.email}")
-    
+    logger.info(f"User logged in: {email}")
     return create_auth_response(user)
 
 
 @router.post("/otp/verify", response_model=OtpVerifyResponse)
-async def verify_otp(
-    request: OtpVerifyRequest,
-    db: AsyncSession = Depends(get_db)
-):
-    """
-    Verify OTP code sent to user's email.
-    Activates the account and returns auth tokens.
-    """
-    # Find most recent unused OTP for this email
-    result = await db.execute(
-        select(OTP)
-        .where(and_(OTP.email == request.email, OTP.is_used == False))
-        .order_by(OTP.created_at.desc())
-    )
-    otp = result.scalar_one_or_none()
-    
-    if not otp:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="No OTP found for this email"
-        )
-    
-    # Check if OTP is valid
-    if not otp.is_valid():
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="OTP has expired or exceeded maximum attempts"
-        )
-    
-    # Increment attempts
-    otp.attempts += 1
-    
-    # Verify OTP code
-    if otp.otp_code != request.otp:
-        await db.commit()
-        
-        if otp.attempts >= settings.OTP_MAX_ATTEMPTS:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Maximum OTP attempts exceeded. Please request a new OTP."
-            )
-        
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Invalid OTP. {settings.OTP_MAX_ATTEMPTS - otp.attempts} attempts remaining."
-        )
-    
-    # Mark OTP as used
-    otp.is_used = True
-    otp.used_at = datetime.utcnow()
-    
-    # Activate user account
-    result = await db.execute(select(User).where(User.email == request.email))
-    user = result.scalar_one_or_none()
-    
-    if user and user.account_status == AccountStatus.PENDING_VERIFICATION:
-        user.account_status = AccountStatus.ACTIVE
-        user.last_login_at = datetime.utcnow()
-    
+async def verify_otp(request: OtpVerifyRequest, http: Request, db: AsyncSession = Depends(get_db)):
+    """Registration step 2: check the emailed code; returns a short-lived token for
+    setting the password (the account is not active yet)."""
+    email = normalize_email(request.email)
+    user = (await db.execute(select(User).where(func.lower(User.email) == email))).scalar_one_or_none()
+    if user is not None and user.account_status != AccountStatus.PENDING_VERIFICATION:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
+                            detail="This email is already registered. Please sign in.")
+
+    if user is None:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
+                            detail="No verification code found. Please request a new one.")
+    await _consume_otp(db, email, request.otp, http)
     await db.commit()
-    
-    logger.info(f"OTP verified for: {request.email}")
-    
-    # Return auth response if user exists
-    if user:
-        return OtpVerifyResponse(
-            verified=True,
-            authResponse=create_auth_response(user)
-        )
-    
-    return OtpVerifyResponse(verified=True, authResponse=None)
+    logger.info(f"Email verified by code: {email}")
+    return OtpVerifyResponse(verified=True, email=email, setup_token=create_signup_token(email))
 
 
 @router.post("/otp/resend", response_model=MessageResponse)
-async def resend_otp(
-    request: OtpResendRequest,
-    db: AsyncSession = Depends(get_db)
-):
-    """
-    Resend OTP to user's email.
-    Subject to cooldown period.
-    """
-    # Check for recent OTP
-    result = await db.execute(
-        select(OTP)
-        .where(OTP.email == request.email)
-        .order_by(OTP.created_at.desc())
-    )
-    last_otp = result.scalar_one_or_none()
-    
-    if last_otp:
-        time_since_last = (datetime.utcnow() - last_otp.created_at).total_seconds()
-        if time_since_last < settings.OTP_RESEND_COOLDOWN_SECONDS:
-            remaining = int(settings.OTP_RESEND_COOLDOWN_SECONDS - time_since_last)
-            raise HTTPException(
-                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-                detail=f"Please wait {remaining} seconds before requesting a new OTP"
-            )
-    
-    # Generate new OTP
-    otp_code = generate_otp(settings.OTP_LENGTH)
-    otp = OTP(
-        email=request.email,
-        otp_code=otp_code
-    )
-    
-    db.add(otp)
+async def resend_otp(request: OtpResendRequest, http: Request, db: AsyncSession = Depends(get_db)):
+    """Resend a verification code (only for pending accounts; response is generic)."""
+    email = normalize_email(request.email)
+    user = (await db.execute(select(User).where(func.lower(User.email) == email))).scalar_one_or_none()
+    if user is None or user.account_status != AccountStatus.PENDING_VERIFICATION:
+        return MessageResponse(message=GENERIC_RESEND_MESSAGE)
+
+    await _check_resend_cooldown(db, email)
+    ratelimit.enforce("code-send", http)
+    otp_code = await _issue_otp(db, email)
+    try:
+        await send_otp_email(email, otp_code)
+    except EmailDeliveryError as exc:
+        await db.rollback()
+        logger.error(f"OTP resend failed for {email}: {exc}")
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=_email_failure_detail())
     await db.commit()
-    
-    # Send OTP email
-    await send_otp_email(request.email, otp_code)
-    
-    logger.info(f"OTP resent to: {request.email}")
-    
-    return MessageResponse(message="OTP has been resent to your email")
+    ratelimit.record("code-send", http)
+    logger.info(f"OTP resent to: {email}")
+    return MessageResponse(message=GENERIC_RESEND_MESSAGE)
+
+
+# ── Forgot password: email -> code -> new password ───────────────────────────
+
+@router.post("/password/forgot", response_model=MessageResponse)
+async def forgot_password(request: ForgotPasswordRequest, http: Request, db: AsyncSession = Depends(get_db)):
+    """Step 1: email a reset code (same answer whether or not the account exists)."""
+    email = normalize_email(request.email)
+    user = (await db.execute(select(User).where(func.lower(User.email) == email))).scalar_one_or_none()
+    if user is None or user.account_status != AccountStatus.ACTIVE:
+        return MessageResponse(message=GENERIC_RESET_MESSAGE)
+
+    await _check_resend_cooldown(db, email)
+    ratelimit.enforce("code-send", http)
+    otp_code = await _issue_otp(db, email)
+    try:
+        await send_password_reset_email(email, otp_code)
+    except EmailDeliveryError as exc:
+        await db.rollback()
+        logger.error(f"Password reset email failed for {email}: {exc}")
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=_email_failure_detail())
+    await db.commit()
+    ratelimit.record("code-send", http)
+    logger.info(f"Password reset code sent to: {email}")
+    return MessageResponse(message=GENERIC_RESET_MESSAGE)
+
+
+@router.post("/password/verify", response_model=PasswordResetVerifyResponse)
+async def verify_password_reset(request: OtpVerifyRequest, http: Request, db: AsyncSession = Depends(get_db)):
+    """Step 2: check the emailed code; returns a short-lived token for the new password."""
+    email = normalize_email(request.email)
+    user = (await db.execute(select(User).where(func.lower(User.email) == email))).scalar_one_or_none()
+    if user is None or user.account_status != AccountStatus.ACTIVE:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
+                            detail="No verification code found. Please request a new one.")
+    await _consume_otp(db, email, request.otp, http)
+    await db.commit()
+    logger.info(f"Password reset code verified: {email}")
+    return PasswordResetVerifyResponse(verified=True, email=email,
+                                       reset_token=create_reset_token(email, user.password_hash))
+
+
+@router.post("/password/reset", response_model=MessageResponse)
+async def reset_password(request: ResetPasswordRequest, db: AsyncSession = Depends(get_db)):
+    """Step 3: set the new password (the token works once), then sign in with it."""
+    payload = decode_token(request.reset_token, expected_type=RESET_TOKEN_TYPE)
+    expired = HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
+                            detail="This reset link has expired or was already used. Please start again.")
+    if not payload:
+        raise expired
+    email = normalize_email(str(payload.get("sub", "")))
+    user = (await db.execute(select(User).where(func.lower(User.email) == email))).scalar_one_or_none()
+    if (user is None or user.account_status != AccountStatus.ACTIVE
+            or payload.get("pwv") != password_fingerprint(user.password_hash)):
+        raise expired
+
+    is_valid, error_msg = validate_password_strength(request.password)
+    if not is_valid:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=error_msg)
+
+    user.password_hash = hash_password(request.password)
+    user.failed_login_attempts = 0
+    user.locked_until = None
+    await db.commit()
+    logger.info(f"Password reset completed: {email}")
+    return MessageResponse(message="Your password has been changed. Sign in with your new password.")
+
+
+@router.post("/refresh", response_model=AuthResponse)
+async def refresh_tokens(request: RefreshRequest, db: AsyncSession = Depends(get_db)):
+    """Exchange a valid refresh token for a new access/refresh token pair."""
+    payload = decode_token(request.refresh_token, expected_type=REFRESH_TOKEN_TYPE)
+    unauthorized = HTTPException(status_code=status.HTTP_401_UNAUTHORIZED,
+                                 detail="Session expired. Please sign in again.")
+    if not payload:
+        raise unauthorized
+    try:
+        user_id = uuid.UUID(str(payload.get("sub")))
+    except (TypeError, ValueError):
+        raise unauthorized
+    user = (await db.execute(select(User).where(User.id == user_id))).scalar_one_or_none()
+    if user is None or user.account_status != AccountStatus.ACTIVE:
+        raise unauthorized
+    return create_auth_response(user)
 
 
 @router.post("/logout", response_model=MessageResponse)
 async def logout(current_user: User = Depends(get_current_user)):
-    """
-    Logout user (client-side token removal primarily).
-    Server-side session invalidation could be added here.
-    """
+    """Logout (tokens are discarded client-side)."""
     logger.info(f"User logged out: {current_user.email}")
     return MessageResponse(message="Logged out successfully")
 
@@ -301,54 +425,127 @@ async def logout(current_user: User = Depends(get_current_user)):
 @router.get("/me", response_model=UserResponse)
 async def get_me(current_user: User = Depends(get_current_user)):
     """Get current authenticated user's profile"""
-    return UserResponse(
-        id=str(current_user.id),
-        email=current_user.email,
-        full_name=current_user.full_name,
-        role=current_user.role,
-        account_status=current_user.account_status,
-        auth_provider=current_user.auth_provider,
-        created_at=current_user.created_at,
-        last_login_at=current_user.last_login_at,
-        avatar_url=current_user.avatar_url
+    return UserResponse.model_validate(current_user)
+
+
+# ── Change your own details (name / phone / email) — confirmed by an emailed code ──
+
+PROFILE_FIELDS = {"full_name": "name", "phone_number": "phone number", "email": "email address"}
+
+
+def _mask(email: str) -> str:
+    name, _, domain = email.partition("@")
+    return f"{name[:2]}{'*' * max(1, len(name) - 2)}@{domain}"
+
+
+@router.post("/profile/change", response_model=ProfileChangeStarted)
+async def request_profile_change(
+    request: ProfileChangeRequest,
+    http: Request,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Step 1: say what to change; a code goes to your email (to the NEW email if it changes)."""
+    changes: dict[str, str] = {}
+    if request.full_name is not None and request.full_name != current_user.full_name:
+        changes["full_name"] = request.full_name
+    if request.phone_number is not None and request.phone_number != (current_user.phone_number or ""):
+        changes["phone_number"] = request.phone_number
+    if request.email is not None:
+        new_email = normalize_email(request.email)
+        if new_email != normalize_email(current_user.email):
+            taken = (await db.execute(select(User).where(func.lower(User.email) == new_email))).scalar_one_or_none()
+            if taken:
+                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
+                                    detail="This email is already used by another account.")
+            changes["email"] = new_email
+    if not changes:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Nothing to change — your details are the same.")
+
+    code_email = changes.get("email", normalize_email(current_user.email))
+    await _check_resend_cooldown(db, code_email)
+    ratelimit.enforce("code-send", http)
+    otp_code = await _issue_otp(db, code_email)
+    summary = " and ".join(PROFILE_FIELDS[f] for f in changes)
+    try:
+        await send_profile_change_email(code_email, otp_code, summary)
+    except EmailDeliveryError as exc:
+        await db.rollback()
+        logger.error(f"Profile change code for {current_user.email} failed: {exc}")
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=_email_failure_detail())
+    await db.commit()
+    ratelimit.record("code-send", http)
+    logger.info(f"Profile change requested by {current_user.email}: {sorted(changes)}")
+    return ProfileChangeStarted(
+        change_token=create_profile_token(str(current_user.id), changes, code_email),
+        sent_to=_mask(code_email),
+        message=f"We sent a 6-digit code to {_mask(code_email)}. Enter it to confirm the change.",
     )
+
+
+@router.post("/profile/confirm", response_model=UserResponse)
+async def confirm_profile_change(
+    request: ProfileChangeConfirm,
+    http: Request,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Step 2: the emailed code applies the change."""
+    payload = decode_token(request.change_token, expected_type=PROFILE_TOKEN_TYPE)
+    if not payload or payload.get("sub") != str(current_user.id):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
+                            detail="This change request has expired. Please start again.")
+    changes: dict = payload.get("changes") or {}
+    code_email = str(payload.get("code_email", ""))
+    await _consume_otp(db, code_email, request.otp, http)
+
+    user = (await db.execute(select(User).where(User.id == current_user.id))).scalar_one()
+    old_email = user.email
+    if "email" in changes:
+        taken = (await db.execute(
+            select(User).where(func.lower(User.email) == changes["email"], User.id != user.id)
+        )).scalar_one_or_none()
+        if taken:
+            await db.commit()  # keep the used code used
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
+                                detail="This email is already used by another account.")
+    for field in ("full_name", "phone_number", "email"):
+        if field in changes:
+            setattr(user, field, changes[field])
+    await db.commit()
+    await db.refresh(user)
+    logger.info(f"Profile changed for {old_email}: {sorted(changes)}")
+
+    if "email" in changes:  # tell the old address (best effort)
+        text = (f"The email address of your {settings.APP_NAME} account was changed from {old_email} "
+                f"to {user.email}. If you did not do this, contact the {settings.APP_NAME} admin.")
+        try:
+            await send_email([old_email], f"{settings.APP_NAME} - Your email address was changed", text,
+                             f"<html><body style='font-family:Arial,sans-serif'><p>{text}</p></body></html>")
+        except EmailDeliveryError as exc:
+            logger.warning(f"Email-change notice to {old_email} failed: {exc}")
+    return UserResponse.model_validate(user)
 
 
 @router.post("/change-password", response_model=MessageResponse)
 async def change_password(
     request: ChangePasswordRequest,
     current_user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
 ):
-    """Change password for authenticated user"""
-    
-    # Only for local auth users
+    """Change password for the authenticated user"""
     if current_user.auth_provider != AuthProvider.LOCAL:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Cannot change password for {current_user.auth_provider} authentication"
-        )
-    
-    # Verify current password
-    if not current_user.password_hash or not verify_password(request.currentPassword, current_user.password_hash):
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Current password is incorrect"
-        )
-    
-    # Validate new password
-    is_valid, error_msg = validate_password_strength(request.newPassword)
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
+                            detail=f"Cannot change password for {current_user.auth_provider.value} accounts")
+    if not verify_password(request.current_password, current_user.password_hash or ""):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Current password is incorrect")
+
+    is_valid, error_msg = validate_password_strength(request.new_password)
     if not is_valid:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=error_msg
-        )
-    
-    # Update password
-    current_user.password_hash = hash_password(request.newPassword)
-    current_user.updated_at = datetime.utcnow()
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=error_msg)
+
+    current_user.password_hash = hash_password(request.new_password)
+    current_user.updated_at = utcnow()
     await db.commit()
-    
     logger.info(f"Password changed for: {current_user.email}")
-    
     return MessageResponse(message="Password changed successfully")

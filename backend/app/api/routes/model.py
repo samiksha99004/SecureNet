@@ -1,101 +1,87 @@
 """
 SecureNet Backend — ML Model Routes
 
-Provides information about the ML models (Isolation Forest + XGBoost).
-Returns actual model status when models are loaded, otherwise returns not_loaded status.
+Status of the optional Isolation Forest / XGBoost models, feature importance,
+and an admin endpoint to (re)load models from ML_MODELS_DIR without a restart.
 """
 
-from datetime import datetime
-from fastapi import APIRouter, Depends
+from typing import List
+
+from fastapi import APIRouter, Depends, HTTPException, Query, status
+
+from app.api.dependencies import get_current_user, require_admin
+from app.ml.detector import get_detector
+from app.ml.ids_service import get_ids_service
 from app.models.user import User
-from app.schemas.model import ModelInfo, IsolationForestInfo, XGBoostInfo
-from app.api.dependencies import get_current_user
+from app.schemas.model import FeatureImportance, IsolationForestInfo, ModelInfo, XGBoostInfo
+from app.utils.timeutil import utcnow
 
 router = APIRouter(prefix="/model", tags=["ML Model"])
 
 
+def _status(loaded: bool, error_key: str) -> str:
+    detector = get_detector()
+    if loaded:
+        return "loaded"
+    return "error" if error_key in detector.errors else "not_loaded"
+
+
+def build_model_info() -> ModelInfo:
+    detector = get_detector()
+    ids = get_ids_service()
+    names = detector.feature_columns
+
+    iso = detector.isolation_forest
+    if_info = IsolationForestInfo(
+        status=_status(iso is not None, "isolation_forest"),
+        version=f"scikit-learn {getattr(iso, '_sklearn_version', '')}".strip() if iso is not None else None,
+        n_estimators=getattr(iso, "n_estimators", None),
+        max_samples=getattr(iso, "max_samples_", None),
+        contamination=(iso.contamination if iso is not None and isinstance(iso.contamination, float) else None),
+        threshold=ids.config.anomaly_threshold,
+        feature_count=len(names),
+        feature_names=names if iso is not None else [],
+    )
+
+    xgb = detector.xgboost
+    params = xgb.get_params() if xgb is not None and hasattr(xgb, "get_params") else {}
+    xgb_info = XGBoostInfo(
+        status=_status(xgb is not None, "xgboost"),
+        version="xgboost" if xgb is not None else None,
+        n_estimators=params.get("n_estimators"),
+        max_depth=params.get("max_depth"),
+        learning_rate=params.get("learning_rate"),
+        feature_count=len(names) + (1 if detector.xgb_appends_if_score else 0),
+        feature_names=names if xgb is not None else [],
+        supported_attack_classes=detector.attack_classes(),
+    )
+    return ModelInfo(isolation_forest=if_info, xgboost=xgb_info, last_refreshed_at=utcnow())
+
+
 @router.get("/info", response_model=ModelInfo)
-async def get_model_info(
-    current_user: User = Depends(get_current_user)
+async def get_model_info(current_user: User = Depends(get_current_user)):
+    """Information about both detection stages."""
+    return build_model_info()
+
+
+@router.get("/feature-importance", response_model=List[FeatureImportance])
+async def get_feature_importance(
+    stage: int = Query(2, ge=1, le=2),
+    limit: int = Query(20, ge=1, le=100),
+    current_user: User = Depends(get_current_user),
 ):
-    """
-    Get ML model information for both stages.
-    
-    Returns actual model metadata from loaded models.
-    """
-    from app.ml.models import get_ml_models
-    
-    ml_models = get_ml_models()
-    
-    if not ml_models.loaded:
-        # Models not loaded
-        isolation_forest_info = IsolationForestInfo(
-            status="not_loaded",
-            version=None,
-            nEstimators=None,
-            maxSamples=None,
-            contamination=None,
-            threshold=None,
-            featureCount=71,
-            featureNames=[],
-            trainedAt=None,
-            metrics=None
-        )
-        
-        xgboost_info = XGBoostInfo(
-            status="not_loaded",
-            version=None,
-            nEstimators=None,
-            maxDepth=None,
-            learningRate=None,
-            featureCount=71,
-            featureNames=[],
-            supportedAttackClasses=[],
-            trainedAt=None,
-            metrics=None
-        )
-        
-        return ModelInfo(
-            isolationForest=isolation_forest_info,
-            xgboost=xgboost_info,
-            lastRefreshedAt=datetime.utcnow()
-        )
-    
-    # Get real model information
-    model_info_dict = ml_models.get_model_info()
-    
-    # Isolation Forest info
-    if_info = model_info_dict["isolation_forest"]
-    isolation_forest_info = IsolationForestInfo(
-        status=if_info["status"],
-        version="sklearn",
-        nEstimators=if_info.get("n_estimators"),
-        maxSamples=None,
-        contamination=if_info.get("contamination"),
-        threshold=None,
-        featureCount=model_info_dict["features"]["count"],
-        featureNames=model_info_dict["features"]["names"],
-        trainedAt=None,
-        metrics=None
-    )
-    
-    # XGBoost info
-    xgb_info = model_info_dict["xgboost_multiclass"]
-    xgboost_info = XGBoostInfo(
-        status=xgb_info["status"],
-        version="xgboost",
-        nEstimators=None,
-        maxDepth=None,
-        learningRate=None,
-        featureCount=model_info_dict["features"]["count"],
-        featureNames=model_info_dict["features"]["names"],
-        supportedAttackClasses=model_info_dict["attack_types"],
-        trainedAt=None,
-        metrics=None
-    )
-    
-    return ModelInfo(
-        isolationForest=isolation_forest_info,
-        xgboost=xgboost_info,
-        lastRefreshedAt=datetime.utcnow()
-    )
+    """Global feature importance. Only XGBoost (stage 2) provides one; stage 1 returns []."""
+    if stage == 1:
+        return []
+    return [FeatureImportance(**item) for item in get_detector().feature_importance(limit)]
+
+
+@router.post("/reload", response_model=ModelInfo)
+async def reload_models(current_user: User = Depends(require_admin)):
+    """Load whatever model artifacts are present in ML_MODELS_DIR (admin only)."""
+    ids = get_ids_service()
+    loaded = await ids.reload_models()
+    if not loaded:
+        detail = "; ".join(get_detector().errors.values()) or "No model files found in ML_MODELS_DIR"
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=detail)
+    return build_model_info()

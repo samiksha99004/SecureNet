@@ -2,9 +2,9 @@
 SecureNet Backend — Security Event Models
 """
 
-from datetime import datetime
+from app.utils.timeutil import utcnow
 from sqlalchemy import Column, String, DateTime, Float, Integer, Enum as SQLEnum, ForeignKey, Text, JSON
-from sqlalchemy.dialects.postgresql import UUID, JSONB
+from sqlalchemy import Uuid as UUID
 from sqlalchemy.orm import relationship
 import uuid
 import enum
@@ -58,7 +58,7 @@ class SecurityEvent(Base):
     __tablename__ = "security_events"
     
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    timestamp = Column(DateTime, nullable=False, default=datetime.utcnow, index=True)
+    timestamp = Column(DateTime, nullable=False, default=utcnow, index=True)
     
     # Network information
     source_ip = Column(String(45), nullable=False, index=True)  # IPv4/IPv6
@@ -90,8 +90,8 @@ class SecurityEvent(Base):
     packets_received = Column(Integer, nullable=True)
     
     # Metadata
-    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
-    updated_at = Column(DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime, nullable=False, default=utcnow)
+    updated_at = Column(DateTime, nullable=False, default=utcnow, onupdate=utcnow)
     resolved_at = Column(DateTime, nullable=True)
     resolved_by = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
     
@@ -109,7 +109,7 @@ class EventFeature(Base):
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     event_id = Column(UUID(as_uuid=True), ForeignKey("security_events.id", ondelete="CASCADE"), nullable=False, unique=True, index=True)
     feature_vector = Column(JSON, nullable=False)  # Use JSON instead of JSONB for SQLite compatibility
-    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    created_at = Column(DateTime, nullable=False, default=utcnow)
     
     def __repr__(self):
         return f"<EventFeature for {self.event_id}>"

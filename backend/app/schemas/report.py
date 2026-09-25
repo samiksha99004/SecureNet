@@ -2,62 +2,65 @@
 SecureNet Backend — Report Schemas
 """
 
-from datetime import datetime
 from typing import Optional, List
-from pydantic import BaseModel, Field
+
+from pydantic import Field
 
 from app.models.report import ReportStatus, ReportFormat
+from app.schemas.base import CamelModel, IdStr, UtcDatetime
 
 
-# ── Report Filters ────────────────────────────────────────────────────────────
-
-class ReportFilters(BaseModel):
+class ReportFilters(CamelModel):
     """Filters applied to report generation"""
     severities: List[str] = []
     states: List[str] = []
-    attackTypes: List[str] = []
-    includeResolved: bool = True
-    includeBreakdown: bool = True
+    attack_types: List[str] = []
+    include_resolved: bool = True
+    include_breakdown: bool = True
 
 
-# ── Report Response ───────────────────────────────────────────────────────────
-
-class ReportResponse(BaseModel):
+class ReportResponse(CamelModel):
     """Generated report metadata"""
-    id: str
+    id: IdStr
     name: str
     description: Optional[str] = None
-    dateRangeStart: datetime = Field(..., alias="date_range_start")
-    dateRangeEnd: datetime = Field(..., alias="date_range_end")
-    generatedAt: datetime = Field(..., alias="generated_at")
+    date_range_start: UtcDatetime
+    date_range_end: UtcDatetime
+    generated_at: UtcDatetime
     status: ReportStatus
     format: ReportFormat
-    sizeBytes: Optional[int] = Field(None, alias="size_bytes")
-    downloadUrl: Optional[str] = Field(None, alias="download_url")
+    size_bytes: Optional[int] = None
+    download_url: Optional[str] = None
     filters: ReportFilters
-    createdBy: str = Field(..., alias="created_by")
-    
-    class Config:
-        from_attributes = True
-        populate_by_name = True
+    created_by: IdStr
+    error_message: Optional[str] = None
 
 
-# ── Report Request ────────────────────────────────────────────────────────────
-
-class GenerateReportRequest(BaseModel):
+class GenerateReportRequest(CamelModel):
     """Request to generate a new report"""
     name: str = Field(..., min_length=1, max_length=255)
     description: Optional[str] = Field(None, max_length=1000)
-    dateRangeStart: str = Field(..., description="ISO 8601 date string")
-    dateRangeEnd: str = Field(..., description="ISO 8601 date string")
+    date_range_start: str = Field(..., description="ISO 8601 date string")
+    date_range_end: str = Field(..., description="ISO 8601 date string")
     format: ReportFormat
-    filters: ReportFilters
+    filters: ReportFilters = ReportFilters()
 
 
-# ── Report Summary ────────────────────────────────────────────────────────────
-
-class ReportSummary(BaseModel):
+class ReportSummary(CamelModel):
     """Report statistics"""
-    totalReports: int
-    recentReportsCount: int  # last 7 days
-    generatedThisMonth: int
+    total_reports: int
+    recent_reports_count: int  # last 7 days
+    generated_this_month: int
+
+
+class DailyReport(CamelModel):
+    """One day (local time) that had detected attacks — shown as a box on the Reports page."""
+    date: str                    # YYYY-MM-DD, local calendar day
+    total: int
+    high: int
+    medium: int
+    low: int
+    top_attack: Optional[str] = None
+    sources: int
+    first_seen: UtcDatetime
+    last_seen: UtcDatetime

@@ -1,169 +1,167 @@
 """
 SecureNet Backend — Main Application
 
-FastAPI application entry point with CORS, exception handling,
-and route registration.
+FastAPI entry point: CORS, uniform error responses, route registration,
+the authenticated live WebSocket, and (optionally) the built frontend.
 """
 
+from contextlib import asynccontextmanager
+from pathlib import Path
+
 from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect, status
-from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
 from fastapi.exceptions import RequestValidationError
-from fastapi.encoders import jsonable_encoder
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
 from sqlalchemy.exc import SQLAlchemyError
-from starlette.middleware.base import BaseHTTPMiddleware
-import json
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
+from app.api.routes import auth, dashboard, events, health, ids, model, notifications, reports, settings_routes, support
 from app.core.config import settings
+from app.db.base import AsyncSessionLocal
+from app.ml.ids_service import get_ids_service
+from app.services.notifier import get_notifier
 from app.utils.logger import logger
+from app.websocket.manager import manager
 
-# Import routes
-from app.api.routes import auth, events, dashboard, settings_routes, model, reports, health, ids
+ERROR_CODES = {
+    400: "BAD_REQUEST",
+    401: "UNAUTHORIZED",
+    403: "FORBIDDEN",
+    404: "NOT_FOUND",
+    405: "METHOD_NOT_ALLOWED",
+    409: "CONFLICT",
+    422: "VALIDATION_ERROR",
+    429: "TOO_MANY_REQUESTS",
+    500: "INTERNAL_ERROR",
+    502: "BAD_GATEWAY",
+    503: "SERVICE_UNAVAILABLE",
+}
 
-# Create FastAPI app
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    logger.info(f"{settings.APP_NAME} v{settings.APP_VERSION} starting (env={settings.ENVIRONMENT})")
+    ids_service = get_ids_service()
+    await ids_service.initialize()
+    await get_notifier().start()
+    yield
+    logger.info(f"{settings.APP_NAME} shutting down...")
+    await ids_service.stop()
+    await get_notifier().stop()
+
+
 app = FastAPI(
     title=settings.APP_NAME,
     version=settings.APP_VERSION,
     description="Network-Based Behavioural Intrusion Detection System",
     docs_url="/api/docs" if settings.DEBUG else None,
     redoc_url="/api/redoc" if settings.DEBUG else None,
-    # Serialize response models using field aliases (camelCase)
-    response_model_by_alias=True,
+    openapi_url="/api/openapi.json" if settings.DEBUG else None,
+    lifespan=lifespan,
 )
 
-# CORS Configuration
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origins_list,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=["Content-Disposition"],
 )
 
 
-# Custom middleware to ensure response models use aliases (camelCase)
-class ResponseAliasMiddleware(BaseHTTPMiddleware):
-    async def dispatch(self, request: Request, call_next):
-        response = await call_next(request)
-        return response
+# ── Uniform error responses: {status, code, message, details?} ───────────────
+
+def error_response(status_code: int, message: str, details=None, headers=None) -> JSONResponse:
+    body = {"status": status_code, "code": ERROR_CODES.get(status_code, "ERROR"), "message": message}
+    if details:
+        body["details"] = details
+    return JSONResponse(status_code=status_code, content=body, headers=headers)
 
 
-app.add_middleware(ResponseAliasMiddleware)
+@app.exception_handler(StarletteHTTPException)
+async def http_exception_handler(request: Request, exc: StarletteHTTPException):
+    message = exc.detail if isinstance(exc.detail, str) else "Request failed"
+    return error_response(exc.status_code, message, headers=getattr(exc, "headers", None))
 
 
-# Exception Handlers
 @app.exception_handler(RequestValidationError)
 async def validation_exception_handler(request: Request, exc: RequestValidationError):
-    """Handle validation errors"""
-    errors = {}
+    details: dict = {}
     for error in exc.errors():
-        field = ".".join(str(loc) for loc in error["loc"][1:])
-        if field not in errors:
-            errors[field] = []
-        errors[field].append(error["msg"])
-    
-    return JSONResponse(
-        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-        content={
-            "status": 422,
-            "code": "VALIDATION_ERROR",
-            "message": "Request validation failed",
-            "details": errors
-        }
-    )
+        loc = [str(part) for part in error.get("loc", ()) if part not in ("body", "query", "path")]
+        field = ".".join(loc) or "request"
+        msg = str(error.get("msg", "Invalid value")).removeprefix("Value error, ")
+        details.setdefault(field, []).append(msg)
+    first_field, first_msgs = next(iter(details.items()), ("request", ["Invalid request"]))
+    message = first_msgs[0] if first_field == "request" else f"{first_field}: {first_msgs[0]}"
+    return error_response(422, message, details)
 
 
 @app.exception_handler(SQLAlchemyError)
 async def database_exception_handler(request: Request, exc: SQLAlchemyError):
-    """Handle database errors"""
-    logger.error(f"Database error: {exc}")
-    return JSONResponse(
-        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-        content={
-            "status": 500,
-            "code": "DATABASE_ERROR",
-            "message": "A database error occurred"
-        }
-    )
+    logger.error(f"Database error on {request.url.path}: {exc}")
+    return error_response(500, "Something went wrong while saving or loading data. Please try again.")
 
 
 @app.exception_handler(Exception)
 async def general_exception_handler(request: Request, exc: Exception):
-    """Handle unexpected errors"""
-    logger.error(f"Unexpected error: {exc}", exc_info=True)
-    return JSONResponse(
-        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-        content={
-            "status": 500,
-            "code": "INTERNAL_ERROR",
-            "message": "An internal server error occurred" if not settings.DEBUG else str(exc)
-        }
-    )
+    logger.error(f"Unexpected error on {request.url.path}: {exc}", exc_info=True)
+    return error_response(500, str(exc) if settings.DEBUG else "Something went wrong. Please try again.")
 
 
-# Register routes with /api prefix
-app.include_router(auth.router, prefix="/api")
-app.include_router(events.router, prefix="/api")
-app.include_router(dashboard.router, prefix="/api")
-app.include_router(settings_routes.router, prefix="/api")
-app.include_router(model.router, prefix="/api")
-app.include_router(reports.router, prefix="/api")
-app.include_router(ids.router, prefix="/api")
+# ── Routes ────────────────────────────────────────────────────────────────────
+
+for router in (auth, events, dashboard, settings_routes, model, reports, ids, notifications, support):
+    app.include_router(router.router, prefix="/api")
 app.include_router(health.router)
-
-
-@app.on_event("startup")
-async def startup_event():
-    """Application startup tasks"""
-    logger.info(f"{settings.APP_NAME} v{settings.APP_VERSION} starting up...")
-    logger.info(f"Environment: {settings.ENVIRONMENT}")
-    logger.info(f"Debug mode: {settings.DEBUG}")
-    
-    # Initialize ML models (Ensemble version)
-    logger.info("Initializing ML models (Ensemble: Random Forest + XGBoost)...")
-    from app.ml.models_ensemble import initialize_ml_models
-    ml_loaded = initialize_ml_models()
-    if ml_loaded:
-        logger.info("✓ ML models loaded successfully (Ensemble)")
-    else:
-        logger.warning("⚠ ML models failed to load - IDS functionality will be limited")
-    
-    # Initialize IDS service (Ensemble version)
-    logger.info("Initializing IDS service (Ensemble)...")
-    from app.ml.ids_service_ensemble import initialize_ids
-    ids_ready = await initialize_ids()
-    if ids_ready:
-        logger.info("✓ IDS service initialized (Ensemble)")
-    else:
-        logger.warning("⚠ IDS service initialization failed")
-
-
-@app.on_event("shutdown")
-async def shutdown_event():
-    """Application shutdown tasks"""
-    logger.info(f"{settings.APP_NAME} shutting down...")
 
 
 @app.websocket("/ws/live")
 async def websocket_live(websocket: WebSocket):
-    """WebSocket endpoint for real-time security event streaming"""
-    from app.websocket.manager import manager
-    
+    """Real-time stream (live_score / alert / system_status).
+
+    Authenticate with the access token: ws://host/ws/live?token=<accessToken>
+    """
+    from app.api.dependencies import user_from_token
+
+    token = websocket.query_params.get("token")
+    async with AsyncSessionLocal() as db:
+        user = await user_from_token(token, db)
+    if user is None:
+        await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
+        return
+
     await manager.connect(websocket)
     try:
+        await get_ids_service().broadcast_status()
         while True:
-            # Keep connection alive, receive pings/messages
-            data = await websocket.receive_text()
-            # Echo or ignore - manager broadcasts events from IDS
-    except WebSocketDisconnect:
+            message = await websocket.receive_json()
+            if isinstance(message, dict) and message.get("type") == "ping":
+                await websocket.send_json({"type": "pong", "timestamp": None, "payload": {}})
+    except (WebSocketDisconnect, RuntimeError, ValueError):
+        pass
+    finally:
         manager.disconnect(websocket)
 
 
-@app.get("/")
-async def root():
-    """Root endpoint"""
-    return {
-        "name": settings.APP_NAME,
-        "version": settings.APP_VERSION,
-        "status": "running"
-    }
+# ── Optional: serve the built frontend (Electron / single-port deployments) ──
+
+_frontend_dist = settings.resolve_path(settings.FRONTEND_DIST) if settings.FRONTEND_DIST else None
+if _frontend_dist and (_frontend_dist / "index.html").is_file():
+    app.mount("/assets", StaticFiles(directory=_frontend_dist / "assets"), name="assets")
+
+    @app.get("/{full_path:path}", include_in_schema=False)
+    async def spa(full_path: str):
+        """Serve static files, falling back to index.html for client-side routes."""
+        if full_path.startswith(("api/", "ws/")):
+            return error_response(404, "Not Found")
+        candidate = (_frontend_dist / full_path).resolve()
+        if full_path and candidate.is_file() and Path(_frontend_dist) in candidate.parents:
+            return FileResponse(candidate)
+        return FileResponse(_frontend_dist / "index.html")
+else:
+    @app.get("/")
+    async def root():
+        return {"name": settings.APP_NAME, "version": settings.APP_VERSION, "status": "running"}

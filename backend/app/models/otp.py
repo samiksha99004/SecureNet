@@ -2,9 +2,10 @@
 SecureNet Backend — OTP Model
 """
 
-from datetime import datetime, timedelta
+from datetime import timedelta
+from app.utils.timeutil import utcnow
 from sqlalchemy import Column, String, DateTime, Integer, Boolean
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy import Uuid as UUID
 import uuid
 
 from app.db.base import Base
@@ -21,18 +22,18 @@ class OTP(Base):
     attempts = Column(Integer, nullable=False, default=0)
     is_used = Column(Boolean, nullable=False, default=False)
     
-    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    created_at = Column(DateTime, nullable=False, default=utcnow)
     expires_at = Column(DateTime, nullable=False)
     used_at = Column(DateTime, nullable=True)
     
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         if not self.expires_at:
-            self.expires_at = datetime.utcnow() + timedelta(minutes=settings.OTP_EXPIRE_MINUTES)
+            self.expires_at = utcnow() + timedelta(minutes=settings.OTP_EXPIRE_MINUTES)
     
     def is_expired(self) -> bool:
         """Check if OTP has expired"""
-        return datetime.utcnow() > self.expires_at
+        return utcnow() > self.expires_at
     
     def is_valid(self) -> bool:
         """Check if OTP is valid for use"""

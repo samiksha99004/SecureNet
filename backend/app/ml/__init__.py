@@ -1,9 +1,9 @@
 """
-SecureNet ML Pipeline
+SecureNet ML / detection package
 
-This module will contain the ML inference pipeline for:
-- Stage 1: Isolation Forest (anomaly detection)
-- Stage 2: XGBoost (attack classification)
-
-TODO: Implement model loading and inference logic
+- features.py        CICIDS2018 flow features (CICFlowMeter-style)
+- network_monitor.py Scapy capture → finished flows
+- detector.py        optional Isolation Forest and/or XGBoost scoring
+- protection.py      Protection mode firewall blocking
+- ids_service.py     live detection loop (capture → detect → store → alert)
 """

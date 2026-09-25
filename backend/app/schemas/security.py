@@ -2,116 +2,113 @@
 SecureNet Backend — Security Event Schemas
 """
 
-from datetime import datetime
-from typing import Optional, List
-from pydantic import BaseModel, Field
+from typing import Optional, List, Union
+
+from pydantic import field_validator
 
 from app.models.security_event import SeverityLevel, EventState, DetectionMode, ActionTaken, Protocol
+from app.schemas.base import CamelModel, IdStr, UtcDatetime
 
 
 # ── Contributing Feature ──────────────────────────────────────────────────────
 
-class ContributingFeature(BaseModel):
-    """Feature that contributed to anomaly detection"""
+class ContributingFeature(CamelModel):
+    """Feature that contributed to the detection decision"""
     name: str
-    value: float | str
+    value: Union[float, str]
     contribution: float
 
 
 # ── Security Event ────────────────────────────────────────────────────────────
 
-class SecurityEventResponse(BaseModel):
+class SecurityEventResponse(CamelModel):
     """Security event data returned to frontend"""
-    model_config = {
-        "from_attributes": True,
-        "populate_by_name": True,
-        "by_alias": True,  # This ensures serialization uses aliases
-    }
-    
-    id: str
-    timestamp: datetime
-    sourceIp: str = Field(..., serialization_alias="sourceIp", validation_alias="source_ip")
-    sourcePort: int = Field(..., serialization_alias="sourcePort", validation_alias="source_port")
-    destinationIp: str = Field(..., serialization_alias="destinationIp", validation_alias="destination_ip")
-    destinationPort: int = Field(..., serialization_alias="destinationPort", validation_alias="destination_port")
+    id: IdStr
+    timestamp: UtcDatetime
+    source_ip: str
+    source_port: int
+    destination_ip: str
+    destination_port: int
     protocol: Protocol
-    anomalyScore: float = Field(..., serialization_alias="anomalyScore", validation_alias="anomaly_score")
+    anomaly_score: float
     severity: SeverityLevel
-    attackType: Optional[str] = Field(None, serialization_alias="attackType", validation_alias="attack_type")
+    attack_type: Optional[str] = None
     confidence: Optional[float] = None
     mode: DetectionMode
     state: EventState
-    actionTaken: ActionTaken = Field(..., serialization_alias="actionTaken", validation_alias="action_taken")
-    detectionReason: Optional[str] = Field(None, serialization_alias="detectionReason", validation_alias="detection_reason")
-    contributingFeatures: List[ContributingFeature] = Field(default_factory=list, serialization_alias="contributingFeatures", validation_alias="contributing_features")
-    flowDurationMs: Optional[int] = Field(None, serialization_alias="flowDurationMs", validation_alias="flow_duration_ms")
-    bytesSent: Optional[int] = Field(None, serialization_alias="bytesSent", validation_alias="bytes_sent")
-    bytesReceived: Optional[int] = Field(None, serialization_alias="bytesReceived", validation_alias="bytes_received")
-    packetsSent: Optional[int] = Field(None, serialization_alias="packetsSent", validation_alias="packets_sent")
-    packetsReceived: Optional[int] = Field(None, serialization_alias="packetsReceived", validation_alias="packets_received")
+    action_taken: ActionTaken
+    detection_reason: Optional[str] = None
+    contributing_features: List[ContributingFeature] = []
+    flow_duration_ms: Optional[int] = None
+    bytes_sent: Optional[int] = None
+    bytes_received: Optional[int] = None
+    packets_sent: Optional[int] = None
+    packets_received: Optional[int] = None
 
-
-# Removed SecurityEventResponseModel as it's no longer needed
+    @field_validator("contributing_features", mode="before")
+    @classmethod
+    def _none_to_list(cls, value):
+        return value or []
 
 
 # ── Dashboard Summary ─────────────────────────────────────────────────────────
 
-class AttackTypeCount(BaseModel):
+class AttackTypeCount(CamelModel):
     """Attack type distribution entry"""
-    attackType: str
+    attack_type: str
     count: int
 
 
-class SeverityBreakdown(BaseModel):
+class SeverityBreakdown(CamelModel):
     """Event count by severity"""
-    low: int
-    medium: int
-    high: int
+    low: int = 0
+    medium: int = 0
+    high: int = 0
 
 
-class DashboardSummary(BaseModel):
+class DashboardSummary(CamelModel):
     """Dashboard KPI data"""
-    activeFlows: int
-    anomaliesLastHour: int
-    highSeverityCount: int
-    blockedCount: int
-    averageAnomalyScore: float
-    severityBreakdown: SeverityBreakdown
-    attackTypeDistribution: List[AttackTypeCount]
-    recentEvents: List[SecurityEventResponse]
+    active_flows: int
+    anomalies_last_hour: int
+    high_severity_count: int
+    blocked_count: int
+    average_anomaly_score: float
+    severity_breakdown: SeverityBreakdown
+    attack_type_distribution: List[AttackTypeCount]
+    recent_events: List[SecurityEventResponse]
 
 
 # ── Host Status ───────────────────────────────────────────────────────────────
 
-class HostStatus(BaseModel):
+class HostStatus(CamelModel):
     """System resource status"""
     hostname: Optional[str] = None
     os: Optional[str] = None
-    cpuPercent: Optional[float] = None
-    memoryPercent: Optional[float] = None
-    networkInterface: Optional[str] = None
-    networkBytesPerSec: Optional[float] = None
+    cpu_percent: Optional[float] = None
+    memory_percent: Optional[float] = None
+    network_interface: Optional[str] = None
+    network_bytes_per_sec: Optional[float] = None
     uptime: Optional[int] = None  # seconds
-    lastUpdated: Optional[datetime] = None
+    last_updated: Optional[UtcDatetime] = None
 
 
 # ── Protocol Distribution ─────────────────────────────────────────────────────
 
-class ProtocolDistribution(BaseModel):
-    """Network protocol statistics"""
+class ProtocolDistribution(CamelModel):
+    """Network protocol statistics (from stored security events)"""
     tcp: int
     udp: int
     icmp: int
     other: int
-    totalFlows: int
+    total_flows: int
 
 
 # ── Top Sources ───────────────────────────────────────────────────────────────
 
-class TopSource(BaseModel):
-    """Top traffic source statistics"""
-    sourceIp: str
-    flowCount: int
-    anomalyCount: int
-    highSeverityCount: int
-    lastSeen: datetime
+class TopSource(CamelModel):
+    """Top event source statistics"""
+    source_ip: str
+    flow_count: int
+    anomaly_count: int
+    high_severity_count: int
+    last_seen: UtcDatetime

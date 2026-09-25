@@ -2,9 +2,9 @@
 SecureNet Backend — Report Model
 """
 
-from datetime import datetime
+from app.utils.timeutil import utcnow
 from sqlalchemy import Column, String, DateTime, Integer, Enum as SQLEnum, ForeignKey, Text, JSON
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy import Uuid as UUID
 import uuid
 import enum
 
@@ -39,7 +39,7 @@ class Report(Base):
     date_range_end = Column(DateTime, nullable=False, index=True)
     
     # Generation metadata
-    generated_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    generated_at = Column(DateTime, nullable=False, default=utcnow)
     status = Column(SQLEnum(ReportStatus), nullable=False, default=ReportStatus.PENDING, index=True)
     format = Column(SQLEnum(ReportFormat), nullable=False)
     size_bytes = Column(Integer, nullable=True)

@@ -1,111 +1,79 @@
 """
 SecureNet Backend — IDS Control Routes
 
-Single IDS ON/OFF control with status monitoring.
+Turn the IDS OFF / ON and choose Detection ("monitor") or Protection
+("protect") mode.
 """
 
+from typing import Literal, Optional
+
 from fastapi import APIRouter, Depends, HTTPException, status
-from pydantic import BaseModel, Field, ConfigDict
-from app.models.user import User, UserRole
-from app.api.dependencies import get_current_user, require_role
-from app.ml.ids_service_ensemble import get_ids_service
+
+from app.api.dependencies import get_current_user
+from app.ml.ids_service import get_ids_service
+from app.ml.network_monitor import CaptureUnavailable
+from app.models.user import User
+from app.schemas.base import CamelModel
 from app.utils.logger import logger
 
 router = APIRouter(prefix="/ids", tags=["IDS Control"])
 
 
-def to_camel(string: str) -> str:
-    """Convert snake_case to camelCase"""
-    components = string.split('_')
-    return components[0] + ''.join(x.title() for x in components[1:])
-
-
-class IDSStatusResponse(BaseModel):
+class IDSStatusResponse(CamelModel):
     """IDS status information"""
-    model_config = ConfigDict(alias_generator=to_camel, populate_by_name=True)
-    
     enabled: bool
     mode: str
     ml_loaded: bool
+    detector: str
+    capture_active: bool
+    capture_error: Optional[str] = None
     packets_processed: int
     flows_analyzed: int
+    active_flows: int
     anomalies_detected: int
     attacks_detected: int
+    blocked_ips: int
+    uptime_seconds: int
 
 
-class IDSControlRequest(BaseModel):
-    """IDS control command - single ON/OFF only"""
+class IDSControlRequest(CamelModel):
+    """Turn the IDS on/off; optionally choose the mode."""
     enabled: bool
-    # mode is internal - frontend should not send it, default to protect
+    mode: Optional[Literal["monitor", "protect"]] = None
 
 
 @router.get("/status", response_model=IDSStatusResponse)
-async def get_ids_status(
-    current_user: User = Depends(get_current_user)
-):
-    """Get current IDS status"""
-    ids = get_ids_service()
-    status_info = ids.get_status()
-    
-    return IDSStatusResponse(
-        enabled=status_info["enabled"],
-        mode=status_info["mode"],
-        ml_loaded=status_info["ml_loaded"],
-        packets_processed=status_info["packets_processed"],
-        flows_analyzed=status_info["flows_analyzed"],
-        anomalies_detected=status_info["anomalies_detected"],
-        attacks_detected=status_info["attacks_detected"],
-    )
+async def get_ids_status(current_user: User = Depends(get_current_user)):
+    """Current IDS status"""
+    return IDSStatusResponse(**get_ids_service().get_status())
 
 
 @router.post("/control", response_model=IDSStatusResponse)
-async def control_ids(
-    request: IDSControlRequest,
-    current_user: User = Depends(require_role(UserRole.ADMIN, UserRole.ANALYST))
-):
+async def control_ids(request: IDSControlRequest, current_user: User = Depends(get_current_user)):
+    """Turn the IDS ON or OFF (any signed-in user; its settings stay admin-only).
+
+    The IDS has two states only: ON = capture, detect, alert and email;
+    OFF = stopped. Automatic firewall blocking (the old "protection" mode) is
+    not used, so the mode is always "monitor" whatever the request says.
     """
-    Control IDS - Start or Stop
-    
-    Requires ADMIN or ANALYST role
-    """
-    # Clear dashboard cache when IDS status changes
-    from app.api.routes import dashboard
-    dashboard._summary_cache = None
-    dashboard._summary_cache_time = 0
-    
     ids = get_ids_service()
-    
-    # Always use protect mode internally when IDS is ON
-    await ids.set_mode("protect")
-    
-    # Start or stop IDS
     if request.enabled:
-        if not ids.is_enabled():
-            success = await ids.start()
-            if not success:
-                raise HTTPException(
-                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                    detail="Failed to start IDS - check ML models are loaded"
-                )
-            logger.info(f"IDS started by {current_user.email}")
-    else:
-        if ids.is_enabled():
-            success = await ids.stop()
-            if not success:
-                raise HTTPException(
-                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                    detail="Failed to stop IDS"
-                )
-            logger.info(f"IDS stopped by {current_user.email}")
-    
-    # Return updated status
-    status_info = ids.get_status()
-    return IDSStatusResponse(
-        enabled=status_info["enabled"],
-        mode=status_info["mode"],
-        ml_loaded=status_info["ml_loaded"],
-        packets_processed=status_info["packets_processed"],
-        flows_analyzed=status_info["flows_analyzed"],
-        anomalies_detected=status_info["anomalies_detected"],
-        attacks_detected=status_info["attacks_detected"],
-    )
+        try:
+            if ids.enabled:
+                if ids.mode.value != "monitor":
+                    await ids.set_mode("monitor")
+                    await ids.broadcast_status()
+            else:
+                await ids.start("monitor")
+                ids.started_by = {"name": current_user.full_name, "email": current_user.email,
+                                  "phone": current_user.phone_number, "role": current_user.role.value}
+                logger.info(f"IDS started by {current_user.email} (mode={ids.mode.value})")
+        except CaptureUnavailable as exc:
+            raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc))
+        except ValueError as exc:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+    elif ids.enabled:
+        await ids.stop()
+        ids.started_by = None
+        logger.info(f"IDS stopped by {current_user.email}")
+    return IDSStatusResponse(**ids.get_status())

@@ -73,3 +73,7 @@ celerybeat.pid
 tmp/
 temp/
 *.tmp
+
+# Generated reports / local artifacts
+reports/
+securenet.db

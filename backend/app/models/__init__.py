@@ -24,8 +24,10 @@ from app.models.settings import (
 )
 from app.models.otp import OTP
 from app.models.report import Report, ReportStatus, ReportFormat
+from app.models.support import SupportMessage
 
 __all__ = [
+    "SupportMessage",
     # User
     "User",
     "UserRole",

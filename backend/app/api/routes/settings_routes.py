@@ -1,346 +1,207 @@
 """
 SecureNet Backend — Settings Routes
 
-Handles all application settings: detection, protection, notifications,
-system configuration, and whitelist management.
+Detection, protection, notification and system settings plus the whitelist.
+Anyone signed in can read settings; only the admin can change them.
+Every change is pushed to the running IDS immediately.
 """
 
-from datetime import datetime
-from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
-from uuid import UUID
+from typing import Type, TypeVar
 
+from fastapi import APIRouter, Depends, HTTPException, status
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+import uuid
+
+from app.api.dependencies import get_current_user, require_admin
 from app.db.base import get_db
-from app.models.user import User
+from app.ml.ids_service import get_ids_service
 from app.models.settings import (
     DetectionSettings,
-    ProtectionSettings,
     NotificationSettings,
+    ProtectionSettings,
     SystemSettings,
-    WhitelistEntry
+    WhitelistEntry,
 )
+from app.models.user import User
+from app.schemas.common import MessageResponse
 from app.schemas.settings import (
+    AllSettingsResponse,
+    CreateWhitelistEntryRequest,
     DetectionSettingsResponse,
     DetectionSettingsUpdate,
-    ProtectionSettingsResponse,
-    ProtectionSettingsUpdate,
     NotificationSettingsResponse,
     NotificationSettingsUpdate,
+    ProtectionSettingsResponse,
+    ProtectionSettingsUpdate,
     SystemSettingsResponse,
     SystemSettingsUpdate,
-    AllSettingsResponse,
     WhitelistEntryResponse,
-    CreateWhitelistEntryRequest
 )
-from app.schemas.common import MessageResponse
-from app.api.dependencies import get_current_user
 from app.utils.logger import logger
+from app.utils.timeutil import utcnow
 
 router = APIRouter(prefix="/settings", tags=["Settings"])
 
+M = TypeVar("M")
 
-async def get_or_create_detection_settings(db: AsyncSession) -> DetectionSettings:
-    """Get or create detection settings (singleton)"""
-    result = await db.execute(select(DetectionSettings))
-    settings = result.scalar_one_or_none()
-    
-    if not settings:
-        settings = DetectionSettings()
-        db.add(settings)
+
+async def get_or_create(db: AsyncSession, model: Type[M]) -> M:
+    """Fetch the single settings row, creating it with defaults if missing."""
+    row = (await db.execute(select(model).order_by(model.updated_at).limit(1))).scalars().first()
+    if row is None:
+        row = model()
+        db.add(row)
         await db.commit()
-        await db.refresh(settings)
-    
-    return settings
+        await db.refresh(row)
+    return row
 
 
-async def get_or_create_protection_settings(db: AsyncSession) -> ProtectionSettings:
-    """Get or create protection settings (singleton)"""
-    result = await db.execute(select(ProtectionSettings))
-    settings = result.scalar_one_or_none()
-    
-    if not settings:
-        settings = ProtectionSettings()
-        db.add(settings)
-        await db.commit()
-        await db.refresh(settings)
-    
-    return settings
-
-
-async def get_or_create_notification_settings(db: AsyncSession) -> NotificationSettings:
-    """Get or create notification settings (singleton)"""
-    result = await db.execute(select(NotificationSettings))
-    settings = result.scalar_one_or_none()
-    
-    if not settings:
-        settings = NotificationSettings()
-        db.add(settings)
-        await db.commit()
-        await db.refresh(settings)
-    
-    return settings
-
-
-async def get_or_create_system_settings(db: AsyncSession) -> SystemSettings:
-    """Get or create system settings (singleton)"""
-    result = await db.execute(select(SystemSettings))
-    settings = result.scalar_one_or_none()
-    
-    if not settings:
-        settings = SystemSettings()
-        db.add(settings)
-        await db.commit()
-        await db.refresh(settings)
-    
-    return settings
+async def _apply_update(db: AsyncSession, model, updates, user: User):
+    row = await get_or_create(db, model)
+    for field, value in updates.model_dump(exclude_unset=True).items():
+        if value is None and not model.__table__.columns[field].nullable:
+            continue
+        setattr(row, field, value)
+    row.updated_at = utcnow()
+    row.updated_by = user.id
+    await db.commit()
+    await db.refresh(row)
+    await get_ids_service().reload_config()
+    logger.info(f"{model.__tablename__} updated by {user.email}")
+    return row
 
 
 @router.get("", response_model=AllSettingsResponse)
-async def get_all_settings(
-    current_user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db)
-):
-    """Get all settings categories"""
-    detection = await get_or_create_detection_settings(db)
-    protection = await get_or_create_protection_settings(db)
-    notifications = await get_or_create_notification_settings(db)
-    system = await get_or_create_system_settings(db)
-    
+async def get_all_settings(current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
     return AllSettingsResponse(
-        detection=DetectionSettingsResponse.model_validate(detection),
-        protection=ProtectionSettingsResponse.model_validate(protection),
-        notifications=NotificationSettingsResponse.model_validate(notifications),
-        system=SystemSettingsResponse.model_validate(system)
+        detection=DetectionSettingsResponse.model_validate(await get_or_create(db, DetectionSettings)),
+        protection=ProtectionSettingsResponse.model_validate(await get_or_create(db, ProtectionSettings)),
+        notifications=NotificationSettingsResponse.model_validate(await get_or_create(db, NotificationSettings)),
+        system=SystemSettingsResponse.model_validate(await get_or_create(db, SystemSettings)),
     )
 
 
 @router.get("/detection", response_model=DetectionSettingsResponse)
-async def get_detection_settings(
-    current_user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db)
-):
-    """Get detection settings"""
-    settings = await get_or_create_detection_settings(db)
-    return DetectionSettingsResponse.model_validate(settings)
+async def get_detection_settings(current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    return DetectionSettingsResponse.model_validate(await get_or_create(db, DetectionSettings))
 
 
 @router.put("/detection", response_model=DetectionSettingsResponse)
 async def update_detection_settings(
     updates: DetectionSettingsUpdate,
-    current_user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db)
+    current_user: User = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
 ):
-    """Update detection settings"""
-    settings = await get_or_create_detection_settings(db)
-    
-    # Apply updates
-    update_data = updates.model_dump(exclude_unset=True)
-    for field, value in update_data.items():
-        setattr(settings, field, value)
-    
-    settings.updated_at = datetime.utcnow()
-    settings.updated_by = current_user.id
-    
-    await db.commit()
-    await db.refresh(settings)
-    
-    logger.info(f"Detection settings updated by {current_user.email}")
-    
-    return DetectionSettingsResponse.model_validate(settings)
+    return DetectionSettingsResponse.model_validate(await _apply_update(db, DetectionSettings, updates, current_user))
 
 
 @router.get("/protection", response_model=ProtectionSettingsResponse)
-async def get_protection_settings(
-    current_user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db)
-):
-    """Get protection settings"""
-    settings = await get_or_create_protection_settings(db)
-    return ProtectionSettingsResponse.model_validate(settings)
+async def get_protection_settings(current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    return ProtectionSettingsResponse.model_validate(await get_or_create(db, ProtectionSettings))
 
 
 @router.put("/protection", response_model=ProtectionSettingsResponse)
 async def update_protection_settings(
     updates: ProtectionSettingsUpdate,
-    current_user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db)
+    current_user: User = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
 ):
-    """Update protection settings"""
-    settings = await get_or_create_protection_settings(db)
-    
-    # Apply updates
-    update_data = updates.model_dump(exclude_unset=True)
-    for field, value in update_data.items():
-        setattr(settings, field, value)
-    
-    settings.updated_at = datetime.utcnow()
-    settings.updated_by = current_user.id
-    
-    await db.commit()
-    await db.refresh(settings)
-    
-    logger.info(f"Protection settings updated by {current_user.email}")
-    
-    return ProtectionSettingsResponse.model_validate(settings)
+    row = await _apply_update(db, ProtectionSettings, updates, current_user)
+    ids = get_ids_service()
+    if updates.mode is not None and ids.enabled:
+        await ids.set_mode(updates.mode.value)
+        await ids.broadcast_status()
+    return ProtectionSettingsResponse.model_validate(row)
 
 
 @router.get("/notifications", response_model=NotificationSettingsResponse)
-async def get_notification_settings(
-    current_user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db)
-):
-    """Get notification settings"""
-    settings = await get_or_create_notification_settings(db)
-    return NotificationSettingsResponse.model_validate(settings)
+async def get_notification_settings(current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    return NotificationSettingsResponse.model_validate(await get_or_create(db, NotificationSettings))
 
 
 @router.put("/notifications", response_model=NotificationSettingsResponse)
 async def update_notification_settings(
     updates: NotificationSettingsUpdate,
-    current_user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db)
+    current_user: User = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
 ):
-    """Update notification settings"""
-    settings = await get_or_create_notification_settings(db)
-    
-    # Apply updates
-    update_data = updates.model_dump(exclude_unset=True)
-    for field, value in update_data.items():
-        setattr(settings, field, value)
-    
-    settings.updated_at = datetime.utcnow()
-    settings.updated_by = current_user.id
-    
-    await db.commit()
-    await db.refresh(settings)
-    
-    logger.info(f"Notification settings updated by {current_user.email}")
-    
-    return NotificationSettingsResponse.model_validate(settings)
+    return NotificationSettingsResponse.model_validate(
+        await _apply_update(db, NotificationSettings, updates, current_user)
+    )
 
 
 @router.get("/system", response_model=SystemSettingsResponse)
-async def get_system_settings(
-    current_user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db)
-):
-    """Get system settings"""
-    settings = await get_or_create_system_settings(db)
-    return SystemSettingsResponse.model_validate(settings)
+async def get_system_settings(current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    return SystemSettingsResponse.model_validate(await get_or_create(db, SystemSettings))
 
 
 @router.put("/system", response_model=SystemSettingsResponse)
 async def update_system_settings(
     updates: SystemSettingsUpdate,
-    current_user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db)
+    current_user: User = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
 ):
-    """Update system settings"""
-    settings = await get_or_create_system_settings(db)
-    
-    # Apply updates
-    update_data = updates.model_dump(exclude_unset=True)
-    for field, value in update_data.items():
-        setattr(settings, field, value)
-    
-    settings.updated_at = datetime.utcnow()
-    settings.updated_by = current_user.id
-    
-    await db.commit()
-    await db.refresh(settings)
-    
-    logger.info(f"System settings updated by {current_user.email}")
-    
-    return SystemSettingsResponse.model_validate(settings)
+    return SystemSettingsResponse.model_validate(await _apply_update(db, SystemSettings, updates, current_user))
 
 
 # ── Whitelist Management ──────────────────────────────────────────────────────
 
 @router.get("/whitelist", response_model=list[WhitelistEntryResponse])
-async def get_whitelist(
-    current_user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db)
-):
-    """Get all whitelist entries"""
+async def get_whitelist(current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
     result = await db.execute(
-        select(WhitelistEntry).where(WhitelistEntry.active == True).order_by(WhitelistEntry.created_at.desc())
+        select(WhitelistEntry).where(WhitelistEntry.active.is_(True)).order_by(WhitelistEntry.created_at.desc())
     )
-    entries = result.scalars().all()
-    
-    return [WhitelistEntryResponse.model_validate(entry) for entry in entries]
+    return [WhitelistEntryResponse.model_validate(entry) for entry in result.scalars().all()]
 
 
 @router.post("/whitelist", response_model=WhitelistEntryResponse)
 async def add_whitelist_entry(
     request: CreateWhitelistEntryRequest,
-    current_user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db)
+    current_user: User = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
 ):
-    """Add a new whitelist entry"""
-    
-    # Check for duplicates
-    result = await db.execute(
+    existing = (await db.execute(
         select(WhitelistEntry).where(
             WhitelistEntry.type == request.type,
             WhitelistEntry.value == request.value,
-            WhitelistEntry.active == True
-        )
-    )
-    existing = result.scalar_one_or_none()
-    
+            WhitelistEntry.active.is_(True),
+        ).limit(1)
+    )).scalars().first()
     if existing:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="This whitelist entry already exists"
-        )
-    
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="This whitelist entry already exists")
+
     entry = WhitelistEntry(
         type=request.type,
         value=request.value,
         description=request.description,
-        created_by=current_user.id
+        created_by=current_user.id,
     )
-    
     db.add(entry)
     await db.commit()
     await db.refresh(entry)
-    
-    logger.info(f"Whitelist entry added by {current_user.email}: {request.type}:{request.value}")
-    
+    await get_ids_service().reload_config()
+    logger.info(f"Whitelist entry added by {current_user.email}: {request.type.value}:{request.value}")
     return WhitelistEntryResponse.model_validate(entry)
 
 
 @router.delete("/whitelist/{entry_id}", response_model=MessageResponse)
 async def remove_whitelist_entry(
     entry_id: str,
-    current_user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db)
+    current_user: User = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
 ):
-    """Remove a whitelist entry"""
     try:
-        entry_uuid = UUID(entry_id)
+        entry_uuid = uuid.UUID(entry_id)
     except ValueError:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Invalid entry ID format"
-        )
-    
-    result = await db.execute(
-        select(WhitelistEntry).where(WhitelistEntry.id == entry_uuid)
-    )
-    entry = result.scalar_one_or_none()
-    
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid entry ID format")
+
+    entry = (await db.execute(select(WhitelistEntry).where(WhitelistEntry.id == entry_uuid))).scalar_one_or_none()
     if not entry:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Whitelist entry not found"
-        )
-    
-    # Soft delete
-    entry.active = False
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Whitelist entry not found")
+
+    entry.active = False  # soft delete (keeps the audit trail)
     await db.commit()
-    
-    logger.info(f"Whitelist entry removed by {current_user.email}: {entry.type}:{entry.value}")
-    
+    await get_ids_service().reload_config()
+    logger.info(f"Whitelist entry removed by {current_user.email}: {entry.type.value}:{entry.value}")
     return MessageResponse(message="Whitelist entry removed successfully")

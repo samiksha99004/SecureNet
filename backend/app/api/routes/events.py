@@ -1,285 +1,164 @@
 """
 SecureNet Backend — Security Events Routes
 
-Handles security event queries, filtering, pagination, and state management.
+Security event queries (filter / sort / paginate), export, and state changes.
 """
 
+import asyncio
+import uuid
 from typing import Optional
-from datetime import datetime
-from fastapi import APIRouter, Depends, HTTPException, status, Query
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, func, and_, or_
-from sqlalchemy.orm import selectinload
-from uuid import UUID
 
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
+from sqlalchemy import func, select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.api.dependencies import get_current_user, require_admin
 from app.db.base import get_db
+from app.models.security_event import EventState, SecurityEvent
 from app.models.user import User
-from app.models.security_event import SecurityEvent, EventState, SeverityLevel, Protocol, DetectionMode
-from app.schemas.security import SecurityEventResponse, ContributingFeature
-from app.schemas.common import PaginatedResponse, MessageResponse
-from app.api.dependencies import get_current_user
+from app.schemas.common import MessageResponse, PaginatedResponse
+from app.schemas.security import SecurityEventResponse
+from app.services import exporters
+from app.services.event_query import EventFilters, combine, sort_clause
 from app.utils.logger import logger
+from app.utils.timeutil import utcnow
 
 router = APIRouter(prefix="/events", tags=["Security Events"])
 
+EXPORT_LIMIT = 50_000
+
 
 def convert_event_to_response(event: SecurityEvent) -> SecurityEventResponse:
-    """Convert SecurityEvent model to response schema with proper camelCase output"""
-    contributing_features = []
-    if event.contributing_features:
-        contributing_features = [
-            ContributingFeature(**feat) for feat in event.contributing_features
-        ]
-    
-    # Use model_validate to leverage from_attributes and auto-aliasing
-    return SecurityEventResponse.model_validate({
-        'id': str(event.id),
-        'timestamp': event.timestamp,
-        'source_ip': event.source_ip,
-        'source_port': event.source_port,
-        'destination_ip': event.destination_ip,
-        'destination_port': event.destination_port,
-        'protocol': event.protocol,
-        'anomaly_score': event.anomaly_score,
-        'severity': event.severity,
-        'attack_type': event.attack_type,
-        'confidence': event.confidence,
-        'mode': event.mode,
-        'state': event.state,
-        'action_taken': event.action_taken,
-        'detection_reason': event.detection_reason,
-        'contributing_features': contributing_features,
-        'flow_duration_ms': event.flow_duration_ms,
-        'bytes_sent': event.bytes_sent,
-        'bytes_received': event.bytes_received,
-        'packets_sent': event.packets_sent,
-        'packets_received': event.packets_received
-    })
+    return SecurityEventResponse.model_validate(event)
 
 
-@router.get("", response_model=PaginatedResponse[SecurityEventResponse])
-async def get_events(
-    page: int = Query(1, ge=1),
-    pageSize: int = Query(20, ge=1, le=100),
+def _filters(
     search: Optional[str] = Query(None),
     severity: Optional[str] = Query(None),
     state: Optional[str] = Query(None),
     mode: Optional[str] = Query(None),
     attackType: Optional[str] = Query(None),
     protocol: Optional[str] = Query(None),
-    sortBy: str = Query("timestamp"),
-    sortOrder: str = Query("desc", pattern="^(asc|desc)$"),
     from_date: Optional[str] = Query(None, alias="from"),
     to_date: Optional[str] = Query(None, alias="to"),
+) -> EventFilters:
+    return EventFilters(search, severity, state, mode, attackType, protocol, from_date, to_date)
+
+
+@router.get("", response_model=PaginatedResponse[SecurityEventResponse])
+async def get_events(
+    page: int = Query(1, ge=1),
+    pageSize: int = Query(20, ge=1, le=100),
+    sortBy: str = Query("timestamp"),
+    sortOrder: str = Query("desc", pattern="^(asc|desc)$"),
+    filters: EventFilters = Depends(_filters),
     current_user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
 ):
-    """
-    Get paginated list of security events with filtering and sorting.
-    """
-    # Build query
+    """Paginated list of security events with filtering and sorting."""
+    where = combine(filters.conditions())
+    order = sort_clause(sortBy, sortOrder)
+
+    count_q = select(func.count()).select_from(SecurityEvent)
     query = select(SecurityEvent)
-    conditions = []
-    
-    # Text search on IPs
-    if search:
-        conditions.append(
-            or_(
-                SecurityEvent.source_ip.ilike(f"%{search}%"),
-                SecurityEvent.destination_ip.ilike(f"%{search}%")
-            )
-        )
-    
-    # Severity filter
-    if severity:
-        try:
-            conditions.append(SecurityEvent.severity == SeverityLevel(severity))
-        except ValueError:
-            pass
-    
-    # State filter
-    if state:
-        try:
-            conditions.append(SecurityEvent.state == EventState(state))
-        except ValueError:
-            pass
-    
-    # Mode filter
-    if mode:
-        try:
-            conditions.append(SecurityEvent.mode == DetectionMode(mode))
-        except ValueError:
-            pass
-    
-    # Attack type filter
-    if attackType:
-        if attackType.lower() == "normal" or attackType.lower() == "none":
-            conditions.append(SecurityEvent.attack_type.is_(None))
-        else:
-            conditions.append(SecurityEvent.attack_type == attackType)
-    
-    # Protocol filter
-    if protocol:
-        try:
-            conditions.append(SecurityEvent.protocol == Protocol(protocol))
-        except ValueError:
-            pass
-    
-    # Date range filter
-    if from_date:
-        try:
-            from_dt = datetime.fromisoformat(from_date.replace('Z', '+00:00'))
-            conditions.append(SecurityEvent.timestamp >= from_dt)
-        except ValueError:
-            pass
-    
-    if to_date:
-        try:
-            to_dt = datetime.fromisoformat(to_date.replace('Z', '+00:00'))
-            conditions.append(SecurityEvent.timestamp <= to_dt)
-        except ValueError:
-            pass
-    
-    # Apply conditions
-    if conditions:
-        query = query.where(and_(*conditions))
-    
-    # Count total
-    count_query = select(func.count()).select_from(SecurityEvent)
-    if conditions:
-        count_query = count_query.where(and_(*conditions))
-    result = await db.execute(count_query)
-    total = result.scalar()
-    
-    # Sorting
-    sort_column = getattr(SecurityEvent, sortBy, SecurityEvent.timestamp)
-    if sortOrder == "desc":
-        query = query.order_by(sort_column.desc())
-    else:
-        query = query.order_by(sort_column.asc())
-    
-    # Pagination
-    offset = (page - 1) * pageSize
-    query = query.limit(pageSize).offset(offset)
-    
-    # Execute query
-    result = await db.execute(query)
-    events = result.scalars().all()
-    
-    # Convert to response
-    event_responses = [convert_event_to_response(event) for event in events]
-    
-    total_pages = (total + pageSize - 1) // pageSize
-    
-    return PaginatedResponse(
-        data=event_responses,
+    if where is not None:
+        count_q = count_q.where(where)
+        query = query.where(where)
+    total = (await db.execute(count_q)).scalar() or 0
+
+    query = query.order_by(order, SecurityEvent.id).limit(pageSize).offset((page - 1) * pageSize)
+    events = (await db.execute(query)).scalars().all()
+
+    return PaginatedResponse[SecurityEventResponse](
+        data=[convert_event_to_response(e) for e in events],
         total=total,
         page=page,
         page_size=pageSize,
-        total_pages=total_pages
+        total_pages=(total + pageSize - 1) // pageSize,
     )
+
+
+@router.get("/export")
+async def export_events(
+    format: str = Query("csv", pattern="^(csv|pdf|json)$"),
+    sortBy: str = Query("timestamp"),
+    sortOrder: str = Query("desc", pattern="^(asc|desc)$"),
+    filters: EventFilters = Depends(_filters),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Export the events matching the current filters (max 50,000 rows)."""
+    query = select(SecurityEvent)
+    if (where := combine(filters.conditions())) is not None:
+        query = query.where(where)
+    query = query.order_by(sort_clause(sortBy, sortOrder)).limit(EXPORT_LIMIT)
+    events = (await db.execute(query)).scalars().all()
+
+    stamp = utcnow().strftime("%Y%m%d-%H%M%S")
+    if format == "csv":
+        body, media = await asyncio.to_thread(exporters.to_csv, events), "text/csv"
+    elif format == "json":
+        body, media = await asyncio.to_thread(exporters.to_json, events), "application/json"
+    else:
+        body = await asyncio.to_thread(exporters.to_pdf, events, "SecureNet — Security Events Export",
+                                       f"Exported {stamp} UTC by {current_user.email}")
+        media = "application/pdf"
+    return Response(
+        content=body,
+        media_type=media,
+        headers={"Content-Disposition": f'attachment; filename="securenet-events-{stamp}.{format}"'},
+    )
+
+
+async def _get_event(db: AsyncSession, event_id: str) -> SecurityEvent:
+    try:
+        event_uuid = uuid.UUID(event_id)
+    except ValueError:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid event ID format")
+    event = (await db.execute(select(SecurityEvent).where(SecurityEvent.id == event_uuid))).scalar_one_or_none()
+    if not event:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Event not found")
+    return event
 
 
 @router.get("/{event_id}", response_model=SecurityEventResponse)
 async def get_event_by_id(
     event_id: str,
     current_user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
 ):
     """Get a single security event by ID"""
-    try:
-        event_uuid = UUID(event_id)
-    except ValueError:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Invalid event ID format"
-        )
-    
-    result = await db.execute(
-        select(SecurityEvent).where(SecurityEvent.id == event_uuid)
-    )
-    event = result.scalar_one_or_none()
-    
-    if not event:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Event not found"
-        )
-    
-    return convert_event_to_response(event)
+    return convert_event_to_response(await _get_event(db, event_id))
+
+
+async def _set_state(db: AsyncSession, event_id: str, state: EventState, user: User) -> None:
+    event = await _get_event(db, event_id)
+    now = utcnow()
+    event.state = state
+    event.resolved_at = now
+    event.resolved_by = user.id
+    event.updated_at = now
+    await db.commit()
+    logger.info(f"Event {event_id} → {state.value} by {user.email}")
 
 
 @router.post("/{event_id}/resolve", response_model=MessageResponse)
 async def resolve_event(
     event_id: str,
-    current_user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db)
+    current_user: User = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
 ):
-    """Mark an event as resolved"""
-    try:
-        event_uuid = UUID(event_id)
-    except ValueError:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Invalid event ID format"
-        )
-    
-    result = await db.execute(
-        select(SecurityEvent).where(SecurityEvent.id == event_uuid)
-    )
-    event = result.scalar_one_or_none()
-    
-    if not event:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Event not found"
-        )
-    
-    event.state = EventState.RESOLVED
-    event.resolved_at = datetime.utcnow()
-    event.resolved_by = current_user.id
-    event.updated_at = datetime.utcnow()
-    
-    await db.commit()
-    
-    logger.info(f"Event {event_id} resolved by {current_user.email}")
-    
+    """Mark an event as resolved (admin)."""
+    await _set_state(db, event_id, EventState.RESOLVED, current_user)
     return MessageResponse(message="Event marked as resolved")
 
 
 @router.post("/{event_id}/false-positive", response_model=MessageResponse)
 async def mark_false_positive(
     event_id: str,
-    current_user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db)
+    current_user: User = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
 ):
-    """Mark an event as a false positive"""
-    try:
-        event_uuid = UUID(event_id)
-    except ValueError:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Invalid event ID format"
-        )
-    
-    result = await db.execute(
-        select(SecurityEvent).where(SecurityEvent.id == event_uuid)
-    )
-    event = result.scalar_one_or_none()
-    
-    if not event:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Event not found"
-        )
-    
-    event.state = EventState.FALSE_POSITIVE
-    event.resolved_at = datetime.utcnow()
-    event.resolved_by = current_user.id
-    event.updated_at = datetime.utcnow()
-    
-    await db.commit()
-    
-    logger.info(f"Event {event_id} marked as false positive by {current_user.email}")
-    
+    """Mark an event as a false positive (admin)."""
+    await _set_state(db, event_id, EventState.FALSE_POSITIVE, current_user)
     return MessageResponse(message="Event marked as false positive")
