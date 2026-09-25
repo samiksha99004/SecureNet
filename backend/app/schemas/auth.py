@@ -149,7 +149,7 @@ class ProfileChangeConfirm(CamelModel):
 
 
 class ChangePasswordRequest(CamelModel):
-    """Change password for authenticated user"""
+    """Step 1 of a password change: checked, then a code is emailed to the registered address."""
     current_password: str = Field(..., min_length=1)
     new_password: str = Field(..., min_length=8)
     confirm_new_password: str = Field(..., min_length=8)
@@ -159,6 +159,13 @@ class ChangePasswordRequest(CamelModel):
         if self.new_password != self.confirm_new_password:
             raise ValueError("Passwords do not match")
         return self
+
+
+class ChangePasswordConfirm(CamelModel):
+    """Step 2: the emailed code (plus the same new password) applies the change."""
+    change_token: str = Field(..., min_length=10)
+    otp: str = Field(..., min_length=6, max_length=6, pattern=r"^\d{6}$")
+    new_password: str = Field(..., min_length=8)
 
 
 # ── Auth Responses ────────────────────────────────────────────────────────────

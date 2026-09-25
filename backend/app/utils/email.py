@@ -141,6 +141,14 @@ async def send_password_reset_email(email: str, otp_code: str) -> None:
                      f"Enter it on the {settings.APP_NAME} forgot-password page, then choose a new password.")
 
 
+async def send_password_change_email(email: str, otp_code: str) -> None:
+    """Code confirming a signed-in user's password change. Raises EmailDeliveryError."""
+    await _send_code(email, otp_code, "Confirm your password change", "Password Change",
+                     f"Someone signed in to your {settings.APP_NAME} account asked to change its password. Enter "
+                     "this code on the Account page to confirm. If this was not you, ignore this email, keep your "
+                     f"password and tell the {settings.APP_NAME} admin.")
+
+
 async def send_profile_change_email(email: str, otp_code: str, summary: str) -> None:
     """Code confirming a change of the user's own details. Raises EmailDeliveryError."""
     await _send_code(email, otp_code, "Confirm your profile change", "Profile Change",

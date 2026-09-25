@@ -21,6 +21,10 @@ os.environ["SMTP_PASSWORD"] = ""
 os.environ["ML_AUTOLOAD"] = "false"
 os.environ["REPORTS_DIR"] = str(_TMP / "reports")
 os.environ["FRONTEND_DIST"] = ""
+# IDS on/off memory: temp files only, never the real Windows Startup folder; no desktop pop-ups
+os.environ["IDS_STATE_FILE"] = str(_TMP / "ids-state.json")
+os.environ["IDS_STARTUP_DIR"] = str(_TMP / "startup")
+os.environ["DESKTOP_NOTIFICATIONS"] = "false"
 
 import pytest  # noqa: E402
 from httpx import ASGITransport, AsyncClient  # noqa: E402
@@ -65,6 +69,7 @@ def captured_otps(monkeypatch):
 
     monkeypatch.setattr("app.api.routes.auth.send_otp_email", fake_send)
     monkeypatch.setattr("app.api.routes.auth.send_password_reset_email", fake_send)
+    monkeypatch.setattr("app.api.routes.auth.send_password_change_email", fake_send)
 
     async def fake_profile_send(email: str, code: str, summary: str) -> None:
         codes[email] = code

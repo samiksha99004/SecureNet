@@ -5,7 +5,10 @@
  * live monitoring feed.
  *
  * Features:
- *  - Automatic reconnection with exponential back-off
+ *  - Automatic reconnection with exponential back-off (never gives up; after
+ *    RECONNECT_WARN_AFTER failed tries the status shows "Connection error")
+ *  - A fresh access token for every connection attempt; a token the server
+ *    rejects (close 1008) is refreshed once before trying again
  *  - Typed message dispatching via event listeners
  *  - Connection status tracking
  *
@@ -23,7 +26,7 @@ import type {
   WebSocketMessageType,
   WebSocketStatus,
 } from '../types/websocket.types';
-import { tokenStore } from './apiClient';
+import { freshAccessToken, refreshSession, tokenStore } from './apiClient';
 
 // ── Config ────────────────────────────────────────────────────────────────────
 
@@ -33,7 +36,7 @@ const WS_URL: string =
 const WS_POLICY_VIOLATION = 1008; // server rejected the token
 const RECONNECT_BASE_DELAY_MS = 1000;
 const RECONNECT_MAX_DELAY_MS = 30000;
-const RECONNECT_MAX_ATTEMPTS = 10;
+const RECONNECT_WARN_AFTER = 10;
 const PING_INTERVAL_MS = 30000;
 
 // ── Listener Map ──────────────────────────────────────────────────────────────
@@ -49,6 +52,10 @@ class WebSocketService {
   private reconnectAttempts = 0;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private pingTimer: ReturnType<typeof setInterval> | null = null;
+  /** Bumped by connect/disconnect so a slow token refresh can't open a stale socket */
+  private generation = 0;
+  private opening = false;
+  private authRetried = false;
 
   private readonly messageListeners = new Map<
     WebSocketMessageType,
@@ -59,30 +66,43 @@ class WebSocketService {
   // ── Public API ──────────────────────────────────────────────────────────────
 
   connect(): void {
-    const token = tokenStore.getAccess();
-    if (!token) {
+    if (!tokenStore.getAccess()) {
       this.setStatus('disconnected');
       return;
     }
 
     if (
-      this.socket &&
-      (this.socket.readyState === WebSocket.OPEN ||
-        this.socket.readyState === WebSocket.CONNECTING)
+      this.opening ||
+      (this.socket &&
+        (this.socket.readyState === WebSocket.OPEN ||
+          this.socket.readyState === WebSocket.CONNECTING))
     ) {
       return;
     }
 
-    this.setStatus('connecting');
+    if (this.status !== 'error') this.setStatus('connecting');
+    this.opening = true;
+    const generation = ++this.generation;
 
-    try {
-      const url = `${WS_URL}${WS_URL.includes('?') ? '&' : '?'}token=${encodeURIComponent(token)}`;
-      this.socket = new WebSocket(url);
-      this.attachSocketHandlers();
-    } catch (err) {
-      console.error('[SecureNet WS] Failed to create WebSocket:', err);
-      this.setStatus('error');
-    }
+    // The stored token may have expired while the page sat open (e.g. the
+    // computer slept) — the server would refuse it, so refresh it first.
+    void freshAccessToken().then((token) => {
+      if (generation !== this.generation) return; // disconnected meanwhile
+      this.opening = false;
+      if (!token) {
+        this.setStatus('disconnected');
+        return;
+      }
+      try {
+        const url = `${WS_URL}${WS_URL.includes('?') ? '&' : '?'}token=${encodeURIComponent(token)}`;
+        this.socket = new WebSocket(url);
+        this.attachSocketHandlers();
+      } catch (err) {
+        console.error('[SecureNet WS] Failed to create WebSocket:', err);
+        this.setStatus('error');
+        this.scheduleReconnect();
+      }
+    });
   }
 
   /** Force a fresh connection (e.g. after the access token changed). */
@@ -94,6 +114,9 @@ class WebSocketService {
   disconnect(): void {
     this.clearTimers();
     this.reconnectAttempts = 0;
+    this.generation += 1;
+    this.opening = false;
+    this.authRetried = false;
     if (this.socket) {
       this.socket.onclose = null; // prevent reconnect on intentional close
       this.socket.close();
@@ -138,6 +161,7 @@ class WebSocketService {
 
     this.socket.onopen = () => {
       this.reconnectAttempts = 0;
+      this.authRetried = false;
       this.setStatus('connected');
       this.startPing();
     };
@@ -160,8 +184,19 @@ class WebSocketService {
       this.clearPing();
       this.socket = null;
       if (event.code === WS_POLICY_VIOLATION) {
-        // Token rejected — a fresh token (after refresh/login) is needed
-        this.setStatus('error');
+        // Token rejected: get a new one once and try again; if that fails the
+        // session is over (the next API call sends the user to sign in).
+        if (this.authRetried) {
+          this.setStatus('error');
+          return;
+        }
+        this.authRetried = true;
+        const generation = this.generation;
+        void refreshSession().then((ok) => {
+          if (generation !== this.generation) return;
+          if (ok) this.connect();
+          else this.setStatus('error');
+        });
         return;
       }
       this.scheduleReconnect();
@@ -182,14 +217,10 @@ class WebSocketService {
 
   private scheduleReconnect(): void {
     if (this.reconnectTimer !== null) return;
-    if (this.reconnectAttempts >= RECONNECT_MAX_ATTEMPTS) {
-      console.error('[SecureNet WS] Max reconnect attempts reached.');
-      this.setStatus('error');
-      return;
-    }
-
-    this.setStatus('reconnecting');
+    // A monitor must not give up: keep trying every 30 s, but after a while
+    // show "Connection error" instead of "Reconnecting…".
     this.reconnectAttempts += 1;
+    this.setStatus(this.reconnectAttempts > RECONNECT_WARN_AFTER ? 'error' : 'reconnecting');
 
     const delay = Math.min(
       RECONNECT_BASE_DELAY_MS * Math.pow(2, this.reconnectAttempts - 1),

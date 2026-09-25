@@ -10,7 +10,7 @@ import styles from './GuideCard.module.css';
 const STEPS: { title: string; text: string }[] = [
   {
     title: 'Turn the IDS on',
-    text: 'On the Dashboard, press the ON/OFF button. While it is ON, SecureNet watches your network.',
+    text: 'On the Dashboard, press the ON/OFF button. While it is ON, SecureNet watches your network. If you shut down the computer while it is ON, it turns itself back on when you start the computer and a desktop notice says "SecureNet is on and is monitoring."',
   },
   {
     title: 'Get alerted',
@@ -26,7 +26,7 @@ const STEPS: { title: string; text: string }[] = [
   },
   {
     title: 'Make it yours',
-    text: 'In Settings choose the dark or peach theme and turn notifications or their sound on or off. On Account you can change your name, phone number or email (confirmed with a code).',
+    text: 'In Settings choose the dark or peach theme and turn notifications or their sound on or off. On Account you can change your name, phone number, email or password (each confirmed with a code sent to your email).',
   },
 ];
 

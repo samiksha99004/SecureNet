@@ -25,7 +25,7 @@ The conference paper is `conference_paper_no_results_conclusion (2).pdf`.
 | Storage | PostgreSQL: score, category, top features, action | ✅ `security_events` (+ `contributing_features`) |
 | API | FastAPI REST + WebSocket live stream | ✅ `/api/*`, `/ws/live` (token-authenticated) |
 | UI | React + TypeScript dashboard, live score graph, alerts, report history | ✅ dark + warm **peach** light theme (Settings → Preferences); plain-language copy for common users |
-| Alerts | Desktop + email notifications | ✅ in-app pop-ups, bell, sound, desktop; batched alert email to every registered user **from the admin Gmail with the incident report (.txt) attached**; daily reports on the Reports page |
+| Alerts | Desktop + email notifications | ✅ in-app pop-ups, bell, sound, desktop; batched alert email to every registered user **from the admin Gmail with the incident report (.txt) attached**; daily reports on the Reports page; IDS left ON survives a shutdown (turns itself back on at the next start + one Windows desktop notice) |
 
 **Models are optional and currently NOT loaded** (owner's decision: "either Isolation Forest or XGBoost or both",
 to be enabled later). With no model the IDS still captures and counts traffic but scores nothing; the UI says so.
@@ -48,7 +48,7 @@ anomaly score = 1 − P(benign).
 ## 2. Repository layout
 
 ```
-SecureNet (3)/                               ← git root (github.com/samiksha99004/SecureNet-3-)
+SecureNet/                                   ← git root F:\SecureNet (github.com/samiksha99004/SecureNet-3-)
 ├── CLAUDE.md                                ← this file
 ├── README.md                                ← GitHub front page: what it is, folder layout, getting started
 ├── START_SECURENET.bat                      ← double-click launcher: backend (:8000) + Vite (:5173), waits for /health, opens browser
@@ -57,6 +57,7 @@ SecureNet (3)/                               ← git root (github.com/samiksha99
 │                                              missing), npm install, .env + Neon + email + Npcap checks
 ├── scripts/securenet-env.ps1                ← shared helpers: tool/cache dirs (F: or .local), find Node/Python
 ├── .local/                                  ← tools/caches on PCs without an F: drive (gitignored)
+├── docs/QA_REPORT_2026-09-25.md             ← latest full QA report (tests, bugs fixed, still open)
 ├── docs/archive/                            ← old AI-generated status reports (historical, NOT accurate)
 ├── backend/                                 ← FastAPI service (Python 3.13 venv in backend\venv)
 │   ├── app/
@@ -72,6 +73,8 @@ SecureNet (3)/                               ← git root (github.com/samiksha99
 │   │   ├── services/event_query.py          ← shared filters / safe sort map for events, export, reports
 │   │   ├── services/exporters.py            ← CSV / JSON / PDF (reportlab)
 │   │   ├── services/notifier.py             ← alert e-mails: batching, filters, recipients, digest
+│   │   ├── services/autostart.py            ← IDS ON/OFF memory (data/ids-state.json), Startup-folder entry, resume at start
+│   │   ├── utils/desktop.py                 ← Windows toast notifications from the backend (app id SecureNet.IDS)
 │   │   ├── api/routes/notifications.py      ← GET feed, GET status, POST test-email
 │   │   ├── ml/features.py                   ← CICIDS2018 flow features (Flow, FlowRecord, FEATURE_COLUMNS)
 │   │   ├── ml/network_monitor.py            ← Scapy AsyncSniffer → finished flows (FIN/RST/idle/active timeout)
@@ -86,6 +89,8 @@ SecureNet (3)/                               ← git root (github.com/samiksha99
 │   ├── create_admin_user.py                 ← create/promote an admin (password prompted)
 │   ├── setup.ps1                            ← compatibility wrapper → root SETUP.ps1
 │   ├── scripts/check_setup.py               ← SETUP's read-only check: .env, Neon connection, email status
+│   ├── scripts/autostart.py                 ← run by the Startup shortcut (pythonw, no window) → backend; log in logs/autostart.log
+│   ├── data/ids-state.json                  ← saved IDS ON/OFF choice for this computer (gitignored)
 │   ├── requirements.txt / requirements-ml.txt
 │   └── .env (gitignored, Neon URL + JWT secret) / .env.example
 ├── desktop/                                 ← optional Electron shell
@@ -121,17 +126,28 @@ IDSService._worker ◀───────────────────�
 AlertNotifier (asyncio task): waits ALERT_EMAIL_BATCH_SECONDS after the first alert, filters by
    Settings → Notifications (high / medium / blocked), emails ALL active registered users + optional
    extra address (one email per recipient, one SMTP session), hourly-granularity digest if enabled.
+IDS across a shutdown (session 24, `services/autostart.py`): `/ids/control` ON (successful start) saves
+   {enabled: true, startedBy} to `data/ids-state.json` and creates `SecureNet Monitor.lnk` in the user's Startup
+   folder (venv `pythonw.exe` → `backend/scripts/autostart.py`, no admin, no window); OFF saves false and deletes it
+   (also when the IDS wasn't running). Server shutdown (`ids.stop()` in lifespan) keeps the saved choice. At every
+   backend start, lifespan runs `resume_after_restart()`: saved ON ⇒ `ids.start()` (retries 20 × 15 s while network/DB
+   aren't up), restores `started_by`, then ONE Windows toast "SecureNet is on and is monitoring." (never email).
+   Capture unavailable ⇒ one plain toast "SecureNet could not turn monitoring back on". `autostart.py` exits if
+   port 8000 is already in use; START_SECURENET.bat later skips the busy backend port and just opens the dashboard.
 Frontend: NotificationProvider (inside BrowserRouter) listens to WS `alert` → pop-up card (AlertPopups),
    bell feed + unread badge (NotificationBell, read state per user in localStorage), alert tone,
    desktop notification when the tab is not focused; "View incident" → /history?event=<id> opens the drawer.
    Dashboard polls every 15 s + refreshes on `alert` / `system_status` WS messages.
+WebSocket auth: a bad/expired token is accepted then closed with **1008** (not a failed handshake).
+   `websocketService` gets a fresh token before every (re)connect (`freshAccessToken()` in apiClient),
+   refreshes once on 1008, and never stops retrying (30 s max back-off; "Connection error" after 10 tries).
 ```
 
 **API** (all under `/api` except `/health`, `/ws/live`):
-`auth/{signup,otp/verify,signup/complete,login,otp/resend,password/forgot,password/verify,password/reset,profile/change,profile/confirm,refresh,logout,me,change-password}` ·
+`auth/{signup,otp/verify,signup/complete,login,otp/resend,password/forgot,password/verify,password/reset,profile/change,profile/confirm,refresh,logout,me,change-password,change-password/confirm}` ·
 `events` (list, `export?format=csv|pdf|json`, `{id}`, `{id}/resolve`, `{id}/false-positive`) ·
 `dashboard/{summary,host-status,protocol-distribution,top-sources}` · `ids/{status,control}` ·
-`model/{info,feature-importance,reload}` · `reports/daily?tzOffset=` (days with attacks) + `reports/daily/{YYYY-MM-DD}/download?format=txt|csv|pdf&tzOffset=` (UI) — old generate/list/download/delete endpoints still exist but the UI no longer uses them ·
+`model/{info,feature-importance,reload}` · `reports/daily?tzOffset=` (days with attacks) + `reports/daily/{YYYY-MM-DD}/download?format=txt|csv|pdf&tzOffset=` (UI; the old saved-report generate/list/download/delete endpoints were removed in session 21) ·
 `settings` (all, detection, protection, notifications, system, whitelist CRUD) ·
 `notifications` (feed, `status`, `test-email`) · `support/contact` (public: website, phone, email — falls back to the
 first `ADMIN_EMAILS` — and admin office address; edited in Settings → System → Contact details) · `support/message`
@@ -153,6 +169,14 @@ shows "Your password has been changed". All codes are emailed from the admin Gma
 emailed (to the NEW email when it changes; taken emails refused) + a 15-min `changeToken` (JWT type `profile` holding
 the changes) → `POST /auth/profile/confirm` {changeToken, otp} applies them (old address notified on email change).
 UI: Account → *Edit Details*.
+
+**Change password (2-step, session 23)**: `POST /auth/change-password` {currentPassword, newPassword,
+confirmNewPassword} → current password checked (wrong tries count toward the network sign-in limit), strength +
+"must differ" checked, a code is emailed to the **registered** address (60 s cooldown) + a 15-min `changeToken`
+(JWT type `password`: user id, fingerprint of the current hash ⇒ single use, and an HMAC of the new password — the
+password itself is never in the token) → `POST /auth/change-password/confirm` {changeToken, otp, newPassword}
+(same new password required) sets it. Nothing changes before the code. UI: Account → *Change Password* → code step
+(Confirm new password / Resend code / Cancel).
 
 **Attack emails**: every active non-admin user (+ Settings extra address) gets the normal alert; every admin gets
 `[SecureNet Admin] …` with *who turned the IDS on* (`IDSService.started_by`, set in `/ids/control`), the monitored
@@ -206,6 +230,10 @@ every time:          double-click START_SECURENET.bat  (right-click → Run as a
      SMTP). Without it SETUP stops with a clear message.
   2. Needs Windows + Python 3.11–3.14 (python.org) + internet. Node.js is downloaded by SETUP if missing
      (SHA-256 checked). A venv copied from another PC is detected as broken and rebuilt.
+     **Renaming/moving the project folder** keeps the venv importable but breaks its `.exe` launchers
+     (`pip.exe`, `alembic.exe`, `uvicorn.exe` point at the old path). The scripts use `python -m …` so the
+     app still runs; to repair the launchers reinstall the same versions with
+     `python -m pip install --force-reinstall --no-deps <pkg>==<ver>` (done 2026-09-25 after `SecureNet (3)` → `SecureNet`).
   3. SETUP checks the `.env`, connects to Neon, reports email status and whether Npcap is installed.
   4. Live capture on the new PC needs Npcap + Administrator, as here.
 - **Database is always the cloud Neon PostgreSQL.** `config.py` refuses SQLite / localhost `DATABASE_URL`
@@ -220,11 +248,40 @@ every time:          double-click START_SECURENET.bat  (right-click → Run as a
   `samiksha99004@gmail.com` with an App Password (in `.env` only); a real test email was sent successfully.
 - **Live capture on Windows requires [Npcap](https://npcap.com)** (system driver, installs to C: by design) and an
   Administrator backend. Without it, turning the IDS on returns a clear 503 message. Npcap is **not installed** yet.
+  The start-up entry (IDS left ON at shutdown) starts the backend **without** admin rights; capture then works as long
+  as Npcap is installed with its default setting ("Restrict Npcap driver's access to Administrators only" **unticked**).
 - Enable models later: put the `.pkl` files in `backend/models/`, `.\setup.ps1 -WithML`, then set
   `ML_AUTOLOAD=true` in `.env` **or** click *Settings → Model → Load / reload models* (admin).
 - Electron: `npm run build:frontend` then `npm start` in `desktop\` (backend serves the SPA on :8000).
 
 ## 6. Verification status (2026-09-25)
+- **Session 24 — IDS stays on after a restart:** backend **94/94 pytest** (new `tests/test_autostart.py`, 8 tests:
+  ON remembered + Startup entry, OFF forgets + entry removed, failed start not remembered, OFF clears a saved ON
+  when not running, server shutdown keeps the choice, resume = IDS on + started_by + exactly one notice, no resume
+  when OFF, retries until the DB is reachable, capture unavailable ⇒ plain failure notice). Live on the harness
+  (:8001, fake capture, entry in a temp folder): ON → state + `SecureNet Monitor.lnk`; kill server (shutdown) →
+  restart ⇒ IDS ON, **one real Windows toast** "SecureNet is on and is monitoring." (checked in the notification
+  history), 0 emails; OFF → entry removed, next restart stays OFF, no toast. Real start-up path: the shortcut
+  (pythonw → `scripts/autostart.py`) started the real backend on Neon with no window (`/health` OK, log in
+  `logs/autostart.log`) and exits with "already running" when port 8000 is busy. The real Startup folder was not
+  touched by any test. tsc/oxlint (0 errors)/build clean.
+- **Session 23 — password change with emailed code:** backend **86/86 pytest** (`test_change_password` now covers
+  wrong current, same password, code emailed, old password still valid before the code, wrong code, token bound to
+  the new password / the user / its type, success, single use). Frontend tsc/oxlint (0 errors)/build clean.
+  Chrome (`qa3/pwchange.js`, harness on :8001 + Vite :5174 so the owner's app kept running) **11/11**, 0 page errors.
+  Real backend restarted; `/auth/change-password/confirm` live.
+- **Session 21 — full QA pass + fixes** (report: `docs/QA_REPORT_2026-09-25.md`). Backend **86/86 pytest**
+  (new: `test_two_quick_starts_open_one_capture` (fails on the old code), `test_unknown_email_still_checks_a_password`,
+  `test_legacy_saved_report_endpoints_are_gone`, `test_huge_page_number_is_refused_cleanly`; WebSocket test now
+  requires close code 1008). Frontend tsc clean, oxlint 0 errors (6 advisory), build OK, `npm audit` 0. **Live API**
+  on a new harness (`F:\dev-cache\ui-check\qa3\harness.py`: real app, temp SQLite, captured emails, `/__test/*` hooks)
+  84/84 incl. a 252-request route matrix (0 server errors, uniform errors, anon/user blocked correctly), hostile
+  inputs, CORS, WebSocket auth/ping/live alert, user + admin alert emails with report, reports, support, profile.
+  **Chrome E2E** 40/41 (1 known test artefact: the resend timer after an artificially aged code), 0 browser errors.
+  **Token-expiry scenario** (`ws-expiry.js`, 1-minute tokens, server restart): failed before the fix (stuck
+  "Reconnecting…", no pop-up), passes after. **Neon read-only audit** (`neon_check.py`): head `d5f9a3c7e2b8`, schema
+  = models, 1 row per settings table, 2 active users (admin samiksha99004@gmail.com + user samiksha94820@gmail.com),
+  0 events, 0 stale codes; cold start ≈ 6 s, round trip ≈ 360 ms. Real backend smoke test on Neon OK.
 - Session 18: backend **83/83 pytest** (+ `tests/test_profile_and_limits.py`: name/phone change needs code, wrong
   code, reuse, email change → code to new address + old notified + sign-in with new email, rules (nothing to change,
   taken email, bad phone/name, signed-out), token bound to one user; network limits for failed sign-ins across
@@ -390,6 +447,14 @@ every time:          double-click START_SECURENET.bat  (right-click → Run as a
 | Q7 | Low → fixed | Limits only per account; support limit reset on restart | Per-network-address limits + support messages stored in the database |
 | P20 | Users could not change their details | Account → Edit Details with an emailed code per change (email change verified on the new address) |
 | P21 | One alert email for everybody | Normal alert for users, detailed admin copy (who turned the IDS on, computer, registered users, full event) |
+| R1 | **Medium (session 21)** Live alerts silently stopped: after the 60-min access token expired, any WebSocket drop reconnected with the stale token forever (server refused before the handshake → browser saw 1006, not 1008) | Server accepts then closes 1008; client refreshes the token before every (re)connect and once on 1008; retries never stop |
+| R2 | **Medium (session 21)** Two quick IDS "ON" requests both passed the `enabled` check → a second packet sniffer that was never stopped | `IDSService` start/stop serialised with an `asyncio.Lock`; regression test |
+| R3 | Low (session 21) Login response time revealed registered emails (7 ms vs 54 ms); PBKDF2 ran on the event loop | Dummy-hash check for unknown emails; password checks via `asyncio.to_thread` |
+| R4 | Low (session 21) `GET /api/events?page=1e20` → 500 | `page` capped at 1,000,000 (422) |
+| Q5 | Low (session 21) Legacy saved-report endpoints writable by any user | Removed (`reports.py` = daily reports only); unused report schemas deleted |
+| R5 | Env (session 21) venv `.exe` launchers broken after renaming the folder | Same versions force-reinstalled (§5) |
+| P22 | Changing the password needed only the current password (no second factor) | Session 23: 6-digit code emailed to the registered address confirms every password change |
+| P23 | IDS was OFF after every restart even if the user left it ON | Session 24: saved ON/OFF choice + Startup-folder entry; resumes at start with one desktop notice |
 | P5 | First start on a fresh install could show the boot error while Vite prepared dependencies | `index.html` retries once automatically before reporting |
 | M14 | No alert notifications | Full notification system (pop-ups, bell feed, sound, desktop, batched emails to registered users, digest, test email) |
 | L1–L4, L6, L7, L9 | Deprecations, no-op middleware, unused deps, stats, clutter, LIKE escaping, unverified build | Fixed / archived |
@@ -407,14 +472,13 @@ every time:          double-click START_SECURENET.bat  (right-click → Run as a
 | O5 | Low | Tokens in localStorage; logout doesn't revoke refresh tokens server-side | Consider httpOnly cookies / token denylist |
 | O15 | Low | Support messages are not stored (email only) and the rate limit resets on restart. Contact details: email `samiksha99004@gmail.com`, phone `1234567898`, office `MITE, Mangalore`; website blank (owner's choice) | Add a message form that emails the admin; admin fills Contact details |
 | Q4 | Medium | Database far away (Neon us-east-2, ~305 ms round trip from India): first request after idle ~3 s, warm ~0.6 s | Move the Neon project to ap-southeast-1 (Singapore) for ~4× faster responses |
-| Q5 | Low | Legacy "generate report" endpoints (`POST/GET/DELETE /api/reports…`) still callable by any signed-in user although the UI no longer uses them (they write files to disk) | Remove them (daily reports replace them) |
 | Q6 | Low | OTP codes stored in plain text in `otps` (valid 10 min, 5 tries) | Store a hash of the code |
 | Q8 | Low | "Send verification code" waits ~4 s for Gmail | Acceptable; could send in background (loses error reporting) |
 | Q9 | Info | Starlette TestClient deprecation warning in tests; Windows asyncio "connection reset" log line when a browser closes abruptly | Cosmetic |
 | S1 | **Critical** | The Neon DB password (and the old JWT secret) were committed in two status notes and were **public on GitHub** from commit "updating" until 2026-09-25. History was rewritten and force-pushed without them, and the JWT secret was rotated, but anyone who copied the repo earlier still has the password | **Owner: reset the Neon role password now** and update `DATABASE_URL` in `backend/.env`; GitHub may keep cached copies of old commits for a while (contact GitHub support to purge if needed) |
 | O12 | Low | Notification read-state is per browser (localStorage), not synced across devices; digest timer resets on backend restart | Add a `notification_reads` table if needed |
 | O7 | Low | Electron package doesn't bundle Python; `npm start` from source only | Document or add PyInstaller build |
-| O8 | Low | `detection_settings.min_flows_for_analysis` / `analysis_interval_ms` columns unused (hidden in UI) | Drop in a future migration |
+| O8 | Low | `detection_settings.min_flows_for_analysis` / `analysis_interval_ms` columns unused (hidden in UI); since session 21 also the `reports` table / `Report` model and the `REPORTS_DIR` setting | Drop in a future migration |
 | O9 | Low | Leftover untracked `backend/securenet.db` (kept by owner's choice; unused — local DBs are refused); old `backend/.env` has unused keys (ignored) | Safe to delete/clean manually |
 | O10 | Low | 8 advisory oxlint `set-state-in-effect` warnings | Refactor tabs to keyed form components if desired |
 
@@ -449,3 +513,7 @@ every time:          double-click START_SECURENET.bat  (right-click → Run as a
 | 2026-09-25 (18) | **Admin account, profile changes with OTP, admin alert email, Npcap download, issue #7.** Created admin Samiksha Jain (samiksha99004@gmail.com, 9482046521) in Neon. Backend: `PROFILE_TOKEN_TYPE` + `create_profile_token`, `ProfileChange*` schemas, `/auth/profile/change` + `/auth/profile/confirm`, `send_profile_change_email`; notifier `split_recipients`, `render_admin_email`, `fetch_events`/`report_attachment`, `IDSService.started_by`; `app/utils/ratelimit.py` wired into login/signup/resend/forgot/verify/profile/support; `SupportMessage` model + migration `d5f9a3c7e2b8` (applied); tests 83/83. Frontend: `EditProfileCard` (Account page), `requestProfileChange`/`confirmProfileChange`, guide text. Npcap 1.89 installer downloaded to `F:\tools\installers` (not installed). Chrome harness 15/15. Real app relaunched. Not committed. |
 | 2026-09-25 (19) | **Published to GitHub** (`samiksha99004/SecureNet-3-`, public). Pre-push scan found the real Neon DB password + old JWT secret in `docs/archive/FIXED_AND_READY.md` and `NEON_POSTGRESQL_MIGRATION_COMPLETE.md` (already public since commit "updating"). With the owner's approval: git bundle backup (`F:\SecureNet-backup\securenet-git-before-rewrite.bundle`), JWT secret rotated in `backend/.env` (old .env backed up), docs redacted, work committed in 5 grouped commits (repo tidy, backend, frontend, tooling, docs), history rewritten with `git-filter-repo --replace-text` (installed in the F: venv) — 0 secret hits across all commits/6,902 objects — then force-pushed `main`. Verified no private files (.env, venv, node_modules, dist, *.db, *.pkl) are tracked; pytest 83/83 after the rewrite. Owner must still reset the Neon password (S1). |
 | 2026-09-25 (20) | **Folder layout tidied** (owner: the nested `SecureNet (2)/SecureNet` folder looked bad). Moved the React app to `frontend/` and the Electron shell (`package.json`, `package-lock.json`, `electron/`) to `desktop/`; deleted the empty stub `SecureNet (2)/package-lock.json` and the folder. Updated `scripts/securenet-env.ps1` (`$FrontendDir`), `desktop/electron/main.js` (backend = `../../backend`, dist = `../../frontend/dist`), `desktop/package.json` (`build:frontend` → `../frontend`), `.gitignore` (`desktop/dist-electron/`). New root `README.md`; frontend README (was the Vite template) and backend README roles line rewritten. `docs/archive` left untouched (historical). Verified: frontend build + oxlint from `frontend/`, Electron paths resolve, pytest 83/83, `START_SECURENET.bat` → `/health` OK (Neon connected) + UI 200 on :5173. Committed and pushed (normal push). The root folder is still named `SecureNet (3)` locally (GitHub repo `SecureNet-3-`). |
+| 2026-09-25 (21) | **Full QA pass + fixes** (owner: test frontend, backend, database, API; fix; report; update CLAUDE.md). Project folder is now `F:\SecureNet` (renamed from `SecureNet (3)`). Wrote a new harness + suites in `F:\dev-cache\ui-check\qa3` (`harness.py`, `api_test.py`, `e2e.js`, `ws-expiry.js`, read-only `neon_check.py`). Fixed: **R1** live alerts stopped after token expiry + reconnect (`main.py` WS accept→close 1008; `apiClient.ts` `freshAccessToken`/`refreshSession`; `websocketService.ts` fresh token per connect, one refresh on 1008, endless 30 s retries); **R2** IDS double-start race (`ids_service.py` `_lifecycle_lock`); **R3** login timing leak + PBKDF2 off the event loop (`auth.py` `_DUMMY_PASSWORD_HASH`, `asyncio.to_thread`); **R4** huge `page` → 500 (`events.py` `MAX_PAGE`); **Q5** legacy saved-report endpoints removed (`reports.py`, `schemas/report.py`); **R5** venv launchers repaired. Tests: pytest 86/86, live API 84/84, Chrome E2E 40/41 (known artefact), token-expiry scenario pass, Neon audit pass, real-backend smoke test OK. Report: `docs/QA_REPORT_2026-09-25.md`. Not committed. |
+| 2026-09-25 (22) | Owner asked to run the app: started with `START_SECURENET.bat` via Explorer (after the session-21 fixes) — `/health` OK (Neon connected), UI 200 on :5173, browser opened by the launcher. No code changes. |
+| 2026-09-25 (23) | **Two-factor password change** (owner: changing password had no 2FA; add an OTP to the registered email). Backend: `PASSWORD_CHANGE_TOKEN_TYPE`, `new_password_digest`, `create_password_change_token` (security.py); `ChangePasswordConfirm` schema; `send_password_change_email`; `/auth/change-password` now checks and emails a code (returns `changeToken`, `sentTo`, `message`), new `/auth/change-password/confirm`; conftest captures the new email; `test_change_password` extended. Frontend: `ChangePasswordConfirm` type, `confirmPasswordChange`, `ChangePasswordCard` code step. 86/86 pytest, tsc/oxlint/build clean, Chrome 11/11. Real backend restarted via the launcher. Not committed. |
+| 2026-09-25 (24) | **IDS stays on after shutdown/restart + desktop notice** (owner: if the IDS is on when the computer is shut down it should be on again when the computer starts, with one desktop-only notification "SecureNet is on and is monitoring", no email). New `app/services/autostart.py` (state file, Startup `.lnk` via PowerShell WScript.Shell, `resume_after_restart`), `app/utils/desktop.py` (Windows toast, HKCU AppUserModelId `SecureNet.IDS`, text passed via env vars), `backend/scripts/autostart.py` (pythonw launcher, port check, log rotation). `config.py`: `IDS_AUTOSTART`, `IDS_STATE_FILE`, `IDS_STARTUP_DIR`, `DESKTOP_NOTIFICATIONS` (+ `.env.example`); `ids.py` remembers ON/OFF; `main.py` lifespan starts/cancels the resume task; `backend/.gitignore` `data/`; conftest + harness use temp dirs and no pop-ups (harness `HARNESS_FAKE_CAPTURE=1`). Guide text updated (restart behaviour; password change by code). 94/94 pytest, harness restart simulation, real shortcut start on Neon. Real app relaunched via the launcher. Not committed. |

@@ -26,6 +26,7 @@ from app.utils.timeutil import utcnow
 router = APIRouter(prefix="/events", tags=["Security Events"])
 
 EXPORT_LIMIT = 50_000
+MAX_PAGE = 1_000_000  # far beyond any real history; stops offsets the database can't hold
 
 
 def convert_event_to_response(event: SecurityEvent) -> SecurityEventResponse:
@@ -47,7 +48,7 @@ def _filters(
 
 @router.get("", response_model=PaginatedResponse[SecurityEventResponse])
 async def get_events(
-    page: int = Query(1, ge=1),
+    page: int = Query(1, ge=1, le=MAX_PAGE),
     pageSize: int = Query(20, ge=1, le=100),
     sortBy: str = Query("timestamp"),
     sortOrder: str = Query("desc", pattern="^(asc|desc)$"),

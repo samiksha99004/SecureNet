@@ -101,6 +101,7 @@ class IDSService:
         self._queue: Optional[asyncio.Queue] = None
         self._loop: Optional[asyncio.AbstractEventLoop] = None
         self._tasks: list[asyncio.Task] = []
+        self._lifecycle_lock = asyncio.Lock()
         self._last_score_times: list[float] = []
 
         self.flows_analyzed = 0
@@ -129,53 +130,57 @@ class IDSService:
 
     async def start(self, mode: Optional[str] = None) -> None:
         """Start capture + detection. Raises CaptureUnavailable on failure."""
-        if self.enabled:
-            if mode:
-                await self.set_mode(mode)
-            return
-        await self.reload_config()
-        await self.set_mode(mode or self.config.default_mode.value)
+        # One start/stop at a time: two quick "ON" clicks (or two users) must not
+        # both pass the `enabled` check and leave a second sniffer running.
+        async with self._lifecycle_lock:
+            if self.enabled:
+                if mode:
+                    await self.set_mode(mode)
+                return
+            await self.reload_config()
+            await self.set_mode(mode or self.config.default_mode.value)
 
-        self._loop = asyncio.get_running_loop()
-        self._queue = asyncio.Queue(maxsize=QUEUE_SIZE)
-        self.monitor = NetworkMonitor(
-            on_flow=self._enqueue_from_thread,
-            interface=settings.CAPTURE_INTERFACE or None,
-            idle_timeout=settings.FLOW_IDLE_TIMEOUT_SECONDS,
-            active_timeout=settings.FLOW_ACTIVE_TIMEOUT_SECONDS,
-        )
-        try:
-            await asyncio.to_thread(self.monitor.start)
-        except CaptureUnavailable as exc:
-            self.capture_error = str(exc)
-            self.monitor = None
-            logger.error(f"IDS start failed: {exc}")
-            raise
+            self._loop = asyncio.get_running_loop()
+            self._queue = asyncio.Queue(maxsize=QUEUE_SIZE)
+            self.monitor = NetworkMonitor(
+                on_flow=self._enqueue_from_thread,
+                interface=settings.CAPTURE_INTERFACE or None,
+                idle_timeout=settings.FLOW_IDLE_TIMEOUT_SECONDS,
+                active_timeout=settings.FLOW_ACTIVE_TIMEOUT_SECONDS,
+            )
+            try:
+                await asyncio.to_thread(self.monitor.start)
+            except CaptureUnavailable as exc:
+                self.capture_error = str(exc)
+                self.monitor = None
+                logger.error(f"IDS start failed: {exc}")
+                raise
 
-        self.capture_error = None
-        self.enabled = True
-        self.started_at = time.time()
-        self._tasks = [
-            asyncio.create_task(self._worker(), name="ids-worker"),
-            asyncio.create_task(self._maintenance(), name="ids-maintenance"),
-        ]
-        logger.info(f"IDS started (mode={self.mode.value}, detector={self.detector.name})")
+            self.capture_error = None
+            self.enabled = True
+            self.started_at = time.time()
+            self._tasks = [
+                asyncio.create_task(self._worker(), name="ids-worker"),
+                asyncio.create_task(self._maintenance(), name="ids-maintenance"),
+            ]
+            logger.info(f"IDS started (mode={self.mode.value}, detector={self.detector.name})")
         await self.broadcast_status()
 
     async def stop(self) -> None:
-        if not self.enabled:
-            return
-        self.enabled = False
-        monitor, self.monitor = self.monitor, None
-        if monitor is not None:
-            await asyncio.to_thread(monitor.stop)
-        for task in self._tasks:
-            task.cancel()
-        await asyncio.gather(*self._tasks, return_exceptions=True)
-        self._tasks = []
-        await self.blocker.unblock_all()
-        self.started_at = None
-        logger.info("IDS stopped")
+        async with self._lifecycle_lock:
+            if not self.enabled:
+                return
+            self.enabled = False
+            monitor, self.monitor = self.monitor, None
+            if monitor is not None:
+                await asyncio.to_thread(monitor.stop)
+            for task in self._tasks:
+                task.cancel()
+            await asyncio.gather(*self._tasks, return_exceptions=True)
+            self._tasks = []
+            await self.blocker.unblock_all()
+            self.started_at = None
+            logger.info("IDS stopped")
         await self.broadcast_status()
 
     async def set_mode(self, mode: str) -> None:

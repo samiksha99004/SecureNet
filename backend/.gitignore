@@ -77,3 +77,6 @@ temp/
 # Generated reports / local artifacts
 reports/
 securenet.db
+
+# Saved IDS on/off state (per computer)
+data/

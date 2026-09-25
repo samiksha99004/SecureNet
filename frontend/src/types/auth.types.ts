@@ -90,6 +90,13 @@ export interface ChangePasswordRequest {
   confirmNewPassword: string;
 }
 
+/** Step 2 of a password change: the emailed code + the same new password. */
+export interface ChangePasswordConfirm {
+  changeToken: string;
+  otp: string;
+  newPassword: string;
+}
+
 
 
 // ── Auth Responses ────────────────────────────────────────────────────────────

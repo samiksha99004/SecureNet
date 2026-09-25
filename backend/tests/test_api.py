@@ -158,27 +158,20 @@ async def test_event_export_and_resolve(client, admin):
     assert r.json()["state"] == "resolved"
 
 
-async def test_reports_generate_list_download(client, admin):
+async def test_legacy_saved_report_endpoints_are_gone(client, admin):
+    """Only the daily reports remain; nobody can write report files to the server any more."""
     _, headers = admin
-    await seed_events(6)
-    start = (utcnow() - timedelta(days=1)).isoformat() + "Z"
-    end = (utcnow() + timedelta(minutes=1)).isoformat() + "Z"
-    for fmt in ("csv", "json", "pdf"):
-        r = await client.post("/api/reports", headers=headers, json={
-            "name": f"Daily {fmt}", "dateRangeStart": start, "dateRangeEnd": end, "format": fmt,
-            "filters": {"severities": [], "states": [], "attackTypes": [], "includeResolved": True,
-                        "includeBreakdown": True},
-        })
-        assert r.status_code == 200, r.text
-        report = r.json()
-        assert report["status"] == "ready" and report["sizeBytes"] > 0
-        d = await client.get(f"/api/reports/{report['id']}/download", headers=headers)
-        assert d.status_code == 200 and len(d.content) == report["sizeBytes"]
+    some_id = "00000000-0000-0000-0000-000000000000"
+    for method, url in (("POST", "/api/reports"), ("GET", "/api/reports"), ("GET", "/api/reports/summary"),
+                        ("GET", f"/api/reports/{some_id}/download"), ("DELETE", f"/api/reports/{some_id}")):
+        r = await client.request(method, url, headers=headers, json={} if method == "POST" else None)
+        assert r.status_code in (404, 405), (method, url, r.status_code)
 
-    r = await client.get("/api/reports", headers=headers)
-    assert r.json()["total"] == 3 and r.json()["totalPages"] == 1
-    r = await client.get("/api/reports/summary", headers=headers)
-    assert r.json()["totalReports"] == 3
+
+async def test_huge_page_number_is_refused_cleanly(client, admin):
+    _, headers = admin
+    r = await client.get("/api/events", headers=headers, params={"page": 10**20})
+    assert r.status_code == 422 and r.json()["code"] == "VALIDATION_ERROR"
 
 
 async def test_dashboard_shows_history_when_ids_off(client, admin):

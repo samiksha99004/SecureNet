@@ -4,6 +4,8 @@ SecureNet Backend — Authentication Routes
 Handles user registration, login, OTP verification, and token management.
 """
 
+import asyncio
+import hmac
 import secrets
 import string
 import uuid
@@ -16,16 +18,19 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.dependencies import get_current_user
 from app.core.config import settings
 from app.core.security import (
+    PASSWORD_CHANGE_TOKEN_TYPE,
     REFRESH_TOKEN_TYPE,
     PROFILE_TOKEN_TYPE,
     RESET_TOKEN_TYPE,
     SIGNUP_TOKEN_TYPE,
     create_access_token,
+    create_password_change_token,
     create_profile_token,
     create_refresh_token,
     create_reset_token,
     create_signup_token,
     decode_token,
+    new_password_digest,
     password_fingerprint,
     hash_password,
     validate_password_strength,
@@ -37,6 +42,7 @@ from app.models.user import AccountStatus, AuthProvider, User, UserRole
 from app.schemas.auth import (
     AuthResponse,
     AuthTokens,
+    ChangePasswordConfirm,
     ChangePasswordRequest,
     CompleteSignupRequest,
     ForgotPasswordRequest,
@@ -59,6 +65,7 @@ from app.utils.email import (
     email_delivery_status,
     send_email,
     send_otp_email,
+    send_password_change_email,
     send_password_reset_email,
     send_profile_change_email,
 )
@@ -70,6 +77,9 @@ router = APIRouter(prefix="/auth", tags=["Authentication"])
 
 GENERIC_RESEND_MESSAGE = "If this email has a pending registration, a new code has been sent."
 GENERIC_RESET_MESSAGE = "If an account exists for this email, a verification code has been sent to it."
+# Checked when an email has no account, so a wrong email takes as long as a
+# wrong password and the response time doesn't reveal who is registered.
+_DUMMY_PASSWORD_HASH = hash_password(secrets.token_urlsafe(16))
 
 
 def generate_otp(length: int = 6) -> str:
@@ -252,6 +262,7 @@ async def login(request: LoginRequest, http: Request, db: AsyncSession = Depends
     invalid = HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid email or password")
 
     if not user or not user.password_hash:
+        await asyncio.to_thread(verify_password, request.password, _DUMMY_PASSWORD_HASH)
         ratelimit.record("login-fail", http)
         raise invalid
 
@@ -263,7 +274,7 @@ async def login(request: LoginRequest, http: Request, db: AsyncSession = Depends
             detail=f"Too many failed attempts. Try again in {minutes} minute(s).",
         )
 
-    if not verify_password(request.password, user.password_hash):
+    if not await asyncio.to_thread(verify_password, request.password, user.password_hash):
         ratelimit.record("login-fail", http)
         user.failed_login_attempts = (user.failed_login_attempts or 0) + 1
         if user.failed_login_attempts >= settings.MAX_LOGIN_ATTEMPTS:
@@ -527,25 +538,77 @@ async def confirm_profile_change(
     return UserResponse.model_validate(user)
 
 
-@router.post("/change-password", response_model=MessageResponse)
+# ── Change password (signed in) — current password + a code emailed to the registered address ──
+
+@router.post("/change-password", response_model=ProfileChangeStarted)
 async def change_password(
     request: ChangePasswordRequest,
+    http: Request,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Change password for the authenticated user"""
+    """Step 1: check the current and new password, then email a code to the registered address.
+
+    Nothing changes until the code is confirmed (/change-password/confirm), so a
+    stolen session alone cannot take over the account.
+    """
     if current_user.auth_provider != AuthProvider.LOCAL:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
                             detail=f"Cannot change password for {current_user.auth_provider.value} accounts")
-    if not verify_password(request.current_password, current_user.password_hash or ""):
+    ratelimit.enforce("login-fail", http)
+    if not await asyncio.to_thread(verify_password, request.current_password, current_user.password_hash or ""):
+        ratelimit.record("login-fail", http)
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Current password is incorrect")
 
     is_valid, error_msg = validate_password_strength(request.new_password)
     if not is_valid:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=error_msg)
+    if request.new_password == request.current_password:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
+                            detail="New password must differ from your current password.")
 
-    current_user.password_hash = hash_password(request.new_password)
-    current_user.updated_at = utcnow()
+    code_email = normalize_email(current_user.email)
+    await _check_resend_cooldown(db, code_email)
+    ratelimit.enforce("code-send", http)
+    otp_code = await _issue_otp(db, code_email)
+    try:
+        await send_password_change_email(code_email, otp_code)
+    except EmailDeliveryError as exc:
+        await db.rollback()
+        logger.error(f"Password change code for {current_user.email} failed: {exc}")
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=_email_failure_detail())
     await db.commit()
-    logger.info(f"Password changed for: {current_user.email}")
-    return MessageResponse(message="Password changed successfully")
+    ratelimit.record("code-send", http)
+    logger.info(f"Password change requested by {current_user.email}")
+    return ProfileChangeStarted(
+        change_token=create_password_change_token(str(current_user.id), current_user.password_hash,
+                                                  request.new_password),
+        sent_to=_mask(code_email),
+        message=f"We sent a 6-digit code to {_mask(code_email)}. Enter it to confirm your new password.",
+    )
+
+
+@router.post("/change-password/confirm", response_model=MessageResponse)
+async def confirm_password_change(
+    request: ChangePasswordConfirm,
+    http: Request,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Step 2: the emailed code sets the new password chosen in step 1 (the token works once)."""
+    payload = decode_token(request.change_token, expected_type=PASSWORD_CHANGE_TOKEN_TYPE)
+    if (not payload or payload.get("sub") != str(current_user.id)
+            or payload.get("pwv") != password_fingerprint(current_user.password_hash)
+            or not hmac.compare_digest(str(payload.get("npw", "")), new_password_digest(request.new_password))):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
+                            detail="This password change has expired. Please start again.")
+    await _consume_otp(db, normalize_email(current_user.email), request.otp, http)
+
+    user = (await db.execute(select(User).where(User.id == current_user.id))).scalar_one()
+    user.password_hash = await asyncio.to_thread(hash_password, request.new_password)
+    user.failed_login_attempts = 0
+    user.locked_until = None
+    user.updated_at = utcnow()
+    await db.commit()
+    logger.info(f"Password changed (code confirmed) for: {user.email}")
+    return MessageResponse(message="Your password has been changed.")

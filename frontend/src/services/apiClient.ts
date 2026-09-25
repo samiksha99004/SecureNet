@@ -124,6 +124,32 @@ async function tryRefresh(): Promise<boolean> {
   return refreshInFlight;
 }
 
+/** Seconds until a JWT expires (null if it can't be read). */
+function secondsLeft(token: string): number | null {
+  try {
+    const part = token.split('.')[1].replace(/-/g, '+').replace(/_/g, '/');
+    const payload = JSON.parse(atob(part)) as { exp?: unknown };
+    return typeof payload.exp === 'number' ? payload.exp - Date.now() / 1000 : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The access token, refreshed first when it has (nearly) expired. For the live
+ * WebSocket, which can't use the 401-refresh-retry path of normal requests.
+ */
+export async function freshAccessToken(): Promise<string | null> {
+  const token = tokenStore.getAccess();
+  if (!token) return null;
+  const left = secondsLeft(token);
+  if (left !== null && left > 30) return token;
+  return (await tryRefresh()) ? tokenStore.getAccess() : token;
+}
+
+/** Get a new token pair now (e.g. the live connection rejected the token). */
+export const refreshSession = tryRefresh;
+
 function expireSession(): void {
   tokenStore.clear();
   window.dispatchEvent(new CustomEvent(SESSION_EXPIRED_EVENT));

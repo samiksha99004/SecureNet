@@ -14,6 +14,7 @@ from app.ml.ids_service import get_ids_service
 from app.ml.network_monitor import CaptureUnavailable
 from app.models.user import User
 from app.schemas.base import CamelModel
+from app.services.autostart import remember_ids_state
 from app.utils.logger import logger
 
 router = APIRouter(prefix="/ids", tags=["IDS Control"])
@@ -55,6 +56,8 @@ async def control_ids(request: IDSControlRequest, current_user: User = Depends(g
     The IDS has two states only: ON = capture, detect, alert and email;
     OFF = stopped. Automatic firewall blocking (the old "protection" mode) is
     not used, so the mode is always "monitor" whatever the request says.
+    The choice is remembered: if the computer is shut down while the IDS is
+    ON, it turns itself back on at the next start (services/autostart.py).
     """
     ids = get_ids_service()
     if request.enabled:
@@ -68,12 +71,17 @@ async def control_ids(request: IDSControlRequest, current_user: User = Depends(g
                 ids.started_by = {"name": current_user.full_name, "email": current_user.email,
                                   "phone": current_user.phone_number, "role": current_user.role.value}
                 logger.info(f"IDS started by {current_user.email} (mode={ids.mode.value})")
+                await remember_ids_state(True, ids.started_by)
         except CaptureUnavailable as exc:
             raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc))
         except ValueError as exc:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
-    elif ids.enabled:
-        await ids.stop()
-        ids.started_by = None
-        logger.info(f"IDS stopped by {current_user.email}")
+    else:
+        if ids.enabled:
+            await ids.stop()
+            ids.started_by = None
+            logger.info(f"IDS stopped by {current_user.email}")
+        # also when it wasn't running (e.g. it could not restart after a reboot):
+        # OFF means "don't turn it on at the next start"
+        await remember_ids_state(False)
     return IDSStatusResponse(**ids.get_status())

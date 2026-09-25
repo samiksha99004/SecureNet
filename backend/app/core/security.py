@@ -6,6 +6,7 @@ security-related functions.
 """
 
 import hashlib
+import hmac
 from datetime import timedelta
 from typing import Optional, Dict, Any
 
@@ -32,6 +33,8 @@ SIGNUP_TOKEN_MINUTES = 15
 RESET_TOKEN_TYPE = "reset"
 # Carries a requested profile change until the emailed code confirms it.
 PROFILE_TOKEN_TYPE = "profile"
+# Carries a requested password change until the emailed code confirms it.
+PASSWORD_CHANGE_TOKEN_TYPE = "password"
 
 
 def hash_password(password: str) -> str:
@@ -91,6 +94,22 @@ def create_profile_token(user_id: str, changes: Dict[str, str], code_email: str)
     """Short-lived token holding a profile change that still needs its emailed code."""
     return _encode({"sub": user_id, "changes": changes, "code_email": code_email}, PROFILE_TOKEN_TYPE,
                    timedelta(minutes=SIGNUP_TOKEN_MINUTES))
+
+
+def new_password_digest(new_password: str) -> str:
+    """Keyed digest of a requested new password (the password itself never goes into a token)."""
+    return hmac.new(settings.JWT_SECRET.encode("utf-8"), new_password.encode("utf-8"), hashlib.sha256).hexdigest()
+
+
+def create_password_change_token(user_id: str, password_hash: Optional[str], new_password: str) -> str:
+    """Short-lived token for a password change that still needs its emailed code.
+
+    Bound to the user, to the current password (works once — useless after any
+    password change) and to the new password chosen in step 1.
+    """
+    return _encode({"sub": user_id, "pwv": password_fingerprint(password_hash),
+                    "npw": new_password_digest(new_password)},
+                   PASSWORD_CHANGE_TOKEN_TYPE, timedelta(minutes=SIGNUP_TOKEN_MINUTES))
 
 
 def decode_token(token: str, expected_type: str = ACCESS_TOKEN_TYPE) -> Optional[Dict[str, Any]]:

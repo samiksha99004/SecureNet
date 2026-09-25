@@ -51,6 +51,19 @@ async def test_login_errors_use_uniform_shape(client):
     assert body == {"status": 401, "code": "UNAUTHORIZED", "message": "Invalid email or password"}
 
 
+async def test_unknown_email_still_checks_a_password(client, admin, monkeypatch):
+    """A wrong email does the same password work as a wrong password (no timing hint)."""
+    from app.api.routes import auth as auth_routes
+
+    checked = []
+    real = auth_routes.verify_password
+    monkeypatch.setattr(auth_routes, "verify_password", lambda pw, h: checked.append(h) or real(pw, h))
+    for email in ("nobody@example.com", "admin@example.com"):
+        r = await client.post("/api/auth/login", json={"email": email, "password": "Wrong1234"})
+        assert r.status_code == 401
+    assert len(checked) == 2 and all(h.startswith("$pbkdf2-sha256$") for h in checked)
+
+
 async def test_validation_error_message(client):
     r = await client.post("/api/auth/signup/complete", json={
         "setupToken": "x" * 20, "password": "Passw0rd!", "confirmPassword": "different1"})

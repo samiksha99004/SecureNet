@@ -126,6 +126,37 @@ async def test_ids_status_and_control_errors(client, admin, monkeypatch):
     assert r.status_code == 422
 
 
+async def test_two_quick_starts_open_one_capture(monkeypatch):
+    """Double-click / two users pressing ON together: one sniffer, and stop really stops it."""
+    import asyncio
+    import threading
+
+    from app.ml import ids_service as ids_module
+
+    created = []
+
+    class SlowMonitor:
+        def __init__(self, **kwargs):
+            self.running = False
+            self.packet_count = self.active_flow_count = 0
+            self.last_error = None
+            created.append(self)
+
+        def start(self):
+            threading.Event().wait(0.2)  # capture takes a moment to open
+            self.running = True
+
+        def stop(self):
+            self.running = False
+
+    monkeypatch.setattr(ids_module, "NetworkMonitor", SlowMonitor)
+    ids = IDSService()
+    await asyncio.gather(ids.start("monitor"), ids.start("monitor"))
+    assert len(created) == 1 and ids.enabled
+    await asyncio.gather(ids.stop(), ids.stop())
+    assert not ids.enabled and not created[0].running and ids._tasks == []
+
+
 async def test_model_endpoints_without_models(client, admin):
     _, headers = admin
     r = await client.get("/api/model/info", headers=headers)
@@ -144,6 +175,9 @@ async def test_websocket_requires_token(client):
     from app.main import app
 
     with TestClient(app) as tc:
-        with pytest.raises(WebSocketDisconnect):
-            with tc.websocket_connect("/ws/live") as ws:
-                ws.receive_json()
+        for url in ("/ws/live", "/ws/live?token=not-a-token"):
+            with pytest.raises(WebSocketDisconnect) as closed:
+                with tc.websocket_connect(url) as ws:
+                    ws.receive_json()
+            # 1008 (not a failed handshake) so the dashboard knows to refresh its token
+            assert closed.value.code == 1008

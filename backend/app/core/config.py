@@ -119,6 +119,15 @@ class Settings(BaseSettings):
     # Optional: serve a built frontend (used by the Electron shell)
     FRONTEND_DIST: str = ""
 
+    # The IDS survives a shutdown: while it is ON its state is saved to
+    # IDS_STATE_FILE and SecureNet is added to Windows start-up, so after the
+    # computer restarts it turns itself back on and shows a desktop notice.
+    # Turning it OFF removes both. (The test-suite switches all of this off.)
+    IDS_AUTOSTART: bool = True
+    IDS_STATE_FILE: str = "./data/ids-state.json"
+    IDS_STARTUP_DIR: str = ""            # empty = the Windows Startup folder of this user
+    DESKTOP_NOTIFICATIONS: bool = True
+
     @model_validator(mode="after")
     def _check(self) -> "Settings":
         if not self.ALLOW_LOCAL_DATABASE:
@@ -145,6 +154,10 @@ class Settings(BaseSettings):
     @property
     def reports_dir(self) -> Path:
         return self.resolve_path(self.REPORTS_DIR)
+
+    @property
+    def ids_state_file(self) -> Path:
+        return self.resolve_path(self.IDS_STATE_FILE)
 
 
 def _load() -> Settings:

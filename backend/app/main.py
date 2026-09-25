@@ -5,6 +5,7 @@ FastAPI entry point: CORS, uniform error responses, route registration,
 the authenticated live WebSocket, and (optionally) the built frontend.
 """
 
+import asyncio
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -20,6 +21,7 @@ from app.api.routes import auth, dashboard, events, health, ids, model, notifica
 from app.core.config import settings
 from app.db.base import AsyncSessionLocal
 from app.ml.ids_service import get_ids_service
+from app.services.autostart import resume_after_restart
 from app.services.notifier import get_notifier
 from app.utils.logger import logger
 from app.websocket.manager import manager
@@ -45,9 +47,13 @@ async def lifespan(app: FastAPI):
     ids_service = get_ids_service()
     await ids_service.initialize()
     await get_notifier().start()
+    # IDS was ON when SecureNet last stopped (e.g. computer shut down)? Turn it back on.
+    resume = asyncio.create_task(resume_after_restart(), name="ids-resume")
     yield
     logger.info(f"{settings.APP_NAME} shutting down...")
-    await ids_service.stop()
+    resume.cancel()
+    await asyncio.gather(resume, return_exceptions=True)
+    await ids_service.stop()  # the saved ON/OFF choice is kept for the next start
     await get_notifier().stop()
 
 
@@ -130,7 +136,11 @@ async def websocket_live(websocket: WebSocket):
     async with AsyncSessionLocal() as db:
         user = await user_from_token(token, db)
     if user is None:
-        await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
+        # Accept first, then close with 1008: a close before the handshake reaches
+        # the browser as a plain 1006 "connection failed", and the dashboard could
+        # not tell an expired token (refresh it) from a network problem (retry).
+        await websocket.accept()
+        await websocket.close(code=status.WS_1008_POLICY_VIOLATION, reason="Invalid or expired session")
         return
 
     await manager.connect(websocket)

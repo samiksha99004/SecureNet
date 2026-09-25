@@ -14,6 +14,7 @@ import type {
   OtpResendRequest,
   OtpVerifyResponse,
   AuthResponse,
+  ChangePasswordConfirm,
   ChangePasswordRequest,
   CompleteSignupRequest,
   PasswordResetVerifyResponse,
@@ -183,7 +184,12 @@ export async function confirmProfileChange(changeToken: string, otp: string): Pr
   return user;
 }
 
-/** POST /auth/change-password */
-export async function changePassword(request: ChangePasswordRequest): Promise<MessageResponse> {
-  return apiClient.post<MessageResponse>('/auth/change-password', request);
+/** POST /auth/change-password — step 1: checks the passwords and emails a code to the registered address. */
+export async function changePassword(request: ChangePasswordRequest): Promise<ProfileChangeStarted> {
+  return apiClient.post<ProfileChangeStarted>('/auth/change-password', request);
+}
+
+/** POST /auth/change-password/confirm — step 2: the code sets the new password. */
+export async function confirmPasswordChange(request: ChangePasswordConfirm): Promise<MessageResponse> {
+  return apiClient.post<MessageResponse>('/auth/change-password/confirm', request);
 }

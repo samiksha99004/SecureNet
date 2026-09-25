@@ -191,11 +191,43 @@ async def test_change_password(client, captured_otps):
     r = await client.post("/api/auth/change-password", headers=headers, json={
         "currentPassword": "WrongOld1", "newPassword": "NewPass22", "confirmNewPassword": "NewPass22"})
     assert r.status_code == 400
+    await age_latest_otp("change@example.com", 2)  # sign-up code no longer blocks a new code
+    r = await client.post("/api/auth/change-password", headers=headers, json={
+        "currentPassword": "OldPass11", "newPassword": "OldPass11", "confirmNewPassword": "OldPass11"})
+    assert r.status_code == 400 and "differ" in r.json()["message"]
     r = await client.post("/api/auth/change-password", headers=headers, json={
         "currentPassword": "OldPass11", "newPassword": "NewPass22", "confirmNewPassword": "NewPass22"})
-    assert r.status_code == 200
+    assert r.status_code == 200, r.text
+    started = r.json()
+    assert started["sentTo"].startswith("ch") and "*" in started["sentTo"]
+    token, code = started["changeToken"], captured_otps["change@example.com"]
+
+    # nothing changed yet: the emailed code is the second factor
+    assert (await client.post("/api/auth/login", json={"email": "change@example.com", "password": "OldPass11"})).status_code == 200
+    confirm = "/api/auth/change-password/confirm"
+    wrong = "000000" if code != "000000" else "111111"
+    r = await client.post(confirm, headers=headers, json={"changeToken": token, "otp": wrong, "newPassword": "NewPass22"})
+    assert r.status_code == 400 and "attempt" in r.json()["message"]
+    # the token is bound to the new password chosen in step 1
+    r = await client.post(confirm, headers=headers, json={"changeToken": token, "otp": code, "newPassword": "Other333"})
+    assert r.status_code == 400 and "expired" in r.json()["message"]
+    # another user can't use it
+    other = await register(client, captured_otps, email="other@example.com")
+    r = await client.post(confirm, headers={"Authorization": f"Bearer {other['tokens']['accessToken']}"},
+                          json={"changeToken": token, "otp": code, "newPassword": "NewPass22"})
+    assert r.status_code == 400
+    # and a profile/reset token is not a password-change token
+    r = await client.post(confirm, headers=headers, json={"changeToken": auth["tokens"]["accessToken"], "otp": code,
+                                                          "newPassword": "NewPass22"})
+    assert r.status_code == 400
+
+    r = await client.post(confirm, headers=headers, json={"changeToken": token, "otp": code, "newPassword": "NewPass22"})
+    assert r.status_code == 200, r.text
     assert (await client.post("/api/auth/login", json={"email": "change@example.com", "password": "OldPass11"})).status_code == 401
     assert (await client.post("/api/auth/login", json={"email": "change@example.com", "password": "NewPass22"})).status_code == 200
+    # single use: the token died with the old password, the code was consumed
+    r = await client.post(confirm, headers=headers, json={"changeToken": token, "otp": code, "newPassword": "NewPass22"})
+    assert r.status_code == 400
 
 
 async def test_late_reset_code_is_rejected(client, captured_otps):

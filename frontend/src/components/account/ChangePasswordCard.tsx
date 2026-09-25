@@ -1,22 +1,23 @@
 /**
  * SecureNet — ChangePasswordCard
  *
- * Password change form for local-auth users.
- * Hidden entirely for Google OAuth users (password change is not
- * supported for federated accounts).
- *
- * Calls authService.changePassword → backend API.
- * Shows backend-pending notice instead of silently faking success.
+ * Two-step password change for local-auth users (Google accounts see a note):
+ *   1. current + new password → the server checks them and emails a 6-digit
+ *      code to the registered address (authService.changePassword)
+ *   2. the code confirms it (authService.confirmPasswordChange)
+ * Nothing changes until the code is entered, so a signed-in session alone
+ * can't change the password.
  */
 
-import { useState } from 'react';
+import { useState, type FormEvent } from 'react';
 import { Eye, EyeOff } from 'lucide-react';
 import type { User } from '../../types/auth.types';
-import { changePassword } from '../../services/authService';
+import { changePassword, confirmPasswordChange } from '../../services/authService';
 import { useToast } from '../common/Toast';
 import { Card } from '../common/Card';
-import { isValidPassword } from '../../utils/validation';
+import { isValidOtp, isValidPassword } from '../../utils/validation';
 import styles from './ChangePasswordCard.module.css';
+import local from './EditProfileCard.module.css';
 import { errorMessage } from '../../utils/errors';
 
 interface ChangePasswordCardProps {
@@ -34,6 +35,9 @@ export function ChangePasswordCard({ user }: ChangePasswordCardProps) {
   const [showConfirm, setShowConfirm] = useState(false);
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [isSaving, setIsSaving] = useState(false);
+  const [pending, setPending] = useState<{ token: string; message: string } | null>(null);
+  const [code, setCode] = useState('');
+  const [codeError, setCodeError] = useState<string | null>(null);
 
   // Google OAuth users cannot change their password through SecureNet
   if (user.authProvider === 'google') {
@@ -63,31 +67,94 @@ export function ChangePasswordCard({ user }: ChangePasswordCardProps) {
     return Object.keys(errs).length === 0;
   }
 
-  async function handleSubmit(e: React.FormEvent) {
-    e.preventDefault();
-    if (!validate()) return;
+  // Step 1 (and "Resend code"): check the passwords, email a code
+  async function sendCode(e?: FormEvent<HTMLFormElement>) {
+    e?.preventDefault();
+    if (!pending && !validate()) return;
     setIsSaving(true);
+    setCodeError(null);
     try {
-      await changePassword({
+      const started = await changePassword({
         currentPassword: current,
         newPassword: next,
         confirmNewPassword: confirm,
       });
-      showToast({ message: 'Password changed successfully.', variant: 'success' });
-      setCurrent(''); setNext(''); setConfirm('');
-      setErrors({});
+      setPending({ token: started.changeToken, message: started.message });
+      setCode('');
     } catch (err) {
-      showToast({ message: errorMessage(err, 'Could not change password.'), variant: 'error' });
+      const message = errorMessage(err, 'Could not send the code. Please try again.');
+      if (pending) setCodeError(message);
+      else showToast({ message, variant: 'error' });
     } finally {
       setIsSaving(false);
     }
   }
 
+  // Step 2: the emailed code confirms the new password
+  async function confirmCode(e: FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+    if (!pending) return;
+    if (!isValidOtp(code)) { setCodeError('Enter the 6-digit code from the email.'); return; }
+    setIsSaving(true);
+    setCodeError(null);
+    try {
+      await confirmPasswordChange({ changeToken: pending.token, otp: code.trim(), newPassword: next });
+      showToast({ message: 'Your password has been changed.', variant: 'success' });
+      reset();
+    } catch (err) {
+      setCodeError(errorMessage(err, 'Could not confirm the change. Please try again.'));
+    } finally {
+      setIsSaving(false);
+    }
+  }
+
+  function reset() {
+    setPending(null);
+    setCode('');
+    setCodeError(null);
+    setCurrent(''); setNext(''); setConfirm('');
+    setErrors({});
+  }
+
+  if (pending) {
+    return (
+      <Card padding="lg">
+        <h3 className={styles.heading}>Change Password</h3>
+        <form onSubmit={confirmCode} className={styles.form} noValidate>
+          <p className={local.sent} role="status">{pending.message}</p>
+          <div className={styles.fieldGroup}>
+            <label htmlFor="pwd-code" className={styles.label}>Verification Code</label>
+            <input id="pwd-code" className={styles.input} value={code} disabled={isSaving} inputMode="numeric"
+                   autoComplete="one-time-code" maxLength={6} placeholder="6-digit code"
+                   onChange={(e) => { setCode(e.target.value.replace(/\D/g, '').slice(0, 6)); setCodeError(null); }} />
+          </div>
+
+          {codeError && <p className={styles.error} role="alert">{codeError}</p>}
+
+          <div className={local.buttons}>
+            <button type="submit" className={styles.submitBtn} disabled={isSaving || code.length < 6}>
+              {isSaving ? 'Confirming…' : 'Confirm new password'}
+            </button>
+            <button type="button" className={local.secondary} onClick={() => void sendCode()} disabled={isSaving}>
+              Resend code
+            </button>
+            <button type="button" className={local.secondary} onClick={reset} disabled={isSaving}>
+              Cancel
+            </button>
+          </div>
+        </form>
+      </Card>
+    );
+  }
+
   return (
     <Card padding="lg">
       <h3 className={styles.heading}>Change Password</h3>
+      <p className={local.intro}>
+        For your safety, we&apos;ll email a 6-digit code to your registered address before the new password is saved.
+      </p>
 
-      <form onSubmit={handleSubmit} className={styles.form} noValidate>
+      <form onSubmit={sendCode} className={styles.form} noValidate>
         {/* Current password */}
         <div className={styles.fieldGroup}>
           <label htmlFor="pwd-current" className={styles.label}>Current Password</label>
@@ -167,7 +234,7 @@ export function ChangePasswordCard({ user }: ChangePasswordCardProps) {
             disabled={isSaving}
             aria-busy={isSaving}
           >
-            {isSaving ? 'Saving…' : 'Update Password'}
+            {isSaving ? 'Sending code…' : 'Update Password'}
           </button>
         </div>
       </form>
