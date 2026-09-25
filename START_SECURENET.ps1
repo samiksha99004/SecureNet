@@ -1,140 +1,58 @@
-# SecureNet Complete System Startup Script
-# Run this as Administrator for full functionality
+# Start SecureNet: FastAPI backend (port 8000) + Vite dev server (port 5173), then open the browser.
+# Each server runs in its own window; close those windows to stop SecureNet.
+# Run as Administrator for live packet capture (needs Npcap) and Protection-mode firewall blocking.
+# First time on a PC: run SETUP.bat.
 
-Write-Host "════════════════════════════════════════════════════════════════" -ForegroundColor Cyan
-Write-Host "  SecureNet IDS - Complete System Startup" -ForegroundColor Cyan
-Write-Host "════════════════════════════════════════════════════════════════" -ForegroundColor Cyan
-Write-Host ""
+$ErrorActionPreference = 'Stop'
+. (Join-Path $PSScriptRoot 'scripts\securenet-env.ps1')
 
-# Check if running as Administrator
-$isAdmin = ([Security.Principal.WindowsPrincipal] [Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+function Fail($text) { Write-Host "`n$text" -ForegroundColor Red; exit 1 }
+function Test-Port($port) { [bool](Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction SilentlyContinue) }
+
+if (-not (Test-Path (Join-Path $BackendDir '.env'))) {
+    Fail 'backend\.env is missing - copy it from the original computer, then run SETUP.bat.'
+}
+if (-not (Test-SecureNetVenv)) { Fail 'The Python environment is missing or was copied from another PC - run SETUP.bat first.' }
+$nodeDir = Find-SecureNetNode
+if (-not $nodeDir) { Fail 'Node.js 22+ was not found - run SETUP.bat first.' }
+if (-not (Test-SecureNetFrontendDeps)) { Fail 'Frontend packages are not installed - run SETUP.bat first.' }
+
+$isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole(
+    [Security.Principal.WindowsBuiltInRole]::Administrator)
 if (-not $isAdmin) {
-    Write-Host "⚠️  WARNING: Not running as Administrator" -ForegroundColor Yellow
-    Write-Host "   Packet capture requires administrator privileges." -ForegroundColor Yellow
-    Write-Host "   Right-click PowerShell and 'Run as Administrator'" -ForegroundColor Yellow
-    Write-Host ""
-    $response = Read-Host "Continue anyway? (y/n)"
-    if ($response -ne 'y') {
-        exit 1
-    }
+    Write-Host 'Note: not running as Administrator - live capture / blocking will be unavailable.' -ForegroundColor Yellow
 }
 
-# Check PostgreSQL
-Write-Host "[1/5] Checking PostgreSQL..." -ForegroundColor Yellow
-$pgService = Get-Service -Name "postgresql*" -ErrorAction SilentlyContinue
-if ($pgService -and $pgService.Status -eq 'Running') {
-    Write-Host "✓ PostgreSQL is running" -ForegroundColor Green
+# Child windows inherit this environment (Node on PATH, caches off C:)
+Use-SecureNetCaches
+$env:Path = "$nodeDir;$env:Path"
+
+if (Test-Port 8000) {
+    Write-Host 'Backend already running on port 8000.'
 } else {
-    Write-Host "✗ PostgreSQL not running" -ForegroundColor Red
-    Write-Host "  Please start PostgreSQL service first" -ForegroundColor Gray
-    exit 1
+    Write-Host 'Starting backend on http://127.0.0.1:8000 ...' -ForegroundColor Cyan
+    Start-Process cmd.exe -WorkingDirectory $BackendDir -ArgumentList '/k', `
+        'title SecureNet Backend & venv\Scripts\python.exe -m uvicorn app.main:app --host 127.0.0.1 --port 8000'
 }
-
-# Check Python environment
-Write-Host ""
-Write-Host "[2/5] Checking Python environment..." -ForegroundColor Yellow
-if (Test-Path "backend\venv\Scripts\python.exe") {
-    Write-Host "✓ Virtual environment found" -ForegroundColor Green
+if (Test-Port 5173) {
+    Write-Host 'Frontend already running on port 5173.'
 } else {
-    Write-Host "✗ Virtual environment not found" -ForegroundColor Red
-    Write-Host "  Run backend\setup.ps1 first" -ForegroundColor Gray
-    exit 1
+    Write-Host 'Starting frontend on http://localhost:5173 ...' -ForegroundColor Cyan
+    Start-Process cmd.exe -WorkingDirectory $FrontendDir -ArgumentList '/k', 'title SecureNet Frontend & npm run dev'
 }
 
-# Check ML models
-Write-Host ""
-Write-Host "[3/5] Checking ML models..." -ForegroundColor Yellow
-$mlDir = "F:\all_10_csv_manual"
-$requiredFiles = @(
-    "isolation_forest_model.pkl",
-    "xgboost_hybrid_model.pkl",
-    "xgboost_multiclass_model.pkl",
-    "label_encoder.pkl",
-    "feature_columns.pkl"
-)
-
-$allFound = $true
-foreach ($file in $requiredFiles) {
-    $path = Join-Path $mlDir $file
-    if (Test-Path $path) {
-        Write-Host "  ✓ $file" -ForegroundColor Green
-    } else {
-        Write-Host "  ✗ $file" -ForegroundColor Red
-        $allFound = $false
-    }
+Write-Host 'Waiting for SecureNet to come up...'
+$deadline = (Get-Date).AddSeconds(90)
+$ready = $false
+while ((Get-Date) -lt $deadline) {
+    try {
+        Invoke-WebRequest 'http://127.0.0.1:8000/health' -UseBasicParsing -TimeoutSec 3 | Out-Null
+        Invoke-WebRequest 'http://localhost:5173' -UseBasicParsing -TimeoutSec 3 | Out-Null
+        $ready = $true; break
+    } catch { Start-Sleep -Milliseconds 700 }
 }
-
-if (-not $allFound) {
-    Write-Host "✗ Some ML models are missing" -ForegroundColor Red
-    exit 1
+if (-not $ready) {
+    Fail 'SecureNet did not start within 90 seconds - check the "SecureNet Backend" and "SecureNet Frontend" windows for the error.'
 }
-
-# Start Backend
-Write-Host ""
-Write-Host "[4/5] Starting Backend..." -ForegroundColor Yellow
-Write-Host "  Backend URL: http://localhost:8000" -ForegroundColor Gray
-Write-Host "  API Docs: http://localhost:8000/api/docs" -ForegroundColor Gray
-
-$backendJob = Start-Job -ScriptBlock {
-    Set-Location $using:PWD
-    Set-Location backend
-    & ".\venv\Scripts\Activate.ps1"
-    & ".\venv\Scripts\python.exe" -m uvicorn app.main:app --host 0.0.0.0 --port 8000
-}
-
-# Wait for backend to start
-Write-Host "  Waiting for backend to initialize..." -ForegroundColor Gray
-Start-Sleep -Seconds 5
-
-# Check if backend is running
-try {
-    $response = Invoke-WebRequest -Uri "http://localhost:8000/health" -UseBasicParsing -TimeoutSec 5
-    Write-Host "✓ Backend started successfully" -ForegroundColor Green
-} catch {
-    Write-Host "✗ Backend failed to start" -ForegroundColor Red
-    Stop-Job $backendJob
-    Remove-Job $backendJob
-    exit 1
-}
-
-# Start Frontend
-Write-Host ""
-Write-Host "[5/5] Starting Frontend..." -ForegroundColor Yellow
-Write-Host "  Frontend URL: http://localhost:5173" -ForegroundColor Gray
-
-$frontendJob = Start-Job -ScriptBlock {
-    Set-Location $using:PWD
-    Set-Location "SecureNet (2)\SecureNet\frontend"
-    npm run dev
-}
-
-# Wait for frontend to start
-Write-Host "  Waiting for frontend to initialize..." -ForegroundColor Gray
-Start-Sleep -Seconds 8
-
-Write-Host ""
-Write-Host "════════════════════════════════════════════════════════════════" -ForegroundColor Cyan
-Write-Host "  SecureNet System Running" -ForegroundColor Cyan
-Write-Host "════════════════════════════════════════════════════════════════" -ForegroundColor Cyan
-Write-Host ""
-Write-Host "Backend:  http://localhost:8000" -ForegroundColor White
-Write-Host "Frontend: http://localhost:5173" -ForegroundColor White
-Write-Host "API Docs: http://localhost:8000/api/docs" -ForegroundColor White
-Write-Host ""
-Write-Host "Press Ctrl+C to stop all services" -ForegroundColor Yellow
-Write-Host ""
-
-# Keep running and show logs
-try {
-    while ($true) {
-        Start-Sleep -Seconds 1
-    }
-} finally {
-    Write-Host ""
-    Write-Host "Stopping services..." -ForegroundColor Yellow
-    Stop-Job $backendJob -ErrorAction SilentlyContinue
-    Remove-Job $backendJob -ErrorAction SilentlyContinue
-    Stop-Job $frontendJob -ErrorAction SilentlyContinue
-    Remove-Job $frontendJob -ErrorAction SilentlyContinue
-    Write-Host "✓ All services stopped" -ForegroundColor Green
-}
+Start-Process 'http://localhost:5173'
+Write-Host 'SecureNet is running. Keep the two server windows open; close them to stop SecureNet.' -ForegroundColor Green
