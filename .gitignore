@@ -1,1 +1,7 @@
 node_modules/
+__pycache__/
+*.pyc
+SecureNet (2)/SecureNet/dist-electron/
+
+# Tools/caches when the PC has no F: drive (scripts/securenet-env.ps1)
+.local/
