@@ -16,7 +16,7 @@ See the repository-level `CLAUDE.md` for the full architecture and status.
 .\venv\Scripts\python.exe -m uvicorn app.main:app --port 8000
 ```
 
-* First account that signs up becomes **admin**; later accounts are viewers.
+* Accounts whose email is listed in `ADMIN_EMAILS` become **Admin**; everyone else is a **SecureNet User**.
   `python create_admin_user.py you@example.com` promotes / creates an admin.
 * Emails are always really sent (no console fallback): sign-up needs working SMTP. `DATABASE_URL` must be the
   cloud PostgreSQL (Neon) database - local databases are refused.

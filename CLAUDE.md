@@ -50,6 +50,7 @@ anomaly score = 1 − P(benign).
 ```
 SecureNet (3)/                               ← git root (github.com/samiksha99004/SecureNet-3-)
 ├── CLAUDE.md                                ← this file
+├── README.md                                ← GitHub front page: what it is, folder layout, getting started
 ├── START_SECURENET.bat                      ← double-click launcher: backend (:8000) + Vite (:5173), waits for /health, opens browser
 ├── START_SECURENET.ps1                      ← launcher logic (checks venv/Node/.env, skips busy ports, waits for /health)
 ├── SETUP.bat / SETUP.ps1                    ← one-time setup on ANY PC: venv (rebuilt if copied), Node (downloaded if
@@ -87,22 +88,23 @@ SecureNet (3)/                               ← git root (github.com/samiksha99
 │   ├── scripts/check_setup.py               ← SETUP's read-only check: .env, Neon connection, email status
 │   ├── requirements.txt / requirements-ml.txt
 │   └── .env (gitignored, Neon URL + JWT secret) / .env.example
-└── SecureNet (2)/SecureNet/
-    ├── package.json, electron/main.js       ← Electron shell (backend serves built SPA on :8000)
-    └── frontend/                            ← React 19 + TS + Vite 8 + Recharts + react-router 7
-        ├── .env                             ← VITE_API_BASE_URL / VITE_WS_URL (localhost:8000)
-        └── src/
-            ├── styles/globals.css           ← DARK THEME tokens (single source of colours)
-            ├── services/apiClient.ts        ← fetch wrapper: token refresh, uniform errors, auth downloads
-            ├── services/*.ts                ← auth, dashboard, events, ids, model, reports, settings, websocket
-            ├── contexts/AuthContext.tsx     ← session state, completeLogin, canOperate, expiry handling
-            ├── components/common/ErrorBoundary.tsx ← root error screen (never a blank page); wraps <App/> in main.tsx
-            ├── contexts/NotificationContext.tsx ← alert feed, unread state, pop-ups, sound, desktop notifications
-            ├── components/notifications/    ← AlertPopups (on-screen alert cards), NotificationBell (top bar)
-            ├── utils/alertChannels.ts       ← desktop Notification API + Web Audio alert tone
-            ├── hooks/                       ← useAsyncData, useLiveMonitoring/useWebSocketMessage
-            ├── pages/, components/          ← Dashboard, History, Reports, Settings, Account, Support, auth pages
-            └── types/, utils/               ← camelCase API contracts, format/errors helpers, storage.ts (safe web storage)
+├── desktop/                                 ← optional Electron shell
+│   ├── package.json                         ← `npm start` / `npm run dev`; `build:frontend` builds ../frontend
+│   └── electron/main.js                     ← starts ../backend (venv), backend serves ../frontend/dist on :8000
+└── frontend/                                ← React 19 + TS + Vite 8 + Recharts + react-router 7
+    ├── .env                             ← VITE_API_BASE_URL / VITE_WS_URL (localhost:8000)
+    └── src/
+        ├── styles/globals.css           ← DARK THEME tokens (single source of colours)
+        ├── services/apiClient.ts        ← fetch wrapper: token refresh, uniform errors, auth downloads
+        ├── services/*.ts                ← auth, dashboard, events, ids, model, reports, settings, websocket
+        ├── contexts/AuthContext.tsx     ← session state, completeLogin, canOperate, expiry handling
+        ├── components/common/ErrorBoundary.tsx ← root error screen (never a blank page); wraps <App/> in main.tsx
+        ├── contexts/NotificationContext.tsx ← alert feed, unread state, pop-ups, sound, desktop notifications
+        ├── components/notifications/    ← AlertPopups (on-screen alert cards), NotificationBell (top bar)
+        ├── utils/alertChannels.ts       ← desktop Notification API + Web Audio alert tone
+        ├── hooks/                       ← useAsyncData, useLiveMonitoring/useWebSocketMessage
+        ├── pages/, components/          ← Dashboard, History, Reports, Settings, Account, Support, auth pages
+        └── types/, utils/               ← camelCase API contracts, format/errors helpers, storage.ts (safe web storage)
 ```
 
 ## 3. Runtime architecture
@@ -220,7 +222,7 @@ every time:          double-click START_SECURENET.bat  (right-click → Run as a
   Administrator backend. Without it, turning the IDS on returns a clear 503 message. Npcap is **not installed** yet.
 - Enable models later: put the `.pkl` files in `backend/models/`, `.\setup.ps1 -WithML`, then set
   `ML_AUTOLOAD=true` in `.env` **or** click *Settings → Model → Load / reload models* (admin).
-- Electron: `npm run build:frontend` then `npm start` in `SecureNet (2)\SecureNet` (backend serves the SPA on :8000).
+- Electron: `npm run build:frontend` then `npm start` in `desktop\` (backend serves the SPA on :8000).
 
 ## 6. Verification status (2026-09-25)
 - Session 18: backend **83/83 pytest** (+ `tests/test_profile_and_limits.py`: name/phone change needs code, wrong
@@ -446,3 +448,4 @@ every time:          double-click START_SECURENET.bat  (right-click → Run as a
 | 2026-09-25 (17) | **Full QA pass** (owner request: frontend, database, API, backend; login, right/wrong/late OTP, email). Added `tests/test_qa_auth.py` (17 tests, 76/76 total); live API matrix (154 requests), WebSocket auth check, read-only Neon schema/data audit, 41-check Chrome E2E (harness gained a test-only `/__test/age-otp` hook), frontend tsc/lint/build/npm-audit/secret scan, Gmail SMTP login check, latency analysis. Fixed Q1 (user-visible admin actions) and Q2 (latency: pool pre-ping removed, recycle 240 s). Logged Q3–Q9. Real app relaunched. Not committed. |
 | 2026-09-25 (18) | **Admin account, profile changes with OTP, admin alert email, Npcap download, issue #7.** Created admin Samiksha Jain (samiksha99004@gmail.com, 9482046521) in Neon. Backend: `PROFILE_TOKEN_TYPE` + `create_profile_token`, `ProfileChange*` schemas, `/auth/profile/change` + `/auth/profile/confirm`, `send_profile_change_email`; notifier `split_recipients`, `render_admin_email`, `fetch_events`/`report_attachment`, `IDSService.started_by`; `app/utils/ratelimit.py` wired into login/signup/resend/forgot/verify/profile/support; `SupportMessage` model + migration `d5f9a3c7e2b8` (applied); tests 83/83. Frontend: `EditProfileCard` (Account page), `requestProfileChange`/`confirmProfileChange`, guide text. Npcap 1.89 installer downloaded to `F:\tools\installers` (not installed). Chrome harness 15/15. Real app relaunched. Not committed. |
 | 2026-09-25 (19) | **Published to GitHub** (`samiksha99004/SecureNet-3-`, public). Pre-push scan found the real Neon DB password + old JWT secret in `docs/archive/FIXED_AND_READY.md` and `NEON_POSTGRESQL_MIGRATION_COMPLETE.md` (already public since commit "updating"). With the owner's approval: git bundle backup (`F:\SecureNet-backup\securenet-git-before-rewrite.bundle`), JWT secret rotated in `backend/.env` (old .env backed up), docs redacted, work committed in 5 grouped commits (repo tidy, backend, frontend, tooling, docs), history rewritten with `git-filter-repo --replace-text` (installed in the F: venv) — 0 secret hits across all commits/6,902 objects — then force-pushed `main`. Verified no private files (.env, venv, node_modules, dist, *.db, *.pkl) are tracked; pytest 83/83 after the rewrite. Owner must still reset the Neon password (S1). |
+| 2026-09-25 (20) | **Folder layout tidied** (owner: the nested `SecureNet (2)/SecureNet` folder looked bad). Moved the React app to `frontend/` and the Electron shell (`package.json`, `package-lock.json`, `electron/`) to `desktop/`; deleted the empty stub `SecureNet (2)/package-lock.json` and the folder. Updated `scripts/securenet-env.ps1` (`$FrontendDir`), `desktop/electron/main.js` (backend = `../../backend`, dist = `../../frontend/dist`), `desktop/package.json` (`build:frontend` → `../frontend`), `.gitignore` (`desktop/dist-electron/`). New root `README.md`; frontend README (was the Vite template) and backend README roles line rewritten. `docs/archive` left untouched (historical). Verified: frontend build + oxlint from `frontend/`, Electron paths resolve, pytest 83/83, `START_SECURENET.bat` → `/health` OK (Neon connected) + UI 200 on :5173. Committed and pushed (normal push). The root folder is still named `SecureNet (3)` locally (GitHub repo `SecureNet-3-`). |

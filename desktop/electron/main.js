@@ -22,9 +22,9 @@ const isDev = process.argv.includes('--dev');
 const BACKEND_HOST = 'localhost';
 const BACKEND_PORT = 8000;
 const BACKEND_DIR =
-  process.env.SECURENET_BACKEND_DIR || path.resolve(__dirname, '..', '..', '..', 'backend');
+  process.env.SECURENET_BACKEND_DIR || path.resolve(__dirname, '..', '..', 'backend');
 const FRONTEND_DIST =
-  process.env.SECURENET_FRONTEND_DIST || path.resolve(__dirname, '..', 'frontend', 'dist');
+  process.env.SECURENET_FRONTEND_DIST || path.resolve(__dirname, '..', '..', 'frontend', 'dist');
 const APP_URL = isDev ? 'http://localhost:5173' : `http://${BACKEND_HOST}:${BACKEND_PORT}/`;
 
 let mainWindow = null;
@@ -69,7 +69,7 @@ async function startBackend() {
   const env = { ...process.env };
   if (!isDev) {
     if (!fs.existsSync(path.join(FRONTEND_DIST, 'index.html'))) {
-      throw new Error('frontend/dist is missing — run "npm run build" in the frontend folder first.');
+      throw new Error('frontend/dist is missing — run "npm run build:frontend" in the desktop folder first.');
     }
     env.FRONTEND_DIST = FRONTEND_DIST;
   }

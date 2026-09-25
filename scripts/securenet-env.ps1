@@ -4,7 +4,7 @@
 
 $Script:RepoRoot = Split-Path -Parent $PSScriptRoot
 $Script:BackendDir = Join-Path $RepoRoot 'backend'
-$Script:FrontendDir = Join-Path $RepoRoot 'SecureNet (2)\SecureNet\frontend'
+$Script:FrontendDir = Join-Path $RepoRoot 'frontend'
 
 function Get-SecureNetDirs {
     if ($env:SECURENET_TOOLS_DIR) {
