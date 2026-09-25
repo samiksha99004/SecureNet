@@ -28,6 +28,7 @@ import {
 import { useAuth } from '../../contexts/AuthContext';
 import { cn } from '../../utils/cn';
 import styles from './Sidebar.module.css';
+import { roleLabel } from '../../utils/roles';
 
 interface NavItem {
   to: string;
@@ -135,7 +136,7 @@ export function Sidebar({
             </div>
             <div className={styles.userInfo}>
               <span className={styles.userName}>{user.fullName || user.email}</span>
-              <span className={styles.userRole}>{user.role}</span>
+              <span className={styles.userRole}>{roleLabel(user.role)}</span>
             </div>
           </div>
         )}

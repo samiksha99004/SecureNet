@@ -20,6 +20,7 @@ import { type ReactNode, useState } from 'react';
 import { Sidebar } from './Sidebar';
 import { TopBar } from './TopBar';
 import { useLocalStorage } from '../../hooks/useLocalStorage';
+import { AlertPopups } from '../notifications/AlertPopups';
 import styles from './MainLayout.module.css';
 
 interface MainLayoutProps {
@@ -52,6 +53,7 @@ export function MainLayout({ title, children }: MainLayoutProps) {
         <main className={styles.content} id="main-content">
           {children}
         </main>
+        <AlertPopups />
       </div>
     </div>
   );

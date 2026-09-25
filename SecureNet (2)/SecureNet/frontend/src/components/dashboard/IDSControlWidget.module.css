@@ -14,7 +14,60 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
+  flex-wrap: wrap;
+  gap: var(--space-4);
   margin-bottom: var(--space-3);
+}
+
+.subtitle {
+  margin: var(--space-1) 0 0;
+  font-size: var(--text-sm);
+  color: var(--color-text-muted);
+}
+
+.controls {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+}
+
+.notice {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  margin: var(--space-2) 0 0;
+  padding: var(--space-2) var(--space-3);
+  font-size: var(--text-sm);
+  color: var(--color-text-secondary);
+  background: var(--tint-info-bg);
+  border: 1px solid var(--tint-info-border);
+  border-radius: var(--radius-md);
+}
+
+.notice svg {
+  flex-shrink: 0;
+  margin-top: 3px;
+}
+
+.noticeError {
+  color: var(--color-severity-high);
+  background: var(--tint-high-bg);
+  border-color: var(--tint-high-border);
+}
+
+.detectorInfo {
+  margin-left: auto;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: var(--space-1);
+}
+
+.detectorValue {
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  color: var(--color-peach-dark);
 }
 
 .title {
@@ -48,17 +101,18 @@
 }
 
 .powerOff:hover:not(:disabled) {
-  background: var(--color-peach-accent);
-  color: white;
+  background: var(--color-severity-low);
+  color: var(--color-on-accent);
 }
 
 .powerOn {
-  background: var(--color-peach-accent);
-  color: white;
+  background: var(--color-severity-low);
+  color: var(--color-on-accent);
+  box-shadow: 0 0 18px rgba(52, 211, 153, 0.35);
 }
 
 .powerOn:hover:not(:disabled) {
-  background: var(--color-peach-dark);
+  background: #6ee7b7;
 }
 
 .powerLabel {
@@ -78,6 +132,10 @@
   border-top: 1px solid var(--color-border);
 }
 
+.statusSection:last-child .statusCard {
+  margin-bottom: 0;
+}
+
 .statusCard {
   display: flex;
   align-items: center;
@@ -88,13 +146,15 @@
 }
 
 .statusNormal {
-  background: rgba(34, 197, 94, 0.1);
-  border: 1px solid rgba(34, 197, 94, 0.3);
+  color: var(--color-severity-low);
+  background: var(--tint-low-bg);
+  border: 1px solid var(--tint-low-border);
 }
 
 .statusAbnormal {
-  background: rgba(239, 68, 68, 0.1);
-  border: 1px solid rgba(239, 68, 68, 0.3);
+  color: var(--color-severity-high);
+  background: var(--tint-high-bg);
+  border: 1px solid var(--tint-high-border);
 }
 
 .statusIcon {

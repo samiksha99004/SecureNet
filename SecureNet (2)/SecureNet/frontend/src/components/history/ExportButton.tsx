@@ -1,23 +1,21 @@
 /**
  * SecureNet — ExportButton
  *
- * Triggers CSV or PDF export of filtered security events.
- * When the backend export endpoint is unavailable (no base URL
- * configured), shows an informational message instead of
- * attempting a download.
- *
- * Architecture: export URLs are built by eventsService; this
- * component only handles the UI state.
+ * Exports the events matching the current History filters as CSV or PDF
+ * (GET /api/events/export, downloaded with the user's access token).
  */
 
 import { useState } from 'react';
 import { Download, FileText, FileSpreadsheet, X } from 'lucide-react';
 import { cn } from '../../utils/cn';
+import { errorMessage } from '../../utils/errors';
+import { exportEvents } from '../../services/eventsService';
+import type { EventFilterParams } from '../../types/api.types';
 import styles from './ExportButton.module.css';
 
 interface ExportButtonProps {
-  /** Current filter query string (appended to export URL) */
-  queryString: string;
+  /** Current History filters */
+  filters: Partial<EventFilterParams>;
   /** Total events matching current filters */
   totalEvents: number | null;
   disabled?: boolean;
@@ -25,45 +23,33 @@ interface ExportButtonProps {
 
 type ExportFormat = 'csv' | 'pdf';
 
-/** Returns the base API URL — empty string means backend not configured. */
-function getApiBase(): string {
-  return import.meta.env.VITE_API_BASE_URL ?? '';
-}
-
-function buildExportUrl(format: ExportFormat, queryString: string): string {
-  const base = getApiBase();
-  const qs = queryString ? `${queryString}&format=${format}` : `format=${format}`;
-  return `${base}/events/export?${qs}`;
-}
-
-export function ExportButton({ queryString, totalEvents, disabled = false }: ExportButtonProps) {
+export function ExportButton({ filters, totalEvents, disabled = false }: ExportButtonProps) {
   const [open, setOpen] = useState(false);
-  const [unavailableFormat, setUnavailableFormat] = useState<ExportFormat | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [exportError, setExportError] = useState<string | null>(null);
 
-  const backendConfigured = getApiBase() !== '';
-
-  function handleExport(format: ExportFormat) {
-    if (!backendConfigured) {
-      setUnavailableFormat(format);
-      setOpen(false);
-      return;
-    }
-    const url = buildExportUrl(format, queryString);
-    window.open(url, '_blank', 'noopener,noreferrer');
+  async function handleExport(format: ExportFormat) {
     setOpen(false);
+    setExportError(null);
+    setBusy(true);
+    try {
+      await exportEvents(filters, format);
+    } catch (err) {
+      setExportError(errorMessage(err, 'Export failed.'));
+    } finally {
+      setBusy(false);
+    }
   }
 
   return (
     <div className={styles.wrapper}>
-      {/* Unavailable notice */}
-      {unavailableFormat && (
+      {/* Error notice */}
+      {exportError && (
         <div className={styles.unavailableNotice} role="alert">
-          <span>
-            Export not available — backend API not yet connected.
-          </span>
+          <span>{exportError}</span>
           <button
             className={styles.dismissBtn}
-            onClick={() => setUnavailableFormat(null)}
+            onClick={() => setExportError(null)}
             aria-label="Dismiss"
           >
             <X size={13} />
@@ -76,13 +62,13 @@ export function ExportButton({ queryString, totalEvents, disabled = false }: Exp
         type="button"
         className={cn(styles.trigger, open && styles.triggerOpen)}
         onClick={() => setOpen((p) => !p)}
-        disabled={disabled || totalEvents === 0}
+        disabled={disabled || busy || totalEvents === 0}
         aria-haspopup="menu"
         aria-expanded={open}
         aria-label="Export events"
       >
         <Download size={14} aria-hidden="true" />
-        Export
+        {busy ? 'Exporting…' : 'Export'}
       </button>
 
       {/* Dropdown menu */}
@@ -95,25 +81,19 @@ export function ExportButton({ queryString, totalEvents, disabled = false }: Exp
             <button
               role="menuitem"
               className={styles.menuItem}
-              onClick={() => handleExport('csv')}
+              onClick={() => void handleExport('csv')}
             >
               <FileSpreadsheet size={14} aria-hidden="true" />
               <span>CSV Spreadsheet</span>
-              {!backendConfigured && (
-                <span className={styles.unavailableTag}>unavailable</span>
-              )}
             </button>
 
             <button
               role="menuitem"
               className={styles.menuItem}
-              onClick={() => handleExport('pdf')}
+              onClick={() => void handleExport('pdf')}
             >
               <FileText size={14} aria-hidden="true" />
               <span>PDF Report</span>
-              {!backendConfigured && (
-                <span className={styles.unavailableTag}>unavailable</span>
-              )}
             </button>
 
             {totalEvents !== null && (

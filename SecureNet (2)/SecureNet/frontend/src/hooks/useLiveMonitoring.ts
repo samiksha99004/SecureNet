@@ -1,20 +1,24 @@
 /**
- * SecureNet — Live Monitoring Hook
+ * SecureNet — Live Monitoring Hooks
  *
- * Manages the WebSocket connection and accumulates live chart data.
- * Components call this hook to access real-time anomaly scores.
+ * useLiveMonitoring()   – WebSocket status + rolling chart of anomaly scores
+ * useWebSocketMessage() – subscribe a component to one message type
  *
- * Returns an empty state with the correct connection status until
- * the backend WebSocket is connected.
+ * The backend streams a `live_score` for every scored flow (throttled) and
+ * an `alert` for every stored security event. No data is ever fabricated.
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { wsService } from '../services/websocketService';
-import type { WebSocketStatus } from '../types/websocket.types';
+import type {
+  LiveScorePayload,
+  WebSocketMessage,
+  WebSocketMessageType,
+  WebSocketStatus,
+} from '../types/websocket.types';
 import type { LiveChartPoint } from '../types/security.types';
-import type { LiveScorePayload, WebSocketMessage } from '../types/websocket.types';
 
-const MAX_CHART_POINTS = 60; // Keep last 60 data points
+const MAX_CHART_POINTS = 120;
 
 interface LiveMonitoringState {
   status: WebSocketStatus;
@@ -25,46 +29,39 @@ interface LiveMonitoringState {
 
 export function useLiveMonitoring() {
   const [state, setState] = useState<LiveMonitoringState>({
-    status: 'idle',
+    status: wsService.getStatus(),
     chartData: [],
     lastScore: null,
     lastSeverity: null,
   });
 
-  const stateRef = useRef(state);
-  stateRef.current = state;
-
   useEffect(() => {
-    // Subscribe to connection status
     const unsubStatus = wsService.onStatusChange((status) => {
       setState((prev) => ({ ...prev, status }));
     });
 
-    // Subscribe to live score messages
     const unsubScore = wsService.on<LiveScorePayload>(
       'live_score',
       (message: WebSocketMessage<LiveScorePayload>) => {
-        const { anomalyScore, severity } = message.payload;
+        const { anomalyScore, severity, isAlert } = message.payload;
         const time = new Date(message.timestamp).toLocaleTimeString('en-GB');
-
-        setState((prev) => {
-          const newPoint: LiveChartPoint = {
-            time,
-            score: anomalyScore,
-            severity: severity as LiveChartPoint['severity'],
-          };
-          const chartData = [...prev.chartData, newPoint].slice(-MAX_CHART_POINTS);
-          return {
-            ...prev,
-            chartData,
-            lastScore: anomalyScore,
-            lastSeverity: severity,
-          };
-        });
+        setState((prev) => ({
+          ...prev,
+          chartData: [
+            ...prev.chartData,
+            {
+              time,
+              score: anomalyScore,
+              severity: severity as LiveChartPoint['severity'],
+              isAlert: Boolean(isAlert),
+            },
+          ].slice(-MAX_CHART_POINTS),
+          lastScore: anomalyScore,
+          lastSeverity: severity,
+        }));
       }
     );
 
-    // Connect
     wsService.connect();
 
     return () => {
@@ -73,20 +70,31 @@ export function useLiveMonitoring() {
     };
   }, []);
 
-  const disconnect = useCallback(() => {
-    wsService.disconnect();
-  }, []);
-
-  const reconnect = useCallback(() => {
-    wsService.connect();
-  }, []);
+  const disconnect = useCallback(() => wsService.disconnect(), []);
+  const reconnect = useCallback(() => wsService.reconnect(), []);
 
   return {
     ...state,
     disconnect,
     reconnect,
     isConnected: state.status === 'connected',
-    isConnecting:
-      state.status === 'connecting' || state.status === 'reconnecting',
+    isConnecting: state.status === 'connecting' || state.status === 'reconnecting',
   };
+}
+
+/** Run `handler` for every WebSocket message of `type` while mounted. */
+export function useWebSocketMessage<T>(
+  type: WebSocketMessageType,
+  handler: (message: WebSocketMessage<T>) => void
+): void {
+  const handlerRef = useRef(handler);
+  useEffect(() => {
+    handlerRef.current = handler;
+  }, [handler]);
+
+  useEffect(() => {
+    const unsubscribe = wsService.on<T>(type, (message) => handlerRef.current(message));
+    wsService.connect();
+    return unsubscribe;
+  }, [type]);
 }

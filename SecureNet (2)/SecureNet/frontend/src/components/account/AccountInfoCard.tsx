@@ -10,16 +10,11 @@ import type { User } from '../../types/auth.types';
 import { Card } from '../common/Card';
 import { formatTimestamp } from '../../utils/format';
 import styles from './AccountInfoCard.module.css';
+import { roleLabel } from '../../utils/roles';
 
 const PROVIDER_LABELS: Record<string, string> = {
   local:  'Email & Password',
   google: 'Google OAuth',
-};
-
-const ROLE_LABELS: Record<string, string> = {
-  admin:   'Administrator',
-  analyst: 'Security Analyst',
-  viewer:  'Viewer',
 };
 
 const STATUS_LABELS: Record<string, string> = {
@@ -55,7 +50,7 @@ export function AccountInfoCard({ user }: AccountInfoCardProps) {
         <InfoRow label="User ID"             value={user.id}                                      mono />
         <InfoRow label="Full Name"           value={user.fullName} />
         <InfoRow label="Email"               value={user.email}                                   mono />
-        <InfoRow label="Role"                value={ROLE_LABELS[user.role] ?? user.role} />
+        <InfoRow label="Role"                value={roleLabel(user.role)} />
         <InfoRow label="Account Status"      value={STATUS_LABELS[user.accountStatus] ?? user.accountStatus} />
         <InfoRow label="Authentication"      value={PROVIDER_LABELS[user.authProvider] ?? user.authProvider} />
         <InfoRow label="Account Created"     value={formatTimestamp(user.createdAt)} />

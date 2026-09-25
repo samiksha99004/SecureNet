@@ -42,9 +42,9 @@
   flex-shrink: 0;
 }
 
-.statusLoaded    { background-color: #e6f4ec; color: var(--color-severity-low);    }
+.statusLoaded    { background-color: var(--tint-low-bg); color: var(--color-severity-low);    }
 .statusLoading   { background-color: var(--color-peach-light); color: var(--color-peach-dark); }
-.statusError     { background-color: #fdecea; color: var(--color-severity-high);   }
+.statusError     { background-color: var(--tint-high-bg); color: var(--color-severity-high);   }
 .statusNotLoaded { background-color: var(--color-surface); color: var(--color-text-muted); }
 
 /* ── Feature statement ──────────────────────────────────────────── */
@@ -203,4 +203,22 @@
   .infoGrid {
     grid-template-columns: 1fr;
   }
+}
+
+.reloadButton {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-top: var(--space-3);
+  padding: var(--space-2) var(--space-4);
+  font-size: 0.875rem;
+  font-weight: 500;
+  color: var(--color-on-accent);
+  background: var(--color-peach-dark);
+  border-radius: var(--radius-md);
+  transition: background var(--transition-fast);
+}
+
+.reloadButton:hover:not(:disabled) {
+  background: var(--color-primary-hover);
 }

@@ -5,6 +5,7 @@
  *  - Mobile menu toggle
  *  - Page title (passed as prop)
  *  - Connection status indicator (WebSocket)
+ *  - Notification bell (alert feed)
  *  - User display name
  *  - Logout button
  */
@@ -14,6 +15,7 @@ import { useNavigate } from 'react-router-dom';
 import { Menu, LogOut } from 'lucide-react';
 import { useAuth } from '../../contexts/AuthContext';
 import { ConnectionIndicator } from './ConnectionIndicator';
+import { NotificationBell } from '../notifications/NotificationBell';
 import styles from './TopBar.module.css';
 
 interface TopBarProps {
@@ -48,13 +50,14 @@ export function TopBar({ title, onMenuClick }: TopBarProps) {
       {/* Right: connection status + user + logout */}
       <div className={styles.right}>
         <ConnectionIndicator />
+        <NotificationBell />
 
         {user && (
           <div className={styles.userChip}>
             <div className={styles.avatar} aria-hidden="true">
-              {user.fullName.charAt(0).toUpperCase()}
+              {(user.fullName || user.email || '?').charAt(0).toUpperCase()}
             </div>
-            <span className={styles.userName}>{user.fullName}</span>
+            <span className={styles.userName}>{user.fullName || user.email}</span>
           </div>
         )}
 

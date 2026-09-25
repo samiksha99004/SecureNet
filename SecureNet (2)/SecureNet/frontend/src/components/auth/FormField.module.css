@@ -38,7 +38,7 @@
 
 .input:focus {
   border-color: var(--color-peach-accent);
-  box-shadow: 0 0 0 3px rgba(242, 168, 130, 0.18);
+  box-shadow: 0 0 0 3px var(--focus-ring);
 }
 
 .inputError {
@@ -46,7 +46,7 @@
 }
 
 .inputError:focus {
-  box-shadow: 0 0 0 3px rgba(194, 75, 63, 0.12);
+  box-shadow: 0 0 0 3px var(--tint-high-bg);
 }
 
 .rightElement {

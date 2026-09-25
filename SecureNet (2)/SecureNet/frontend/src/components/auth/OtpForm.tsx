@@ -6,10 +6,7 @@
  *  - Paste support for the full 6-digit code
  *  - Resend OTP with countdown cooldown
  *  - Loading + error states
- *  - On success: navigates to dashboard
- *
- * NOTE: Verification is not functional until backend is connected.
- * The form shows appropriate "backend not connected" messaging.
+ *  - On success: opens step 3 (create password) — registration step 2 of 3
  */
 
 import {
@@ -34,9 +31,9 @@ export function OtpForm() {
   const navigate = useNavigate();
   const location = useLocation();
 
-  // Email passed from signup via router state
+  // Email passed from signup/login via router state (sessionStorage survives a refresh)
   const email =
-    (location.state as { email?: string } | null)?.email ?? '';
+    (location.state as { email?: string } | null)?.email ?? authService.getPendingEmail();
 
   const [digits, setDigits] = useState<string[]>(Array(OTP_LENGTH).fill(''));
   const [isVerifying, setIsVerifying] = useState(false);
@@ -123,7 +120,7 @@ export function OtpForm() {
     try {
       const result = await authService.verifyOtp({ email, otp: otpValue });
       if (result.verified) {
-        navigate('/dashboard', { replace: true });
+        navigate('/create-password', { replace: true, state: { email: result.email, setupToken: result.setupToken } });
       } else {
         setError('Verification failed. Please check the code and try again.');
       }
@@ -152,8 +149,8 @@ export function OtpForm() {
     setIsResending(true);
 
     try {
-      await authService.resendOtp({ email });
-      setResendMessage('A new code has been sent to your email.');
+      const response = await authService.resendOtp({ email });
+      setResendMessage(response.message);
       setCooldown(RESEND_COOLDOWN_SECONDS);
       setDigits(Array(OTP_LENGTH).fill(''));
       inputRefs.current[0]?.focus();
@@ -172,15 +169,9 @@ export function OtpForm() {
         <h1 className={styles.title}>Verify your email</h1>
         <p className={styles.subtitle}>
           {email
-            ? <>Enter the 6-digit code sent to <strong>{email}</strong>.</>
-            : 'Enter the 6-digit verification code sent to your email.'}
+            ? <>Step 2 of 3 — enter the 6-digit code sent to <strong>{email}</strong>.</>
+            : 'Step 2 of 3 — enter the 6-digit verification code sent to your email.'}
         </p>
-      </div>
-
-      {/* Backend not connected notice */}
-      <div className={styles.notice} role="note">
-        <strong>Backend not connected.</strong> OTP verification will be active
-        once the API is integrated.
       </div>
 
       {error && (
@@ -256,8 +247,8 @@ export function OtpForm() {
       </div>
 
       <p className={styles.backLink}>
-        <Link to="/login" className={styles.link}>
-          ← Back to sign in
+        <Link to="/signup" className={styles.link}>
+          ← Wrong email? Start again
         </Link>
       </p>
     </div>

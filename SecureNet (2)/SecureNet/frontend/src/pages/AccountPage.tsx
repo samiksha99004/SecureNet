@@ -1,8 +1,9 @@
 /**
  * SecureNet — Account Page
  *
- * Displays the authenticated user's profile, account metadata,
- * and security settings (password change).
+ * Displays the authenticated user's profile and account metadata, lets them
+ * edit their name / phone / email (each change confirmed by an emailed code)
+ * and change their password.
  *
  * All data comes from AuthContext — no fabricated values.
  * Password change is hidden for Google OAuth users.
@@ -13,6 +14,7 @@ import { PageHeader } from '../components/common/PageHeader';
 import { ProfileCard } from '../components/account/ProfileCard';
 import { AccountInfoCard } from '../components/account/AccountInfoCard';
 import { ChangePasswordCard } from '../components/account/ChangePasswordCard';
+import { EditProfileCard } from '../components/account/EditProfileCard';
 import { useAuth } from '../contexts/AuthContext';
 import { LoadingState } from '../components/common/LoadingState';
 import styles from './AccountPage.module.css';
@@ -44,7 +46,7 @@ export function AccountPage() {
       <div className={styles.page}>
         <PageHeader
           title="Account"
-          description="View your profile, account details, and security settings."
+          description="Your profile, your details and your password."
         />
 
         {/* Profile summary */}
@@ -52,8 +54,9 @@ export function AccountPage() {
 
         {/* Two-column grid on wide screens */}
         <div className={styles.grid}>
-          <AccountInfoCard user={user} />
+          <EditProfileCard key={`${user.email}|${user.fullName}|${user.phoneNumber ?? ''}`} user={user} />
           <ChangePasswordCard user={user} />
+          <AccountInfoCard user={user} />
         </div>
       </div>
     </MainLayout>

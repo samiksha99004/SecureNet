@@ -4,14 +4,7 @@
  * Provides authentication state and actions throughout the app.
  * Components use the useAuth() hook — never import the context directly.
  *
- * Architecture:
- *   AuthProvider (this file)
- *       ↓
- *   useAuth() hook
- *       ↓
- *   authService.ts
- *       ↓
- *   Future backend
+ *   AuthProvider (this file) → useAuth() → authService.ts → backend
  */
 
 import {
@@ -23,72 +16,83 @@ import {
   type ReactNode,
 } from 'react';
 import * as authService from '../services/authService';
+import { SESSION_EXPIRED_EVENT } from '../services/apiClient';
 import type { User, AuthState, LoginRequest, SignupRequest } from '../types/auth.types';
 import type { MessageResponse } from '../types/api.types';
+import { isAdminRole } from '../utils/roles';
 
 // ── State & Reducer ───────────────────────────────────────────────────────────
+
+interface State extends AuthState {
+  sessionExpired: boolean;
+}
 
 type AuthAction =
   | { type: 'LOADING' }
   | { type: 'AUTHENTICATED'; user: User }
-  | { type: 'UNAUTHENTICATED' }
+  | { type: 'UNAUTHENTICATED'; expired?: boolean }
   | { type: 'ERROR'; error: string }
   | { type: 'CLEAR_ERROR' };
 
-function authReducer(state: AuthState, action: AuthAction): AuthState {
+function authReducer(state: State, action: AuthAction): State {
   switch (action.type) {
     case 'LOADING':
       return { ...state, status: 'loading', error: null };
     case 'AUTHENTICATED':
-      return { status: 'authenticated', user: action.user, error: null };
+      return { status: 'authenticated', user: action.user, error: null, sessionExpired: false };
     case 'UNAUTHENTICATED':
-      return { status: 'unauthenticated', user: null, error: null };
+      return { status: 'unauthenticated', user: null, error: null, sessionExpired: !!action.expired };
     case 'ERROR':
-      return { ...state, status: 'error', error: action.error };
+      // A failed login attempt leaves the user signed out (not in a limbo state)
+      return { ...state, status: 'unauthenticated', user: null, error: action.error };
     case 'CLEAR_ERROR':
-      return { ...state, error: null };
+      return { ...state, error: null, sessionExpired: false };
     default:
       return state;
   }
 }
 
-const initialState: AuthState = {
-  status: 'idle',
-  user: null,
-  error: null,
-};
+function initialState(): State {
+  const user = authService.getStoredUser();
+  const token = authService.getAccessToken();
+  // Half a session (token without a usable profile, or vice versa) is discarded
+  if (!user || !token) authService.clearTokens();
+  return user && token
+    ? { status: 'authenticated', user, error: null, sessionExpired: false }
+    : { status: 'unauthenticated', user: null, error: null, sessionExpired: false };
+}
 
 // ── Context Shape ─────────────────────────────────────────────────────────────
 
-interface AuthContextValue extends AuthState {
+interface AuthContextValue extends State {
   login: (request: LoginRequest) => Promise<void>;
   signup: (request: SignupRequest) => Promise<MessageResponse>;
+  /** Sign in with a user already authenticated elsewhere (e.g. OTP verification). */
+  completeLogin: (user: User) => void;
   logout: () => Promise<void>;
   clearError: () => void;
   isAuthenticated: boolean;
+  /** only the Admin may change IDS settings, the model and incidents */
+  isAdmin: boolean;
 }
 
 const AuthContext = createContext<AuthContextValue | null>(null);
 
 // ── Provider ──────────────────────────────────────────────────────────────────
 
-interface AuthProviderProps {
-  children: ReactNode;
-}
+export function AuthProvider({ children }: { children: ReactNode }) {
+  const [state, dispatch] = useReducer(authReducer, undefined, initialState);
 
-export function AuthProvider({ children }: AuthProviderProps) {
-  const [state, dispatch] = useReducer(authReducer, initialState);
-
-  // On mount, check if we have a stored user session
+  // Refresh the stored profile (role may have changed) and react to expiry
   useEffect(() => {
-    const storedUser = authService.getStoredUser();
-    const token = authService.getAccessToken();
-
-    if (storedUser && token) {
-      dispatch({ type: 'AUTHENTICATED', user: storedUser });
-    } else {
-      dispatch({ type: 'UNAUTHENTICATED' });
+    const onExpired = () => dispatch({ type: 'UNAUTHENTICATED', expired: true });
+    window.addEventListener(SESSION_EXPIRED_EVENT, onExpired);
+    if (authService.getAccessToken()) {
+      authService.getCurrentUser()
+        .then((user) => dispatch({ type: 'AUTHENTICATED', user }))
+        .catch(() => { /* network errors keep the cached session; 401 fires the event */ });
     }
+    return () => window.removeEventListener(SESSION_EXPIRED_EVENT, onExpired);
   }, []);
 
   const login = useCallback(async (request: LoginRequest): Promise<void> => {
@@ -97,30 +101,28 @@ export function AuthProvider({ children }: AuthProviderProps) {
       const response = await authService.login(request);
       dispatch({ type: 'AUTHENTICATED', user: response.user });
     } catch (err) {
-      const message = err instanceof Error ? err.message : 'Login failed.';
-      dispatch({ type: 'ERROR', error: message });
+      dispatch({ type: 'ERROR', error: err instanceof Error ? err.message : 'Login failed.' });
       throw err;
     }
   }, []);
 
-  const signup = useCallback(
-    async (request: SignupRequest): Promise<MessageResponse> => {
-      dispatch({ type: 'LOADING' });
-      try {
-        const response = await authService.signup(request);
-        dispatch({ type: 'UNAUTHENTICATED' }); // Not yet authenticated until OTP
-        return response;
-      } catch (err) {
-        const message = err instanceof Error ? err.message : 'Signup failed.';
-        dispatch({ type: 'ERROR', error: message });
-        throw err;
-      }
-    },
-    []
-  );
+  const signup = useCallback(async (request: SignupRequest): Promise<MessageResponse> => {
+    dispatch({ type: 'LOADING' });
+    try {
+      const response = await authService.signup(request);
+      dispatch({ type: 'UNAUTHENTICATED' }); // Not yet authenticated until OTP
+      return response;
+    } catch (err) {
+      dispatch({ type: 'ERROR', error: err instanceof Error ? err.message : 'Signup failed.' });
+      throw err;
+    }
+  }, []);
+
+  const completeLogin = useCallback((user: User) => {
+    dispatch({ type: 'AUTHENTICATED', user });
+  }, []);
 
   const logout = useCallback(async (): Promise<void> => {
-    dispatch({ type: 'LOADING' });
     try {
       await authService.logout();
     } finally {
@@ -136,9 +138,11 @@ export function AuthProvider({ children }: AuthProviderProps) {
     ...state,
     login,
     signup,
+    completeLogin,
     logout,
     clearError,
     isAuthenticated: state.status === 'authenticated',
+    isAdmin: isAdminRole(state.user?.role),
   };
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
@@ -146,6 +150,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
 
 // ── Hook ──────────────────────────────────────────────────────────────────────
 
+// eslint-disable-next-line react-refresh/only-export-components
 export function useAuth(): AuthContextValue {
   const context = useContext(AuthContext);
   if (!context) {

@@ -3,7 +3,6 @@
  *
  * CRUD + query operations for security event history.
  *
- * TODO (backend): Connect all endpoints once the API is ready.
  */
 
 import { apiClient } from './apiClient';
@@ -16,7 +15,7 @@ import type {
 
 /**
  * Fetch a paginated, filtered list of security events.
- * TODO (backend): GET /events
+ * GET /events
  */
 export async function getEvents(
   params: Partial<EventFilterParams>
@@ -27,7 +26,7 @@ export async function getEvents(
 
 /**
  * Fetch a single security event by ID.
- * TODO (backend): GET /events/:id
+ * GET /events/:id
  */
 export async function getEventById(id: string): Promise<SecurityEvent> {
   return apiClient.get<SecurityEvent>(`/events/${id}`);
@@ -35,7 +34,7 @@ export async function getEventById(id: string): Promise<SecurityEvent> {
 
 /**
  * Mark an event as resolved.
- * TODO (backend): POST /events/:id/resolve
+ * POST /events/:id/resolve
  */
 export async function resolveEvent(id: string): Promise<MessageResponse> {
   return apiClient.post<MessageResponse>(`/events/${id}/resolve`, {});
@@ -43,10 +42,23 @@ export async function resolveEvent(id: string): Promise<MessageResponse> {
 
 /**
  * Mark an event as a false positive.
- * TODO (backend): POST /events/:id/false-positive
+ * POST /events/:id/false-positive
  */
 export async function markFalsePositive(id: string): Promise<MessageResponse> {
   return apiClient.post<MessageResponse>(`/events/${id}/false-positive`, {});
+}
+
+/**
+ * Download events matching the current filters (CSV / PDF / JSON).
+ * GET /api/events/export
+ */
+export async function exportEvents(
+  params: Partial<EventFilterParams>,
+  format: 'csv' | 'pdf' | 'json'
+): Promise<void> {
+  const { page: _page, pageSize: _pageSize, ...filters } = params;
+  const qs = buildQueryString({ ...filters, format } as Partial<EventFilterParams>);
+  await apiClient.download(`/events/export?${qs}`, `securenet-events.${format}`);
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────

@@ -3,8 +3,13 @@
  *
  * Generic hook for fetching async data with loading/error/success states.
  *
+ *  - `isLoading` is true only while there is no data yet (first load); later
+ *    refetches keep showing the current data (`isRefreshing` is true).
+ *  - Responses that arrive after a newer request started are ignored, so
+ *    fast filter changes can never show stale results.
+ *
  * Usage:
- *   const { data, status, error, refetch } = useAsyncData(getDashboardSummary);
+ *   const { data, isLoading, isError, refetch } = useAsyncData(getDashboardSummary);
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react';
@@ -24,6 +29,17 @@ interface UseAsyncDataOptions {
   fetchOnMount?: boolean;
 }
 
+function toApiError(err: unknown): ApiError {
+  if (err instanceof ApiClientError) {
+    return { status: err.status, code: err.code, message: err.message, details: err.details };
+  }
+  return {
+    status: 0,
+    code: 'NETWORK_ERROR',
+    message: err instanceof Error ? err.message : 'An unexpected error occurred.',
+  };
+}
+
 export function useAsyncData<T>(
   fetcher: () => Promise<T>,
   options: UseAsyncDataOptions = {}
@@ -31,12 +47,13 @@ export function useAsyncData<T>(
   const { fetchOnMount = true } = options;
   const [state, setState] = useState<AsyncState<T>>({
     data: null,
-    status: 'idle',
+    status: fetchOnMount ? 'loading' : 'idle',
     error: null,
   });
 
-  // Prevent state updates on unmounted components
   const isMounted = useRef(true);
+  const requestId = useRef(0);
+
   useEffect(() => {
     isMounted.current = true;
     return () => {
@@ -45,37 +62,16 @@ export function useAsyncData<T>(
   }, []);
 
   const execute = useCallback(async () => {
-    if (!isMounted.current) return;
-    setState({ data: null, status: 'loading', error: null });
-
+    const id = ++requestId.current;
+    setState((prev) => ({ ...prev, status: 'loading' }));
     try {
       const data = await fetcher();
-      if (isMounted.current) {
+      if (isMounted.current && id === requestId.current) {
         setState({ data, status: 'success', error: null });
       }
     } catch (err) {
-      if (!isMounted.current) return;
-      if (err instanceof ApiClientError) {
-        setState({
-          data: null,
-          status: 'error',
-          error: {
-            status: err.status,
-            code: err.code,
-            message: err.message,
-            details: err.details,
-          },
-        });
-      } else {
-        setState({
-          data: null,
-          status: 'error',
-          error: {
-            status: 0,
-            code: 'NETWORK_ERROR',
-            message: err instanceof Error ? err.message : 'An unexpected error occurred.',
-          },
-        });
+      if (isMounted.current && id === requestId.current) {
+        setState((prev) => ({ data: prev.data, status: 'error', error: toApiError(err) }));
       }
     }
   }, [fetcher]);
@@ -89,8 +85,9 @@ export function useAsyncData<T>(
   return {
     ...state,
     refetch: execute,
-    isLoading: state.status === 'loading',
+    isLoading: state.status === 'loading' && state.data === null,
+    isRefreshing: state.status === 'loading' && state.data !== null,
     isSuccess: state.status === 'success',
-    isError: state.status === 'error',
+    isError: state.status === 'error' && state.data === null,
   };
 }

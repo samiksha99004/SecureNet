@@ -7,8 +7,7 @@
  *  - Validation (client-side)
  *  - Loading state
  *  - Error display
- *  - Forgot password link
- *  - Google OAuth button (UI only — backend not connected)
+ *  - Unverified accounts are sent to OTP verification
  *  - Link to signup
  */
 
@@ -40,6 +39,9 @@ export function LoginForm() {
 
   const isLoading = status === 'loading';
 
+  // Message handed over by another page (e.g. "password changed")
+  const notice = (location.state as { notice?: string } | null)?.notice ?? null;
+
   // Where to redirect after login
   const from =
     (location.state as { from?: { pathname: string } })?.from?.pathname ??
@@ -70,14 +72,12 @@ export function LoginForm() {
       navigate(from, { replace: true });
     } catch (err) {
       setFormError(
-        err instanceof Error
+        err instanceof Error && err.message
           ? err.message
           : 'Login failed. Please check your credentials.'
       );
     }
   }
-
-  // Google OAuth removed - not implemented in backend
 
   return (
     <div className={styles.container}>
@@ -85,6 +85,12 @@ export function LoginForm() {
         <h1 className={styles.title}>Welcome back</h1>
         <p className={styles.subtitle}>Sign in to your SecureNet account.</p>
       </div>
+
+      {notice && !formError && (
+        <div className={styles.notice} role="status">
+          {notice}
+        </div>
+      )}
 
       {/* ── Global form error ── */}
       {formError && (
@@ -137,11 +143,11 @@ export function LoginForm() {
           }
         />
 
-        <div className={styles.forgotRow}>
+        <p className={styles.forgotRow}>
           <Link to="/forgot-password" className={styles.forgotLink}>
             Forgot password?
           </Link>
-        </div>
+        </p>
 
         <AuthButton type="submit" isLoading={isLoading} disabled={isLoading}>
           Sign in

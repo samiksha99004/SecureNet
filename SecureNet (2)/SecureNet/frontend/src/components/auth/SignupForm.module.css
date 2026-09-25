@@ -24,12 +24,12 @@
 }
 
 .formError {
-  background-color: rgba(194, 75, 63, 0.08);
-  border: 1px solid rgba(194, 75, 63, 0.25);
+  background-color: var(--tint-high-bg);
+  border: 1px solid var(--tint-high-border);
   border-radius: var(--radius-md);
   padding: var(--space-3) var(--space-4);
   font-size: 0.875rem;
-  color: #9e2a1f;
+  color: var(--color-severity-high);
 }
 
 .form {

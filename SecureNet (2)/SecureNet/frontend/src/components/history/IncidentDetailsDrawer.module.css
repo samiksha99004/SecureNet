@@ -3,7 +3,7 @@
 .overlay {
   position: fixed;
   inset: 0;
-  background-color: rgba(46, 36, 31, 0.25);
+  background-color: var(--overlay);
   z-index: 50;
 }
 
@@ -154,7 +154,7 @@
 
 .normal {
   font-size: 0.875rem;
-  color: var(--color-severity-low);
+  color: var(--color-text-muted);
   font-weight: 500;
 }
 
@@ -213,18 +213,6 @@
 
 .actionsSection { margin-top: auto; }
 
-.noticeBox {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  font-size: 0.8125rem;
-  color: #3d6b9e;
-  background: rgba(107, 143, 191, 0.08);
-  border: 1px solid rgba(107, 143, 191, 0.2);
-  border-radius: var(--radius-md);
-  padding: var(--space-3) var(--space-4);
-  margin-bottom: var(--space-3);
-}
 
 .actionButtons {
   display: flex;
@@ -238,7 +226,7 @@
   font-family: var(--font-body);
   font-size: 0.875rem;
   font-weight: 500;
-  color: #fff;
+  color: var(--color-on-accent);
   background: var(--color-severity-low);
   border: 1px solid var(--color-severity-low);
   border-radius: var(--radius-md);
@@ -246,7 +234,7 @@
   transition: background var(--transition-fast);
 }
 
-.resolveButton:hover:not(:disabled) { background: #3a7a52; }
+.resolveButton:hover:not(:disabled) { background: #10b981; }
 .resolveButton:disabled { opacity: 0.5; cursor: not-allowed; }
 .resolveButton:focus-visible { outline: 2px solid var(--color-peach-dark); outline-offset: 2px; }
 

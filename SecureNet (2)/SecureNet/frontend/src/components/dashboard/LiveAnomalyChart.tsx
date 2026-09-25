@@ -29,8 +29,6 @@ import { Spinner } from '../common/LoadingState';
 import type { LiveChartPoint } from '../../types/security.types';
 import styles from './LiveAnomalyChart.module.css';
 
-// Anomaly threshold reference line (0.5 is a typical default)
-const THRESHOLD_REFERENCE = 0.5;
 
 interface TooltipEntry {
   value?: number;
@@ -55,20 +53,30 @@ function CustomTooltip({ active, payload, label }: CustomTooltipProps) {
   );
 }
 
-function scoreToColor(score: number): string {
-  if (score >= 0.7) return 'var(--color-severity-high)';
-  if (score >= 0.5) return 'var(--color-severity-medium)';
+function scoreToColor(score: number, threshold: number): string {
+  if (score >= threshold + (1 - threshold) * 0.5) return 'var(--color-severity-high)';
+  if (score >= threshold) return 'var(--color-severity-medium)';
   return 'var(--color-severity-low)';
 }
 
-// Derive a single stroke colour from the latest point
-function getLineColor(data: LiveChartPoint[]): string {
-  if (!data.length) return 'var(--color-peach-accent)';
-  const last = data[data.length - 1];
-  return scoreToColor(last.score);
+interface AlertDotProps {
+  cx?: number;
+  cy?: number;
+  payload?: LiveChartPoint;
 }
 
-export function LiveAnomalyChart() {
+/** Only flows that became security events get a marker. */
+function AlertDot({ cx, cy, payload }: AlertDotProps) {
+  if (!payload?.isAlert || cx === undefined || cy === undefined) return null;
+  return <circle cx={cx} cy={cy} r={4} fill="var(--color-severity-high)" stroke="var(--color-white)" strokeWidth={1} />;
+}
+
+interface LiveAnomalyChartProps {
+  /** Current detection threshold θ (from Settings → Detection) */
+  threshold?: number;
+}
+
+export function LiveAnomalyChart({ threshold = 0.5 }: LiveAnomalyChartProps) {
   const { status, chartData, lastScore, isConnecting } = useLiveMonitoring();
 
   const isUnavailable =
@@ -86,7 +94,7 @@ export function LiveAnomalyChart() {
           {lastScore !== null && isConnected && (
             <span
               className={styles.liveScore}
-              style={{ color: scoreToColor(lastScore) }}
+              style={{ color: scoreToColor(lastScore, threshold) }}
               aria-label={`Current anomaly score: ${lastScore.toFixed(4)}`}
             >
               {lastScore.toFixed(4)}
@@ -113,7 +121,7 @@ export function LiveAnomalyChart() {
           <div className={styles.overlayMessage}>
             <p className={styles.unavailableText}>Live monitoring unavailable</p>
             <p className={styles.unavailableSubtext}>
-              Connect the backend WebSocket to enable real-time monitoring.
+              The live feed is not connected. Reload the page to try again.
             </p>
           </div>
         )}
@@ -131,9 +139,9 @@ export function LiveAnomalyChart() {
         {/* Connected, no data yet */}
         {isConnected && chartData.length === 0 && (
           <div className={styles.overlayMessage}>
-            <p className={styles.waitingText}>No anomalies detected yet</p>
+            <p className={styles.waitingText}>Waiting for scored traffic</p>
             <p className={styles.unavailableSubtext}>
-              Turn IDS ON and generate network traffic to see live scores
+              Scores appear here once the IDS is ON and a detection model is loaded.
             </p>
           </div>
         )}
@@ -167,7 +175,7 @@ export function LiveAnomalyChart() {
               />
               <Tooltip content={<CustomTooltip />} />
               <ReferenceLine
-                y={THRESHOLD_REFERENCE}
+                y={threshold}
                 stroke="var(--color-severity-medium)"
                 strokeDasharray="4 2"
                 label={{
@@ -181,9 +189,9 @@ export function LiveAnomalyChart() {
               <Line
                 type="monotone"
                 dataKey="score"
-                stroke={getLineColor(chartData)}
+                stroke="var(--color-peach-dark)"
                 strokeWidth={2}
-                dot={false}
+                dot={<AlertDot />}
                 isAnimationActive={false}
               />
             </LineChart>

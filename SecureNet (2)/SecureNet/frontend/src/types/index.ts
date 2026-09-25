@@ -9,3 +9,4 @@ export * from './settings.types';
 export * from './reports.types';
 export * from './websocket.types';
 export * from './api.types';
+export * from './notifications.types';

@@ -42,6 +42,11 @@ export function isValidOtp(otp: string): boolean {
   return /^\d{6}$/.test(otp.trim());
 }
 
+/** 7-15 digits, optional leading +; spaces, dashes, dots and brackets are ignored (same rule as the backend). */
+export function isValidPhone(phone: string): boolean {
+  return /^\+?\d{7,15}$/.test(phone.trim().replace(/[\s().-]/g, ''));
+}
+
 export function isValidIpAddress(ip: string): boolean {
   // IPv4
   const ipv4 = /^(\d{1,3}\.){3}\d{1,3}$/;

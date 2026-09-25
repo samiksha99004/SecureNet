@@ -35,7 +35,7 @@
 
 .select:focus {
   border-color: var(--color-peach-accent);
-  box-shadow: 0 0 0 3px rgba(242, 168, 130, 0.15);
+  box-shadow: 0 0 0 3px var(--focus-ring);
 }
 
 .chevron {

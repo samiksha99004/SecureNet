@@ -1,15 +1,21 @@
 /**
  * SecureNet — HistorySummaryCards
  *
- * Shows total event counts by severity at the top of the History page.
- * Receives the total from the paginated API response.
+ * Event counts at the top of the History page (all events, not filtered).
  */
 
 import { ShieldAlert, AlertTriangle, CheckCircle, Clock } from 'lucide-react';
 import styles from './HistorySummaryCards.module.css';
 
+export interface HistoryCounts {
+  total: number;
+  high: number;
+  medium: number;
+  resolved: number;
+}
+
 interface HistorySummaryCardsProps {
-  total: number | null;
+  counts: HistoryCounts | null;
   isLoading: boolean;
 }
 
@@ -34,8 +40,9 @@ function SummaryCard({ label, value, icon, variant }: SummaryCardProps) {
   );
 }
 
-export function HistorySummaryCards({ total, isLoading }: HistorySummaryCardsProps) {
-  const display = isLoading ? null : total !== null ? total.toLocaleString() : null;
+export function HistorySummaryCards({ counts, isLoading }: HistorySummaryCardsProps) {
+  const show = (n: number | undefined) => (isLoading || n === undefined ? null : n.toLocaleString());
+  const display = show(counts?.total);
 
   return (
     <div className={styles.grid} aria-label="Event summary">
@@ -47,19 +54,19 @@ export function HistorySummaryCards({ total, isLoading }: HistorySummaryCardsPro
       />
       <SummaryCard
         label="High Severity"
-        value={null}
+        value={show(counts?.high)}
         icon={<ShieldAlert size={18} />}
         variant="high"
       />
       <SummaryCard
         label="Medium Severity"
-        value={null}
+        value={show(counts?.medium)}
         icon={<AlertTriangle size={18} />}
         variant="medium"
       />
       <SummaryCard
         label="Resolved"
-        value={null}
+        value={show(counts?.resolved)}
         icon={<CheckCircle size={18} />}
         variant="low"
       />

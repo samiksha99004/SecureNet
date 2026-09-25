@@ -7,23 +7,14 @@
   max-width: var(--max-content-width, 1400px);
 }
 
-.generateBtn {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-2);
-  padding: var(--space-2) var(--space-5);
-  background-color: var(--color-peach-dark);
-  border: none;
-  border-radius: var(--radius-md);
-  font-family: var(--font-body);
-  font-size: 0.875rem;
-  font-weight: 600;
-  color: var(--color-white);
-  cursor: pointer;
-  white-space: nowrap;
-  transition: background-color var(--transition-fast);
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
+  gap: var(--space-4);
 }
 
-.generateBtn:hover {
-  background-color: var(--color-peach-accent);
+.emptyCard {
+  background: var(--color-white);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
 }

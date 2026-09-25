@@ -34,7 +34,7 @@
 
 .input:focus {
   border-color: var(--color-peach-accent);
-  box-shadow: 0 0 0 3px rgba(242, 168, 130, 0.15);
+  box-shadow: 0 0 0 3px var(--focus-ring);
 }
 
 /* Hide native clear button from Chrome etc. */
@@ -56,7 +56,7 @@
   transition: background var(--transition-fast);
 }
 
-.clearButton:hover { background: var(--color-peach-accent); color: #fff; }
+.clearButton:hover { background: var(--color-peach-accent); color: var(--color-on-accent); }
 
 .clearButton:focus-visible {
   outline: 2px solid var(--color-peach-dark);

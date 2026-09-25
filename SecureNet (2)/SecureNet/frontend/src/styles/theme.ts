@@ -5,35 +5,35 @@
  * Use these constants in components and CSS custom properties.
  */
 
-// ── Colour Palette ────────────────────────────────────────────────────────────
+// ── Colour Palette (dark theme — mirrors styles/globals.css) ────────────────────────────────────────────────────────────
 
 export const colors = {
   // Base
-  white: '#FFFFFF',
-  peachLightest: '#FFF6F1',
-  peachLight: '#FBE3D8',
-  peachAccent: '#F2A882',
-  peachDark: '#DB7B52',
+  white: '#111A2B',
+  peachLightest: '#0A1020',
+  peachLight: '#1A2740',
+  peachAccent: '#22D3EE',
+  peachDark: '#38BDF8',
 
   // Text
-  text: '#2E241F',
-  textMuted: '#7A6D65',
+  text: '#E2E8F0',
+  textMuted: '#94A3B8',
 
   // Border / Surface
-  border: '#F0DED2',
-  surface: '#FFF6F1',
+  border: '#22304A',
+  surface: '#0E1627',
 
   // Severity / Status
-  severityLow: '#4C9A6A',
-  severityMedium: '#D98C2B',
-  severityHigh: '#C24B3F',
-  severityInfo: '#6B8FBF',
+  severityLow: '#34D399',
+  severityMedium: '#FBBF24',
+  severityHigh: '#F87171',
+  severityInfo: '#60A5FA',
 
   // Semantic aliases
-  success: '#4C9A6A',
-  warning: '#D98C2B',
-  error: '#C24B3F',
-  info: '#6B8FBF',
+  success: '#34D399',
+  warning: '#FBBF24',
+  error: '#F87171',
+  info: '#60A5FA',
 } as const;
 
 export type ColorToken = keyof typeof colors;
@@ -96,9 +96,9 @@ export const radius = {
 // ── Shadows ───────────────────────────────────────────────────────────────────
 
 export const shadows = {
-  sm: '0 1px 3px rgba(46, 36, 31, 0.06)',
-  md: '0 4px 12px rgba(46, 36, 31, 0.08)',
-  lg: '0 8px 24px rgba(46, 36, 31, 0.10)',
+  sm: '0 1px 3px rgba(0, 0, 0, 0.45)',
+  md: '0 4px 12px rgba(0, 0, 0, 0.5)',
+  lg: '0 8px 24px rgba(0, 0, 0, 0.6)',
 } as const;
 
 // ── Transitions ───────────────────────────────────────────────────────────────

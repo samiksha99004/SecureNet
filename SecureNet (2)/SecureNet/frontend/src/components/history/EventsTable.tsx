@@ -10,7 +10,6 @@ import { ChevronUp, ChevronDown, ChevronsUpDown } from 'lucide-react';
 import type { SecurityEvent } from '../../types/security.types';
 import { SeverityBadge } from '../common/SeverityBadge';
 import { StatusBadge } from '../common/StatusBadge';
-import { ModeBadge } from '../common/ModeBadge';
 import { EmptyState } from '../common/EmptyState';
 import { LoadingState } from '../common/LoadingState';
 import { ErrorState } from '../common/ErrorState';
@@ -31,7 +30,6 @@ const COLUMNS: Column[] = [
   { key: 'anomalyScore',    label: 'Score',         sortable: true  },
   { key: 'severity',        label: 'Severity',      sortable: true  },
   { key: 'attackType',      label: 'Attack Type',   sortable: true  },
-  { key: 'mode',            label: 'Mode',          sortable: true  },
   { key: 'state',           label: 'State',         sortable: true  },
   { key: 'actionTaken',     label: 'Action',        sortable: false },
 ];
@@ -78,7 +76,7 @@ export function EventsTable({
     return (
       <ErrorState
         title="Unable to load events"
-        message="Backend not connected. Events will appear once the API is integrated."
+        message="Could not load events. Please try again."
         onRetry={onRetry}
       />
     );
@@ -88,7 +86,7 @@ export function EventsTable({
     return (
       <EmptyState
         title="No security events available."
-        description="Events matching the current filters will appear here once the backend is connected."
+        description="No events match the current filters."
       />
     );
   }
@@ -169,11 +167,8 @@ export function EventsTable({
               </td>
               <td className={styles.td}>
                 {event.attackType ?? (
-                  <span className={styles.normal}>Normal</span>
+                  <span className={styles.normal}>Unclassified</span>
                 )}
-              </td>
-              <td className={styles.td}>
-                <ModeBadge mode={event.mode} />
               </td>
               <td className={styles.td}>
                 <StatusBadge

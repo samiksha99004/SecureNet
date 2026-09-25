@@ -3,7 +3,7 @@
 .overlay {
   position: fixed;
   inset: 0;
-  background-color: rgba(46, 36, 31, 0.4);
+  background-color: var(--overlay);
   display: flex;
   align-items: center;
   justify-content: center;

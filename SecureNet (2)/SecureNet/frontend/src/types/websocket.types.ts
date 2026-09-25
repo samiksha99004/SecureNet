@@ -7,6 +7,8 @@
 
 // ── Connection State ──────────────────────────────────────────────────────────
 
+import type { NotificationItem } from './notifications.types';
+
 export type WebSocketStatus =
   | 'idle'
   | 'connecting'
@@ -40,6 +42,8 @@ export interface WebSocketMessage<T = unknown> {
 export interface LiveScorePayload {
   anomalyScore: number;
   severity: string;
+  /** true when the flow crossed the threshold and was stored as an event */
+  isAlert: boolean;
   sourceIp: string;
   destinationIp: string;
   protocol: string;
@@ -53,12 +57,8 @@ export interface HostStatusPayload {
   uptime: number;
 }
 
-export interface AlertPayload {
-  eventId: string;
-  severity: string;
-  message: string;
-  attackType: string | null;
-}
+/** `alert` payload — identical to a GET /api/notifications item. */
+export type AlertPayload = NotificationItem;
 
 export interface SystemStatusPayload {
   detectionEnabled: boolean;

@@ -19,21 +19,21 @@
 
 /* Low */
 .low {
-  background-color: rgba(76, 154, 106, 0.12);
-  color: #2d7a4f;
+  background-color: var(--tint-low-bg);
+  color: var(--color-severity-low);
 }
 .low .dot { background-color: var(--color-severity-low); }
 
 /* Medium */
 .medium {
-  background-color: rgba(217, 140, 43, 0.12);
-  color: #a96920;
+  background-color: var(--tint-medium-bg);
+  color: var(--color-severity-medium);
 }
 .medium .dot { background-color: var(--color-severity-medium); }
 
 /* High */
 .high {
-  background-color: rgba(194, 75, 63, 0.12);
-  color: #9e2a1f;
+  background-color: var(--tint-high-bg);
+  color: var(--color-severity-high);
 }
 .high .dot { background-color: var(--color-severity-high); }

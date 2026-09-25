@@ -8,12 +8,7 @@
 import type { User } from '../../types/auth.types';
 import { Card } from '../common/Card';
 import styles from './ProfileCard.module.css';
-
-const ROLE_LABELS: Record<string, string> = {
-  admin:   'Administrator',
-  analyst: 'Security Analyst',
-  viewer:  'Viewer',
-};
+import { roleLabel } from '../../utils/roles';
 
 const STATUS_LABELS: Record<string, string> = {
   active:                'Active',
@@ -57,10 +52,11 @@ export function ProfileCard({ user }: ProfileCardProps) {
       <div className={styles.info}>
         <h3 className={styles.name}>{user.fullName}</h3>
         <p className={styles.email}>{user.email}</p>
+        {user.phoneNumber && <p className={styles.email}>{user.phoneNumber}</p>}
 
         <div className={styles.badges}>
           <span className={styles.roleBadge}>
-            {ROLE_LABELS[user.role] ?? user.role}
+            {roleLabel(user.role)}
           </span>
           <span className={`${styles.statusBadge} ${styles[STATUS_CLASS[user.accountStatus] ?? '']}`}>
             {STATUS_LABELS[user.accountStatus] ?? user.accountStatus}

@@ -26,30 +26,30 @@
 
 /* Backend notice */
 .notice {
-  background-color: rgba(107, 143, 191, 0.08);
-  border: 1px solid rgba(107, 143, 191, 0.25);
+  background-color: var(--tint-info-bg);
+  border: 1px solid var(--tint-info-border);
   border-radius: var(--radius-md);
   padding: var(--space-3) var(--space-4);
   font-size: 0.8125rem;
-  color: #3d6b9e;
+  color: var(--color-severity-info);
 }
 
 .errorBanner {
-  background-color: rgba(194, 75, 63, 0.08);
-  border: 1px solid rgba(194, 75, 63, 0.25);
+  background-color: var(--tint-high-bg);
+  border: 1px solid var(--tint-high-border);
   border-radius: var(--radius-md);
   padding: var(--space-3) var(--space-4);
   font-size: 0.875rem;
-  color: #9e2a1f;
+  color: var(--color-severity-high);
 }
 
 .successBanner {
-  background-color: rgba(76, 154, 106, 0.08);
-  border: 1px solid rgba(76, 154, 106, 0.25);
+  background-color: var(--tint-low-bg);
+  border: 1px solid var(--tint-low-border);
   border-radius: var(--radius-md);
   padding: var(--space-3) var(--space-4);
   font-size: 0.875rem;
-  color: #2d7a4f;
+  color: var(--color-severity-low);
 }
 
 /* ── OTP digits ─────────────────────────────────────────────── */
@@ -80,7 +80,7 @@
 
 .otpInput:focus {
   border-color: var(--color-peach-accent);
-  box-shadow: 0 0 0 3px rgba(242, 168, 130, 0.18);
+  box-shadow: 0 0 0 3px var(--focus-ring);
 }
 
 .otpInput:not(:placeholder-shown):not(:focus) {

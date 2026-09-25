@@ -1,50 +1,27 @@
 /**
  * SecureNet — Reports Service
  *
- * Generate, list, and download security reports.
- *
- * TODO (backend): Connect all endpoints once the API is ready.
+ * Daily reports are built by the backend from the detected attacks — one per
+ * local day that had attacks. Days are computed in the browser's time zone.
  */
 
 import { apiClient } from './apiClient';
-import type { Report, GenerateReportRequest, ReportSummary } from '../types/reports.types';
-import type { PaginatedResponse, PaginationParams, MessageResponse } from '../types/api.types';
+import type { DailyReport, DailyReportFormat } from '../types/reports.types';
 
-/** TODO (backend): GET /reports/summary */
-export async function getReportSummary(): Promise<ReportSummary> {
-  return apiClient.get<ReportSummary>('/reports/summary');
+/** Minutes east of UTC for this browser (India = 330). */
+function tzOffset(): number {
+  return -new Date().getTimezoneOffset();
 }
 
-/** TODO (backend): GET /reports */
-export async function getReports(
-  params: Partial<PaginationParams>
-): Promise<PaginatedResponse<Report>> {
-  const qs = new URLSearchParams(
-    Object.entries(params)
-      .filter(([, v]) => v !== undefined)
-      .map(([k, v]) => [k, String(v)])
-  ).toString();
-  return apiClient.get<PaginatedResponse<Report>>(`/reports?${qs}`);
+/** GET /reports/daily — newest day first; empty when no attack has happened. */
+export async function getDailyReports(): Promise<DailyReport[]> {
+  return apiClient.get<DailyReport[]>(`/reports/daily?tzOffset=${tzOffset()}`);
 }
 
-/** TODO (backend): POST /reports */
-export async function generateReport(
-  request: GenerateReportRequest
-): Promise<Report> {
-  return apiClient.post<Report>('/reports', request);
-}
-
-/** TODO (backend): DELETE /reports/:id */
-export async function deleteReport(id: string): Promise<MessageResponse> {
-  return apiClient.delete<MessageResponse>(`/reports/${id}`);
-}
-
-/**
- * Get a download URL for a report.
- * TODO (backend): GET /reports/:id/download
- * Returns a pre-signed or direct URL to the report file.
- */
-export function getReportDownloadUrl(id: string): string {
-  const base = import.meta.env.VITE_API_BASE_URL ?? '';
-  return `${base}/reports/${id}/download`;
+/** GET /reports/daily/:date/download — saves that day's report file. */
+export async function downloadDailyReport(date: string, format: DailyReportFormat): Promise<void> {
+  await apiClient.download(
+    `/reports/daily/${date}/download?format=${format}&tzOffset=${tzOffset()}`,
+    `SecureNet-daily-report-${date}.${format}`
+  );
 }

@@ -128,4 +128,5 @@ export interface LiveChartPoint {
   time: string;       // display label
   score: number;
   severity: SeverityLevel;
+  isAlert: boolean;
 }

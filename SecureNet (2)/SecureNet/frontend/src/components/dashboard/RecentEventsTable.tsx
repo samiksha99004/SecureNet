@@ -4,7 +4,7 @@
  * Shows the most recent security events on the Dashboard.
  * Empty state until backend provides data. No invented values.
  *
- * Columns: Time | Source | Destination | Score | Severity | Attack Type | Mode | State | Action
+ * Columns: Time | Source | Destination | Score | Severity | Attack Type | State | Action
  */
 
 import { Link } from 'react-router-dom';
@@ -12,7 +12,6 @@ import { ArrowRight } from 'lucide-react';
 import type { SecurityEvent } from '../../types/security.types';
 import { SeverityBadge } from '../common/SeverityBadge';
 import { StatusBadge } from '../common/StatusBadge';
-import { ModeBadge } from '../common/ModeBadge';
 import { EmptyState } from '../common/EmptyState';
 import { LoadingState } from '../common/LoadingState';
 import { formatTimestamp, formatScore } from '../../utils/format';
@@ -38,7 +37,7 @@ export function RecentEventsTable({ events, isLoading }: RecentEventsTableProps)
       {!isLoading && events.length === 0 && (
         <EmptyState
           title="No security events available."
-          description="Events will appear here once the backend starts sending data."
+          description="No security events have been recorded yet."
         />
       )}
 
@@ -53,7 +52,6 @@ export function RecentEventsTable({ events, isLoading }: RecentEventsTableProps)
                 <th scope="col" className={styles.th}>Score</th>
                 <th scope="col" className={styles.th}>Severity</th>
                 <th scope="col" className={styles.th}>Attack Type</th>
-                <th scope="col" className={styles.th}>Mode</th>
                 <th scope="col" className={styles.th}>State</th>
                 <th scope="col" className={styles.th}>Action</th>
               </tr>
@@ -82,11 +80,8 @@ export function RecentEventsTable({ events, isLoading }: RecentEventsTableProps)
                   </td>
                   <td className={styles.td}>
                     {event.attackType ?? (
-                      <span className={styles.normal}>Normal</span>
+                      <span className={styles.normal}>Unclassified</span>
                     )}
-                  </td>
-                  <td className={styles.td}>
-                    <ModeBadge mode={event.mode} />
                   </td>
                   <td className={styles.td}>
                     <StatusBadge

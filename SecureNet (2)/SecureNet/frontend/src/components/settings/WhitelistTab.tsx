@@ -23,6 +23,7 @@ import { ErrorState } from '../common/ErrorState';
 import { EmptyState } from '../common/EmptyState';
 import { formatTimestamp } from '../../utils/format';
 import styles from './WhitelistTab.module.css';
+import { errorMessage } from '../../utils/errors';
 
 const TYPE_LABELS: Record<string, string> = {
   ip: 'IP Address',
@@ -50,8 +51,8 @@ export function WhitelistTab() {
       showToast({ message: 'Whitelist entry added.', variant: 'success' });
       setAddOpen(false);
       void refetch();
-    } catch {
-      showToast({ message: 'Could not add entry — backend not connected.', variant: 'error' });
+    } catch (err) {
+      showToast({ message: errorMessage(err, 'Could not add entry.'), variant: 'error' });
     } finally {
       setIsSaving(false);
     }
@@ -65,8 +66,8 @@ export function WhitelistTab() {
       showToast({ message: 'Whitelist entry removed.', variant: 'success' });
       setDeleteTarget(null);
       void refetch();
-    } catch {
-      showToast({ message: 'Could not remove entry — backend not connected.', variant: 'error' });
+    } catch (err) {
+      showToast({ message: errorMessage(err, 'Could not remove entry.'), variant: 'error' });
     } finally {
       setIsDeleting(false);
     }
@@ -98,7 +99,7 @@ export function WhitelistTab() {
       {isError && (
         <ErrorState
           title="Whitelist unavailable"
-          message="The whitelist could not be loaded. Backend API not yet connected."
+          message="The whitelist could not be loaded. Please try again."
           onRetry={refetch}
         />
       )}

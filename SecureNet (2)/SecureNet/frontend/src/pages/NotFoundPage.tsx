@@ -30,7 +30,7 @@ export function NotFoundPage() {
         style={{
           padding: '0.5rem 1.25rem',
           background: 'var(--color-peach-dark)',
-          color: '#fff',
+          color: 'var(--color-on-accent)',
           borderRadius: 'var(--radius-md)',
           fontWeight: 500,
           textDecoration: 'none',

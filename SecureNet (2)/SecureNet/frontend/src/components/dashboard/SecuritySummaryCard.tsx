@@ -67,7 +67,7 @@ export function SecuritySummaryCard({
       {isError && !isLoading && (
         <ErrorState
           title="Unable to load summary"
-          message="Backend not connected."
+          message="Could not load this information. Please try again."
           onRetry={onRetry}
         />
       )}
@@ -75,7 +75,7 @@ export function SecuritySummaryCard({
       {!isLoading && !isError && !data && (
         <EmptyState
           title="No summary data"
-          description="Waiting for backend connection."
+          description="Waiting for data…"
         />
       )}
 
@@ -90,21 +90,21 @@ export function SecuritySummaryCard({
                 count={data.severityBreakdown.low}
                 total={total}
                 color="var(--color-severity-low)"
-                textColor="#2d7a4f"
+                textColor="var(--color-severity-low)"
               />
               <SeverityBar
                 label="Medium"
                 count={data.severityBreakdown.medium}
                 total={total}
                 color="var(--color-severity-medium)"
-                textColor="#a96920"
+                textColor="var(--color-severity-medium)"
               />
               <SeverityBar
                 label="High"
                 count={data.severityBreakdown.high}
                 total={total}
                 color="var(--color-severity-high)"
-                textColor="#9e2a1f"
+                textColor="var(--color-severity-high)"
               />
             </div>
           </section>

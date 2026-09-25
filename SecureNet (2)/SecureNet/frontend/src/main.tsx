@@ -9,6 +9,17 @@ import { createRoot } from 'react-dom/client';
 import './styles/globals.css';
 
 import App from './App';
+import { ErrorBoundary } from './components/common/ErrorBoundary';
+import { applyTheme, getTheme } from './utils/theme';
+
+applyTheme(getTheme());
+
+// Started successfully: allow index.html's one automatic retry again next time
+try {
+  sessionStorage.removeItem('sn_boot_retry');
+} catch {
+  // storage blocked
+}
 
 const rootElement = document.getElementById('root');
 if (!rootElement) {
@@ -17,6 +28,8 @@ if (!rootElement) {
 
 createRoot(rootElement).render(
   <StrictMode>
-    <App />
+    <ErrorBoundary>
+      <App />
+    </ErrorBoundary>
   </StrictMode>
 );

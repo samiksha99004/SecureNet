@@ -55,7 +55,7 @@ export function DetectionReasonCard({
       {!hasData ? (
         <EmptyState
           title="No detection data"
-          description="Select an event or wait for the backend to provide contributing features."
+          description="Select an event to see why it was flagged."
         />
       ) : features.length === 0 ? null : (
         <div className={styles.tableWrapper}>

@@ -106,3 +106,13 @@
     padding-top: var(--space-10);
   }
 }
+
+.websiteLink {
+  color: var(--color-peach-dark);
+  font-weight: 500;
+  text-decoration: none;
+}
+
+a.websiteLink:hover {
+  text-decoration: underline;
+}

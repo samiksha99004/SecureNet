@@ -1,13 +1,13 @@
 /**
  * SecureNet — HostStatusCard
  *
- * Displays monitored host resource metrics: CPU, Memory, Network, Uptime.
+ * Displays the monitored host: name, network throughput, uptime and OS.
  * All values come from the backend. Shows "Not available" until connected.
  */
 
-import { Cpu, MemoryStick, Network, Clock, Monitor } from 'lucide-react';
+import { Network, Clock, Monitor } from 'lucide-react';
 import type { HostStatus } from '../../types/security.types';
-import { formatPercent, formatBytes, formatDuration } from '../../utils/format';
+import { formatBytes, formatDuration } from '../../utils/format';
 import { LoadingState } from '../common/LoadingState';
 import { ErrorState } from '../common/ErrorState';
 import styles from './HostStatusCard.module.css';
@@ -37,23 +37,6 @@ function MetricRow({ icon, label, value }: MetricRowProps) {
   );
 }
 
-function UsageBar({ value }: { value: number | null }) {
-  if (value === null) return null;
-  const pct = Math.min(100, Math.max(0, value));
-  const color =
-    pct >= 90 ? 'var(--color-severity-high)'
-    : pct >= 70 ? 'var(--color-severity-medium)'
-    : 'var(--color-severity-low)';
-  return (
-    <div className={styles.usageBarTrack} role="img" aria-label={`${pct.toFixed(0)}%`}>
-      <div
-        className={styles.usageBarFill}
-        style={{ width: `${pct}%`, backgroundColor: color }}
-      />
-    </div>
-  );
-}
-
 export function HostStatusCard({
   data,
   isLoading,
@@ -75,37 +58,13 @@ export function HostStatusCard({
       {isError && !isLoading && (
         <ErrorState
           title="Unable to load host status"
-          message="Backend not connected."
+          message="Could not load this information. Please try again."
           onRetry={onRetry}
         />
       )}
 
       {!isLoading && !isError && (
         <div className={styles.metrics}>
-          {/* CPU */}
-          <div className={styles.metricBlock}>
-            <MetricRow
-              icon={<Cpu size={14} />}
-              label="CPU"
-              value={data?.cpuPercent !== null && data?.cpuPercent !== undefined
-                ? `${data.cpuPercent.toFixed(1)}%`
-                : null}
-            />
-            <UsageBar value={data?.cpuPercent ?? null} />
-          </div>
-
-          {/* Memory */}
-          <div className={styles.metricBlock}>
-            <MetricRow
-              icon={<MemoryStick size={14} />}
-              label="Memory"
-              value={data?.memoryPercent !== null && data?.memoryPercent !== undefined
-                ? formatPercent(data.memoryPercent / 100)
-                : null}
-            />
-            <UsageBar value={data?.memoryPercent ?? null} />
-          </div>
-
           {/* Network */}
           <MetricRow
             icon={<Network size={14} />}
@@ -135,7 +94,7 @@ export function HostStatusCard({
 
           {!data && (
             <p className={styles.noData}>
-              Waiting for backend connection.
+              Waiting for data…
             </p>
           )}
         </div>

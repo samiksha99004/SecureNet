@@ -17,6 +17,7 @@ import { useToast } from '../common/Toast';
 import { Card } from '../common/Card';
 import { isValidPassword } from '../../utils/validation';
 import styles from './ChangePasswordCard.module.css';
+import { errorMessage } from '../../utils/errors';
 
 interface ChangePasswordCardProps {
   user: User;
@@ -75,8 +76,8 @@ export function ChangePasswordCard({ user }: ChangePasswordCardProps) {
       showToast({ message: 'Password changed successfully.', variant: 'success' });
       setCurrent(''); setNext(''); setConfirm('');
       setErrors({});
-    } catch {
-      showToast({ message: 'Could not change password — backend not connected.', variant: 'error' });
+    } catch (err) {
+      showToast({ message: errorMessage(err, 'Could not change password.'), variant: 'error' });
     } finally {
       setIsSaving(false);
     }
@@ -85,10 +86,6 @@ export function ChangePasswordCard({ user }: ChangePasswordCardProps) {
   return (
     <Card padding="lg">
       <h3 className={styles.heading}>Change Password</h3>
-
-      <div className={styles.notice} role="note">
-        Password change requires the backend API to be connected.
-      </div>
 
       <form onSubmit={handleSubmit} className={styles.form} noValidate>
         {/* Current password */}

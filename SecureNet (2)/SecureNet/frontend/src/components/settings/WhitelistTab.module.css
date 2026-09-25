@@ -150,7 +150,7 @@
 .activeBadge {
   display: inline-block;
   padding: 2px 8px;
-  background-color: #e6f4ec;
+  background-color: var(--tint-low-bg);
   border-radius: var(--radius-full);
   font-size: 0.75rem;
   font-weight: 500;
@@ -183,6 +183,6 @@
 }
 
 .deleteBtn:hover {
-  background-color: #fdecea;
+  background-color: var(--tint-high-bg);
   color: var(--color-severity-high);
 }

@@ -36,7 +36,7 @@ export function TopSourcesCard({
       {isError && !isLoading && (
         <ErrorState
           title="Unable to load sources"
-          message="Backend not connected."
+          message="Could not load this information. Please try again."
           onRetry={onRetry}
         />
       )}
@@ -44,7 +44,7 @@ export function TopSourcesCard({
       {!isLoading && !isError && data.length === 0 && (
         <EmptyState
           title="No source data"
-          description="Top source IPs will appear once the backend is connected."
+          description="No security events have been recorded yet."
         />
       )}
 
@@ -60,8 +60,9 @@ export function TopSourcesCard({
                 </span>
               </div>
               <div className={styles.stats}>
-                <span className={styles.stat} title="Total flows">
-                  {source.flowCount.toLocaleString()} flows
+                <span className={styles.stat} title="Security events from this source (unresolved)">
+                  {source.flowCount.toLocaleString()} event{source.flowCount !== 1 ? 's' : ''}
+                  {source.anomalyCount > 0 && ` · ${source.anomalyCount.toLocaleString()} open`}
                 </span>
                 {source.highSeverityCount > 0 && (
                   <SeverityBadge severity="high" />

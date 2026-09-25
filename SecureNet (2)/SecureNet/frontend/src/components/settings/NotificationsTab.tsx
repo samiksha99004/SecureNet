@@ -1,13 +1,20 @@
 /**
  * SecureNet — NotificationsTab
  *
- * Settings tab for email notification configuration.
+ * Alert delivery settings:
+ *  - Email alerts to every registered user's email (+ optional extra address),
+ *    filtered by severity / block action, batched by the backend, optional digest
+ *  - Email delivery status from the server and a "send test email" button
+ *  (pop-ups, sound and theme are per-user in the Preferences tab)
  */
 
 import { useCallback, useEffect, useState } from 'react';
+import { Mail, CheckCircle2, AlertTriangle, Send } from 'lucide-react';
 import { useAsyncData } from '../../hooks/useAsyncData';
 import { useToast } from '../common/Toast';
+import { useAuth } from '../../contexts/AuthContext';
 import { getNotificationSettings, updateNotificationSettings } from '../../services/settingsService';
+import { getNotificationStatus, sendTestEmail } from '../../services/notificationsService';
 import type { NotificationSettings } from '../../types/settings.types';
 import { SettingsSection } from './SettingsSection';
 import { SettingsField } from './SettingsField';
@@ -15,39 +22,46 @@ import { SaveBar } from './SaveBar';
 import { LoadingState } from '../common/LoadingState';
 import { ErrorState } from '../common/ErrorState';
 import styles from './TabShared.module.css';
+import local from './NotificationsTab.module.css';
+import { errorMessage } from '../../utils/errors';
 
 export function NotificationsTab() {
   const { showToast } = useToast();
+  const { user } = useAuth();
+
   const { data, isLoading, isError, refetch } = useAsyncData(
     useCallback(() => getNotificationSettings(), [])
   );
+  const status = useAsyncData(useCallback(() => getNotificationStatus(), []));
 
-  const [local, setLocal] = useState<NotificationSettings | null>(null);
+  const [form, setForm] = useState<NotificationSettings | null>(null);
   const [isDirty, setIsDirty] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
+  const [isTesting, setIsTesting] = useState(false);
 
   useEffect(() => {
     if (data) {
-      setLocal(data);
+      setForm(data);
       setIsDirty(false);
     }
   }, [data]);
 
   function update<K extends keyof NotificationSettings>(key: K, value: NotificationSettings[K]) {
-    setLocal((prev) => prev ? { ...prev, [key]: value } : prev);
+    setForm((prev) => (prev ? { ...prev, [key]: value } : prev));
     setIsDirty(true);
   }
 
   async function handleSave() {
-    if (!local) return;
+    if (!form) return;
     setIsSaving(true);
     try {
-      await updateNotificationSettings(local);
+      await updateNotificationSettings(form);
       setIsDirty(false);
       showToast({ message: 'Notification settings saved.', variant: 'success' });
       void refetch();
-    } catch {
-      showToast({ message: 'Could not save — backend not connected.', variant: 'error' });
+      void status.refetch();
+    } catch (err) {
+      showToast({ message: errorMessage(err, 'Could not save.'), variant: 'error' });
     } finally {
       setIsSaving(false);
     }
@@ -55,113 +69,172 @@ export function NotificationsTab() {
 
   function handleDiscard() {
     if (data) {
-      setLocal(data);
+      setForm(data);
       setIsDirty(false);
     }
   }
 
+  async function handleTestEmail() {
+    setIsTesting(true);
+    try {
+      const res = await sendTestEmail();
+      showToast({ message: res.message, variant: 'success' });
+    } catch (err) {
+      showToast({ message: errorMessage(err, 'Test email failed.'), variant: 'error' });
+    } finally {
+      setIsTesting(false);
+      void status.refetch();
+    }
+  }
+
   if (isLoading) return <LoadingState message="Loading notification settings…" />;
-  if (isError || !local) {
+  if (isError || !form) {
     return (
       <ErrorState
         title="Settings unavailable"
-        message="Notification settings could not be loaded. The backend API is not yet connected."
+        message="Email alert settings could not be loaded. Please try again."
         onRetry={refetch}
       />
     );
   }
 
+  const s = status.data;
+  const deliveryOk = s?.emailDelivery === 'enabled';
+
   return (
     <div className={styles.tabContent}>
+      {/* ── Server email status ─────────────────────────────────────────── */}
+      <div className={`${local.statusBox} ${deliveryOk ? local.ok : local.warn}`} role="status">
+        {deliveryOk ? <CheckCircle2 size={18} aria-hidden="true" /> : <AlertTriangle size={18} aria-hidden="true" />}
+        <div className={local.statusText}>
+          {!s ? (
+            <span>Checking email delivery…</span>
+          ) : deliveryOk ? (
+            <>
+              <strong>Email delivery is configured on the server.</strong>
+              <span>
+                Alerts go to {s.recipientCount} registered address{s.recipientCount === 1 ? '' : 'es'}; bursts are
+                grouped into one email every {s.batchSeconds}s.
+                {s.lastError && <> Last error: {s.lastError}</>}
+              </span>
+            </>
+          ) : (
+            <>
+              <strong>
+                {s.emailDelivery === 'disabled'
+                  ? 'Email delivery is turned off on the server.'
+                  : 'SMTP credentials on the server are missing or placeholders.'}
+              </strong>
+              <span>
+                In <code>backend/.env</code> set <code>EMAIL_ENABLED=true</code>, <code>SMTP_USER</code> and{' '}
+                <code>SMTP_PASSWORD</code> (for Gmail create an App Password), then restart the backend.
+                Until then no emails are sent (alerts still appear in the dashboard) and new accounts cannot sign up.
+              </span>
+            </>
+          )}
+        </div>
+        <button
+          type="button"
+          className={local.testButton}
+          onClick={() => void handleTestEmail()}
+          disabled={isTesting}
+          title={`Send a sample alert to ${user?.email ?? 'your email'}`}
+        >
+          <Send size={14} aria-hidden="true" /> {isTesting ? 'Sending…' : 'Send test email'}
+        </button>
+      </div>
+
+      {/* ── Email alerts ────────────────────────────────────────────────── */}
       <SettingsSection
-        title="Email Notifications"
-        description="Configure where alerts and digests are delivered."
+        title="Email Alerts"
+        description="When an attack is detected, an alert email is sent to the registered email address of every active SecureNet user."
       >
         <SettingsField
           id="notif-email-enabled"
-          label="Enable Email Notifications"
-          hint="Send alert emails when security events are detected."
+          label="Send Email Alerts"
+          hint="Email all registered users when the IDS detects an attack."
           type="toggle"
-          checked={local.emailEnabled}
+          checked={form.emailEnabled}
           onChange={(v) => update('emailEnabled', v)}
         />
         <SettingsField
           id="notif-email-address"
-          label="Notification Email"
-          hint="Email address that will receive all security alerts."
+          label="Additional Recipient (optional)"
+          hint="An extra address (e.g. a SOC mailbox) that also receives every alert."
           type="email"
-          value={local.emailAddress ?? ''}
+          value={form.emailAddress ?? ''}
           onChange={(v) => update('emailAddress', v || null)}
-          disabled={!local.emailEnabled}
-          placeholder="analyst@example.com"
+          disabled={!form.emailEnabled}
+          placeholder="soc-team@example.com"
         />
+        {s && s.recipients.length > 0 && (
+          <div className={local.recipients}>
+            <Mail size={14} aria-hidden="true" />
+            <span>Recipients: {s.recipients.join(', ')}</span>
+          </div>
+        )}
       </SettingsSection>
 
       <SettingsSection
         title="Alert Triggers"
-        description="Choose which event severities trigger an immediate alert email."
+        description="Which detections send an email. Low-severity events appear in the app only unless they were blocked."
       >
         <SettingsField
           id="notif-high"
-          label="Alert on High Severity"
-          hint="Send an email for every high-severity detection."
+          label="High Severity"
+          hint="Email for every high-severity detection."
           type="toggle"
-          checked={local.alertOnHigh}
+          checked={form.alertOnHigh}
           onChange={(v) => update('alertOnHigh', v)}
-          disabled={!local.emailEnabled}
+          disabled={!form.emailEnabled}
         />
         <SettingsField
           id="notif-medium"
-          label="Alert on Medium Severity"
-          hint="Send an email for every medium-severity detection."
+          label="Medium Severity"
+          hint="Email for every medium-severity detection."
           type="toggle"
-          checked={local.alertOnMedium}
+          checked={form.alertOnMedium}
           onChange={(v) => update('alertOnMedium', v)}
-          disabled={!local.emailEnabled}
+          disabled={!form.emailEnabled}
         />
         <SettingsField
-          id="notif-block"
-          label="Alert on Block Action"
-          hint="Send an email whenever an IP is automatically blocked."
+          id="notif-low"
+          label="Low Severity"
+          hint="Email for every low-severity detection (borderline anomalies)."
           type="toggle"
-          checked={local.alertOnBlock}
-          onChange={(v) => update('alertOnBlock', v)}
-          disabled={!local.emailEnabled}
+          checked={form.alertOnLow}
+          onChange={(v) => update('alertOnLow', v)}
+          disabled={!form.emailEnabled}
         />
       </SettingsSection>
 
       <SettingsSection
         title="Digest"
-        description="Receive a periodic summary of recent security activity."
+        description="A periodic summary email of all security events, in addition to instant alerts."
       >
         <SettingsField
           id="notif-digest"
           label="Enable Digest"
-          hint="Send a periodic summary email instead of (or in addition to) instant alerts."
+          hint="Send a summary of recent security activity to all recipients."
           type="toggle"
-          checked={local.digestEnabled}
+          checked={form.digestEnabled}
           onChange={(v) => update('digestEnabled', v)}
-          disabled={!local.emailEnabled}
+          disabled={!form.emailEnabled}
         />
         <SettingsField
           id="notif-digest-interval"
           label="Digest Interval (hours)"
           hint="How often the digest email is sent."
           type="number"
-          value={local.digestIntervalHours}
+          value={form.digestIntervalHours}
           onChange={(v) => update('digestIntervalHours', parseInt(v, 10) || 24)}
           min={1}
           max={168}
-          disabled={!local.digestEnabled || !local.emailEnabled}
+          disabled={!form.digestEnabled || !form.emailEnabled}
         />
       </SettingsSection>
 
-      <SaveBar
-        isDirty={isDirty}
-        isSaving={isSaving}
-        onSave={handleSave}
-        onDiscard={handleDiscard}
-      />
+      <SaveBar isDirty={isDirty} isSaving={isSaving} onSave={handleSave} onDiscard={handleDiscard} />
     </div>
   );
 }

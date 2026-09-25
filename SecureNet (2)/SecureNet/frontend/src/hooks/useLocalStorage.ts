@@ -35,7 +35,11 @@ export function useLocalStorage<T>(
   );
 
   const removeValue = useCallback(() => {
-    localStorage.removeItem(key);
+    try {
+      localStorage.removeItem(key);
+    } catch {
+      // storage unavailable
+    }
     setStoredValue(initialValue);
   }, [key, initialValue]);
 

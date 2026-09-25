@@ -8,13 +8,13 @@
   white-space: nowrap;
 }
 
-.active       { background: rgba(76,154,106,0.12); color: #2d7a4f; }
-.investigating{ background: rgba(107,143,191,0.12); color: #3d6b9e; }
-.resolved     { background: rgba(122,109,101,0.10); color: var(--color-text-muted); }
-.false-positive { background: rgba(122,109,101,0.10); color: var(--color-text-muted); }
-.connected    { background: rgba(76,154,106,0.12); color: #2d7a4f; }
-.disconnected { background: rgba(194,75,63,0.10); color: #9e2a1f; }
-.connecting   { background: rgba(217,140,43,0.12); color: #a96920; }
-.error        { background: rgba(194,75,63,0.10); color: #9e2a1f; }
-.info         { background: rgba(107,143,191,0.12); color: #3d6b9e; }
-.pending      { background: rgba(217,140,43,0.12); color: #a96920; }
+.active       { background: var(--tint-low-bg); color: var(--color-severity-low); }
+.investigating{ background: var(--tint-info-bg); color: var(--color-severity-info); }
+.resolved     { background: rgba(148, 163, 184, 0.12); color: var(--color-text-muted); }
+.false-positive { background: rgba(148, 163, 184, 0.12); color: var(--color-text-muted); }
+.connected    { background: var(--tint-low-bg); color: var(--color-severity-low); }
+.disconnected { background: var(--tint-high-bg); color: var(--color-severity-high); }
+.connecting   { background: var(--tint-medium-bg); color: var(--color-severity-medium); }
+.error        { background: var(--tint-high-bg); color: var(--color-severity-high); }
+.info         { background: var(--tint-info-bg); color: var(--color-severity-info); }
+.pending      { background: var(--tint-medium-bg); color: var(--color-severity-medium); }

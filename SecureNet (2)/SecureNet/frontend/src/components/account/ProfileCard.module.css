@@ -80,8 +80,8 @@
   font-weight: 500;
 }
 
-.statusActive    { background-color: #e6f4ec; color: var(--color-severity-low); }
-.statusSuspended { background-color: #fdecea; color: var(--color-severity-high); }
+.statusActive    { background-color: var(--tint-low-bg); color: var(--color-severity-low); }
+.statusSuspended { background-color: var(--tint-high-bg); color: var(--color-severity-high); }
 .statusPending   { background-color: var(--color-peach-light); color: var(--color-peach-dark); }
 
 @media (max-width: 480px) {

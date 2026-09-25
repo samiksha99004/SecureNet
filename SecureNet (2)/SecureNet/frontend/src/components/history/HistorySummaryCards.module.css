@@ -55,9 +55,9 @@
 
 /* Variants */
 .default .iconWrap { background: var(--color-peach-light);             color: var(--color-peach-dark); }
-.high    .iconWrap { background: rgba(194,75,63,0.10);                 color: var(--color-severity-high); }
-.medium  .iconWrap { background: rgba(217,140,43,0.10);                color: var(--color-severity-medium); }
-.low     .iconWrap { background: rgba(76,154,106,0.10);                color: var(--color-severity-low); }
+.high    .iconWrap { background: var(--tint-high-bg);                 color: var(--color-severity-high); }
+.medium  .iconWrap { background: var(--tint-medium-bg);                color: var(--color-severity-medium); }
+.low     .iconWrap { background: var(--tint-low-bg);                color: var(--color-severity-low); }
 
 @media (max-width: 1024px) { .grid { grid-template-columns: repeat(2, 1fr); } }
 @media (max-width: 480px)  { .grid { grid-template-columns: 1fr; } }

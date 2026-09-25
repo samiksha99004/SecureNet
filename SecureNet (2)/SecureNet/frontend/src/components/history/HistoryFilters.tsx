@@ -40,12 +40,6 @@ const STATE_OPTIONS: FilterOption[] = [
   { value: 'false_positive',  label: 'False Positive'  },
 ];
 
-const MODE_OPTIONS: FilterOption[] = [
-  ALL_OPT,
-  { value: 'monitor', label: 'Monitor' },
-  { value: 'protect', label: 'Protect' },
-];
-
 const PROTOCOL_OPTIONS: FilterOption[] = [
   ALL_OPT,
   { value: 'TCP',   label: 'TCP'   },
@@ -84,12 +78,6 @@ export function HistoryFilters({
           options={STATE_OPTIONS}
           value={filters.state ?? ''}
           onChange={(v) => onFilter('state', v || null)}
-        />
-        <FilterDropdown
-          label="Mode"
-          options={MODE_OPTIONS}
-          value={filters.mode ?? ''}
-          onChange={(v) => onFilter('mode', v || null)}
         />
         <FilterDropdown
           label="Protocol"

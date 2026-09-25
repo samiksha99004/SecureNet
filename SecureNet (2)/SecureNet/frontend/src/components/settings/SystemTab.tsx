@@ -15,6 +15,7 @@ import { SaveBar } from './SaveBar';
 import { LoadingState } from '../common/LoadingState';
 import { ErrorState } from '../common/ErrorState';
 import styles from './TabShared.module.css';
+import { errorMessage } from '../../utils/errors';
 
 export function SystemTab() {
   const { showToast } = useToast();
@@ -46,8 +47,8 @@ export function SystemTab() {
       setIsDirty(false);
       showToast({ message: 'System settings saved.', variant: 'success' });
       void refetch();
-    } catch {
-      showToast({ message: 'Could not save — backend not connected.', variant: 'error' });
+    } catch (err) {
+      showToast({ message: errorMessage(err, 'Could not save.'), variant: 'error' });
     } finally {
       setIsSaving(false);
     }
@@ -65,7 +66,7 @@ export function SystemTab() {
     return (
       <ErrorState
         title="Settings unavailable"
-        message="System settings could not be loaded. The backend API is not yet connected."
+        message="System settings could not be loaded. Please try again."
         onRetry={refetch}
       />
     );
@@ -124,13 +125,55 @@ export function SystemTab() {
       </SettingsSection>
 
       <SettingsSection
+        title="Contact Details"
+        description="Shown to every user under Support → Contact us. Leave a field empty to hide it."
+      >
+        <SettingsField
+          id="sys-contact-website"
+          label="Website"
+          hint="Your organisation's website."
+          type="text"
+          value={local.contactWebsite ?? ''}
+          onChange={(v) => update('contactWebsite', v)}
+          placeholder="www.example.com"
+        />
+        <SettingsField
+          id="sys-contact-phone"
+          label="Phone Number"
+          hint="Number users can call for help."
+          type="text"
+          value={local.contactPhone ?? ''}
+          onChange={(v) => update('contactPhone', v)}
+          placeholder="+91 …"
+        />
+        <SettingsField
+          id="sys-contact-email"
+          label="Email"
+          hint="If empty, the admin's email is shown."
+          type="email"
+          value={local.contactEmail ?? ''}
+          onChange={(v) => update('contactEmail', v)}
+          placeholder="support@…"
+        />
+        <SettingsField
+          id="sys-contact-address"
+          label="Admin Office Location"
+          hint="Address of the admin office."
+          type="text"
+          value={local.contactAddress ?? ''}
+          onChange={(v) => update('contactAddress', v)}
+          placeholder="Building, street, city"
+        />
+      </SettingsSection>
+
+      <SettingsSection
         title="Developer"
         description="Advanced options for debugging and development."
       >
         <SettingsField
           id="sys-debug"
           label="Debug Mode"
-          hint="Enable verbose logging on the backend. Not recommended for production."
+          hint="Write detailed logs for troubleshooting. Leave off normally."
           type="toggle"
           checked={local.debugMode}
           onChange={(v) => update('debugMode', v)}

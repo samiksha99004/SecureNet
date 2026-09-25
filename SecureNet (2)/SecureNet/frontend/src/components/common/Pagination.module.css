@@ -45,7 +45,7 @@
 
 .active {
   background: var(--color-peach-dark);
-  color: #fff;
+  color: var(--color-on-accent);
   border-color: var(--color-peach-dark);
   font-weight: 500;
   cursor: default;

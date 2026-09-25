@@ -37,6 +37,7 @@ export interface NotificationSettings {
   emailAddress: string | null;
   alertOnHigh: boolean;
   alertOnMedium: boolean;
+  alertOnLow: boolean;
   alertOnBlock: boolean;
   digestEnabled: boolean;
   digestIntervalHours: number;
@@ -70,6 +71,18 @@ export interface SystemSettings {
   timezone: string;
   dateFormat: string;
   debugMode: boolean;
+  /** "Contact us" details shown on the Support page */
+  contactWebsite: string | null;
+  contactPhone: string | null;
+  contactEmail: string | null;
+  contactAddress: string | null;
+}
+
+export interface ContactInfo {
+  website: string | null;
+  phone: string | null;
+  email: string | null;
+  address: string | null;
 }
 
 // ── Combined Settings ─────────────────────────────────────────────────────────

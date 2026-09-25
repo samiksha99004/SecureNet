@@ -14,8 +14,8 @@
  *   wsService.on('live_score', handler);
  *   wsService.disconnect();
  *
- * TODO (backend): Set VITE_WS_URL in .env.local once the backend
- * WebSocket endpoint is ready.
+ * The access token is sent as ?token=… (browsers cannot set headers on
+ * WebSockets). If VITE_WS_URL is not set the URL is derived from the page.
  */
 
 import type {
@@ -23,10 +23,14 @@ import type {
   WebSocketMessageType,
   WebSocketStatus,
 } from '../types/websocket.types';
+import { tokenStore } from './apiClient';
 
 // ── Config ────────────────────────────────────────────────────────────────────
 
-const WS_URL: string = import.meta.env.VITE_WS_URL ?? '';
+const WS_URL: string =
+  import.meta.env.VITE_WS_URL ||
+  `${window.location.protocol === 'https:' ? 'wss' : 'ws'}://${window.location.host}/ws/live`;
+const WS_POLICY_VIOLATION = 1008; // server rejected the token
 const RECONNECT_BASE_DELAY_MS = 1000;
 const RECONNECT_MAX_DELAY_MS = 30000;
 const RECONNECT_MAX_ATTEMPTS = 10;
@@ -55,12 +59,9 @@ class WebSocketService {
   // ── Public API ──────────────────────────────────────────────────────────────
 
   connect(): void {
-    if (!WS_URL) {
-      console.warn(
-        '[SecureNet WS] VITE_WS_URL is not set. ' +
-        'Live monitoring will be unavailable until the backend is connected.'
-      );
-      this.setStatus('error');
+    const token = tokenStore.getAccess();
+    if (!token) {
+      this.setStatus('disconnected');
       return;
     }
 
@@ -75,12 +76,19 @@ class WebSocketService {
     this.setStatus('connecting');
 
     try {
-      this.socket = new WebSocket(WS_URL);
+      const url = `${WS_URL}${WS_URL.includes('?') ? '&' : '?'}token=${encodeURIComponent(token)}`;
+      this.socket = new WebSocket(url);
       this.attachSocketHandlers();
     } catch (err) {
       console.error('[SecureNet WS] Failed to create WebSocket:', err);
       this.setStatus('error');
     }
+  }
+
+  /** Force a fresh connection (e.g. after the access token changed). */
+  reconnect(): void {
+    this.disconnect();
+    this.connect();
   }
 
   disconnect(): void {
@@ -148,8 +156,14 @@ class WebSocketService {
       this.setStatus('error');
     };
 
-    this.socket.onclose = () => {
+    this.socket.onclose = (event: CloseEvent) => {
       this.clearPing();
+      this.socket = null;
+      if (event.code === WS_POLICY_VIOLATION) {
+        // Token rejected — a fresh token (after refresh/login) is needed
+        this.setStatus('error');
+        return;
+      }
       this.scheduleReconnect();
     };
   }
@@ -167,6 +181,7 @@ class WebSocketService {
   }
 
   private scheduleReconnect(): void {
+    if (this.reconnectTimer !== null) return;
     if (this.reconnectAttempts >= RECONNECT_MAX_ATTEMPTS) {
       console.error('[SecureNet WS] Max reconnect attempts reached.');
       this.setStatus('error');
@@ -182,11 +197,13 @@ class WebSocketService {
     );
 
     this.reconnectTimer = setTimeout(() => {
+      this.reconnectTimer = null;
       this.connect();
     }, delay);
   }
 
   private startPing(): void {
+    this.clearPing();
     this.pingTimer = setInterval(() => {
       if (this.socket?.readyState === WebSocket.OPEN) {
         this.socket.send(JSON.stringify({ type: 'ping' }));

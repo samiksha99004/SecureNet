@@ -1,12 +1,13 @@
 {
   "name": "securenet-ids",
   "version": "1.0.0",
-  "description": "Network-Based IDS Application",
+  "description": "SecureNet — Behavioural Network Intrusion Detection System (desktop shell)",
   "main": "electron/main.js",
   "scripts": {
     "start": "electron .",
     "dev": "electron . --dev",
-    "build": "electron-builder"
+    "build:frontend": "npm --prefix frontend run build",
+    "build": "npm run build:frontend && electron-builder"
   },
   "author": "SecureNet Team",
   "license": "MIT",
@@ -23,12 +24,10 @@
       "output": "dist-electron"
     },
     "files": [
-      "electron/**/*",
-      "frontend/dist/**/*"
+      "electron/**/*"
     ],
     "win": {
-      "target": "nsis",
-      "icon": "frontend/public/favicon.ico"
+      "target": "nsis"
     }
   }
 }

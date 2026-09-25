@@ -20,10 +20,10 @@ interface ProtocolDistributionCardProps {
 }
 
 const PROTOCOL_COLORS = {
-  TCP:   '#6B8FBF',
-  UDP:   '#F2A882',
-  ICMP:  '#4C9A6A',
-  Other: '#7A6D65',
+  TCP:   '#38BDF8',
+  UDP:   '#A78BFA',
+  ICMP:  '#34D399',
+  Other: '#64748B',
 } as const;
 
 export function ProtocolDistributionCard({
@@ -50,7 +50,7 @@ export function ProtocolDistributionCard({
       {isError && !isLoading && (
         <ErrorState
           title="Unable to load traffic"
-          message="Backend not connected."
+          message="Could not load this information. Please try again."
           onRetry={onRetry}
         />
       )}
@@ -58,7 +58,7 @@ export function ProtocolDistributionCard({
       {!isLoading && !isError && (!data || chartData.length === 0) && (
         <EmptyState
           title="No traffic data"
-          description="Protocol distribution will appear once the backend is connected."
+          description="No security events have been recorded yet."
         />
       )}
 
@@ -89,11 +89,14 @@ export function ProtocolDistributionCard({
                     name,
                   ]}
                   contentStyle={{
+                    background: 'var(--color-white)',
+                    color: 'var(--color-text)',
                     fontFamily: 'var(--font-body)',
                     fontSize: '0.8125rem',
                     border: '1px solid var(--color-border)',
                     borderRadius: '8px',
                   }}
+                  itemStyle={{ color: 'var(--color-text)' }}
                 />
                 <Legend
                   iconType="circle"

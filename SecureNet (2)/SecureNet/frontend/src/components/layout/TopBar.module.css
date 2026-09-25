@@ -1,7 +1,7 @@
 .topbar {
   position: sticky;
   top: 0;
-  z-index: 20;
+  z-index: 35; /* above alert pop-ups (30) so the notification dropdown is never covered */
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -118,9 +118,9 @@
 }
 
 .logoutButton:hover {
-  background-color: rgba(194, 75, 63, 0.06);
+  background-color: var(--tint-high-bg);
   color: var(--color-severity-high);
-  border-color: rgba(194, 75, 63, 0.25);
+  border-color: var(--tint-high-border);
 }
 
 .logoutButton:focus-visible {

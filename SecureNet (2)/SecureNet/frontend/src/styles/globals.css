@@ -4,27 +4,64 @@
 
 /* ── CSS Custom Properties (Design Tokens) ─────────────────── */
 :root {
-  /* Colours */
-  --color-white: #ffffff;
-  --color-peach-lightest: #fff6f1;
-  --color-peach-light: #fbe3d8;
-  --color-peach-accent: #f2a882;
-  --color-peach-dark: #db7b52;
+  color-scheme: dark;
 
-  --color-text: #2e241f;
-  --color-text-muted: #7a6d65;
-  --color-border: #f0ded2;
-  --color-surface: #fff6f1;
+  /* ── Dark theme palette ──────────────────────────────────────
+     The original token NAMES are kept (components reference them),
+     but every value is now part of the dark theme:
+       --color-peach-lightest  page background / inset wells
+       --color-white           card & panel surface
+       --color-peach-light     hover / selected / subtle fill
+       --color-peach-accent    accent (borders, highlights)
+       --color-peach-dark      primary (links, primary buttons)      */
+  --color-white: #111a2b;
+  --color-peach-lightest: #0a1020;
+  --color-peach-light: #1a2740;
+  --color-peach-accent: #22d3ee;
+  --color-peach-dark: #38bdf8;
+  --color-primary-hover: #7dd3fc;
+  --color-on-accent: #04111f;          /* text on accent / severity fills */
 
-  --color-severity-low: #4c9a6a;
-  --color-severity-medium: #d98c2b;
-  --color-severity-high: #c24b3f;
-  --color-severity-info: #6b8fbf;
+  --color-text: #e2e8f0;
+  --color-text-muted: #94a3b8;
+  --color-text-primary: var(--color-text);
+  --color-text-secondary: #cbd5e1;
+  --color-border: #22304a;
+  --color-surface: #0e1627;
+
+  --color-bg-elevated: var(--color-white);
+  --color-bg-secondary: var(--color-peach-light);
+  --color-bg-tertiary: var(--color-peach-lightest);
+
+  --color-severity-low: #34d399;
+  --color-severity-medium: #fbbf24;
+  --color-severity-high: #f87171;
+  --color-severity-info: #60a5fa;
+
+  /* Translucent tints for badges, alerts and banners */
+  --tint-low-bg: rgba(52, 211, 153, 0.12);
+  --tint-low-border: rgba(52, 211, 153, 0.35);
+  --tint-medium-bg: rgba(251, 191, 36, 0.12);
+  --tint-medium-border: rgba(251, 191, 36, 0.35);
+  --tint-high-bg: rgba(248, 113, 113, 0.12);
+  --tint-high-border: rgba(248, 113, 113, 0.35);
+  --tint-info-bg: rgba(96, 165, 250, 0.12);
+  --tint-info-border: rgba(96, 165, 250, 0.35);
+  --tint-accent-bg: rgba(56, 189, 248, 0.12);
+  --color-warning-bg: var(--tint-medium-bg);
+  --color-warning-border: var(--tint-medium-border);
+  --focus-ring: rgba(56, 189, 248, 0.28);
+  --overlay: rgba(2, 6, 15, 0.7);
 
   /* Typography */
   --font-heading: 'Space Grotesk', sans-serif;
   --font-body: 'IBM Plex Sans', sans-serif;
   --font-mono: 'IBM Plex Mono', monospace;
+  --text-xs: 0.75rem;
+  --text-sm: 0.875rem;
+  --text-base: 1rem;
+  --text-xl: 1.25rem;
+  --text-2xl: 1.5rem;
 
   /* Spacing */
   --space-1: 0.25rem;
@@ -45,9 +82,9 @@
   --radius-full: 9999px;
 
   /* Shadows */
-  --shadow-sm: 0 1px 3px rgba(46, 36, 31, 0.06);
-  --shadow-md: 0 4px 12px rgba(46, 36, 31, 0.08);
-  --shadow-lg: 0 8px 24px rgba(46, 36, 31, 0.10);
+  --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.45);
+  --shadow-md: 0 4px 14px rgba(0, 0, 0, 0.5);
+  --shadow-lg: 0 10px 30px rgba(0, 0, 0, 0.6);
 
   /* Transitions */
   --transition-fast: 150ms ease;
@@ -58,6 +95,49 @@
   --sidebar-width: 240px;
   --sidebar-collapsed-width: 64px;
   --topbar-height: 60px;
+  --max-content-width: 1400px;
+}
+
+/* ── Light theme: warm peach / skin (Settings → Preferences → Theme)
+   Same token names, light values; set by utils/theme.ts via
+   <html data-theme="light">. Dark stays the default.            */
+:root[data-theme="light"] {
+  color-scheme: light;
+
+  --color-white: #fffaf6;              /* cards: cream */
+  --color-peach-lightest: #fbeee4;     /* page: soft peach */
+  --color-peach-light: #f8dccb;        /* hover / selected: skin */
+  --color-peach-accent: #f0997a;       /* highlights: peach */
+  --color-peach-dark: #c2562f;         /* primary: terracotta */
+  --color-primary-hover: #a3441f;
+  --color-on-accent: #ffffff;
+
+  --color-text: #3d2b22;               /* warm brown */
+  --color-text-muted: #7d6154;
+  --color-text-secondary: #5a4035;
+  --color-border: #efd6c6;
+  --color-surface: #fdf3ec;
+
+  --color-severity-low: #2e8b57;
+  --color-severity-medium: #c77c0a;
+  --color-severity-high: #c0392b;
+  --color-severity-info: #3b6fd8;
+
+  --tint-low-bg: rgba(46, 139, 87, 0.1);
+  --tint-low-border: rgba(46, 139, 87, 0.32);
+  --tint-medium-bg: rgba(199, 124, 10, 0.1);
+  --tint-medium-border: rgba(199, 124, 10, 0.32);
+  --tint-high-bg: rgba(192, 57, 43, 0.08);
+  --tint-high-border: rgba(192, 57, 43, 0.3);
+  --tint-info-bg: rgba(194, 86, 47, 0.07);
+  --tint-info-border: rgba(194, 86, 47, 0.25);
+  --tint-accent-bg: rgba(194, 86, 47, 0.1);
+  --focus-ring: rgba(194, 86, 47, 0.25);
+  --overlay: rgba(61, 43, 34, 0.45);
+
+  --shadow-sm: 0 1px 3px rgba(125, 72, 45, 0.08);
+  --shadow-md: 0 4px 14px rgba(125, 72, 45, 0.12);
+  --shadow-lg: 0 10px 30px rgba(125, 72, 45, 0.16);
 }
 
 /* ── Reset / Base ───────────────────────────────────────────── */
@@ -178,7 +258,28 @@ button:disabled {
 
 /* ── Selection ──────────────────────────────────────────────── */
 ::selection {
-  background-color: var(--color-peach-light);
+  background-color: rgba(56, 189, 248, 0.35);
+  color: var(--color-text);
+}
+
+/* Native form controls in the dark theme */
+input, textarea, select {
+  color: var(--color-text);
+  background-color: var(--color-peach-lightest);
+}
+
+input::placeholder,
+textarea::placeholder {
+  color: #64748b;
+}
+
+input[type='date']::-webkit-calendar-picker-indicator,
+input[type='datetime-local']::-webkit-calendar-picker-indicator {
+  filter: invert(0.8);
+}
+
+option {
+  background-color: var(--color-white);
   color: var(--color-text);
 }
 

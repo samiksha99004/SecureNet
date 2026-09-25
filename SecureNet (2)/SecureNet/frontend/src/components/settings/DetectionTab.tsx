@@ -3,7 +3,7 @@
  *
  * Settings tab for anomaly detection configuration.
  * Loads current settings from the backend; saves via PUT.
- * Shows "Not available" for all fields when backend is not connected.
+ * Admin only; changes apply to the running IDS immediately.
  */
 
 import { useCallback, useEffect, useState } from 'react';
@@ -17,6 +17,14 @@ import { SaveBar } from './SaveBar';
 import { LoadingState } from '../common/LoadingState';
 import { ErrorState } from '../common/ErrorState';
 import styles from './TabShared.module.css';
+import { errorMessage } from '../../utils/errors';
+
+/** Sensitivity presets map onto the Isolation Forest anomaly threshold θ. */
+const PRESET_THRESHOLDS: Record<Exclude<DetectionSettings['sensitivity'], 'custom'>, number> = {
+  low: 0.6,
+  medium: 0.5,
+  high: 0.45,
+};
 
 export function DetectionTab() {
   const { showToast } = useToast();
@@ -36,7 +44,15 @@ export function DetectionTab() {
   }, [data]);
 
   function update<K extends keyof DetectionSettings>(key: K, value: DetectionSettings[K]) {
-    setLocal((prev) => prev ? { ...prev, [key]: value } : prev);
+    setLocal((prev) => {
+      if (!prev) return prev;
+      const next = { ...prev, [key]: value };
+      if (key === 'sensitivity' && value !== 'custom') {
+        next.anomalyThreshold = PRESET_THRESHOLDS[value as keyof typeof PRESET_THRESHOLDS];
+      }
+      if (key === 'anomalyThreshold') next.sensitivity = 'custom';
+      return next;
+    });
     setIsDirty(true);
   }
 
@@ -48,8 +64,8 @@ export function DetectionTab() {
       setIsDirty(false);
       showToast({ message: 'Detection settings saved.', variant: 'success' });
       void refetch();
-    } catch {
-      showToast({ message: 'Could not save — backend not connected.', variant: 'error' });
+    } catch (err) {
+      showToast({ message: errorMessage(err, 'Could not save.'), variant: 'error' });
     } finally {
       setIsSaving(false);
     }
@@ -67,7 +83,7 @@ export function DetectionTab() {
     return (
       <ErrorState
         title="Settings unavailable"
-        message="Detection settings could not be loaded. The backend API is not yet connected."
+        message="Detection settings could not be loaded. Please try again."
         onRetry={refetch}
       />
     );
@@ -77,12 +93,12 @@ export function DetectionTab() {
     <div className={styles.tabContent}>
       <SettingsSection
         title="Anomaly Detection"
-        description="Control the Isolation Forest stage-1 detection pipeline."
+        description="Stage 1 — the Isolation Forest anomaly score (0–1) of every finished flow is compared with the threshold θ."
       >
         <SettingsField
           id="det-enabled"
           label="Enable Detection"
-          hint="Pause or resume the anomaly detection engine."
+          hint="When off, the IDS keeps capturing traffic but does not score it."
           type="toggle"
           checked={local.enabled}
           onChange={(v) => update('enabled', v)}
@@ -90,7 +106,7 @@ export function DetectionTab() {
         <SettingsField
           id="det-sensitivity"
           label="Sensitivity Preset"
-          hint="Adjusts threshold and analysis interval as a bundle."
+          hint="Sets the anomaly threshold: Low 0.60 · Medium 0.50 · High 0.45."
           type="select"
           value={local.sensitivity}
           onChange={(v) => update('sensitivity', v as DetectionSettings['sensitivity'])}
@@ -104,32 +120,13 @@ export function DetectionTab() {
         <SettingsField
           id="det-threshold"
           label="Anomaly Threshold"
-          hint="Flows with a score above this value are flagged (0.0 – 1.0)."
+          hint="Flows whose anomaly score is above this value are flagged (0.0 – 1.0). 0.5 matches scikit-learn's default."
           type="number"
           value={local.anomalyThreshold}
           onChange={(v) => update('anomalyThreshold', parseFloat(v) || 0)}
           min={0}
           max={1}
           step={0.01}
-        />
-        <SettingsField
-          id="det-min-flows"
-          label="Min Flows for Analysis"
-          hint="Minimum number of flows required before a detection pass runs."
-          type="number"
-          value={local.minFlowsForAnalysis}
-          onChange={(v) => update('minFlowsForAnalysis', parseInt(v, 10) || 0)}
-          min={1}
-        />
-        <SettingsField
-          id="det-interval"
-          label="Analysis Interval (ms)"
-          hint="How frequently the model runs a detection pass."
-          type="number"
-          value={local.analysisIntervalMs}
-          onChange={(v) => update('analysisIntervalMs', parseInt(v, 10) || 0)}
-          min={100}
-          step={100}
         />
       </SettingsSection>
 

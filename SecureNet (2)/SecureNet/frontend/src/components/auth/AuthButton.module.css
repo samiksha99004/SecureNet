@@ -32,12 +32,12 @@
 /* Primary */
 .primary {
   background-color: var(--color-peach-dark);
-  color: #fff;
+  color: var(--color-on-accent);
   border-color: var(--color-peach-dark);
 }
 .primary:not(:disabled):hover {
-  background-color: #c46a41;
-  border-color: #c46a41;
+  background-color: var(--color-primary-hover);
+  border-color: var(--color-primary-hover);
 }
 
 /* Secondary */

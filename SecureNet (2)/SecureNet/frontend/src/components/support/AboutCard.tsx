@@ -1,12 +1,31 @@
 /**
  * SecureNet — AboutCard
  *
- * Static informational card describing the SecureNet system.
+ * What the app is, in plain language for everyday users.
  */
 
 import { Shield } from 'lucide-react';
 import { Card } from '../common/Card';
 import styles from './AboutCard.module.css';
+
+const FEATURES: { title: string; text: string }[] = [
+  {
+    title: 'Watches your network',
+    text: 'While the IDS is ON, SecureNet looks at the traffic on this computer’s network and learns what normal activity looks like.',
+  },
+  {
+    title: 'Spots attacks',
+    text: 'Unusual or harmful activity — such as flooding, password guessing or scanning — is flagged and given a severity: High, Medium or Low.',
+  },
+  {
+    title: 'Alerts you instantly',
+    text: 'You see an alert on screen (with an optional sound) the moment an attack is detected, and every registered user gets an email with the incident report attached.',
+  },
+  {
+    title: 'Keeps a record',
+    text: 'Every incident is saved in History, and a report is created for each day an attack happens, ready to download.',
+  },
+];
 
 export function AboutCard() {
   return (
@@ -16,67 +35,28 @@ export function AboutCard() {
           <Shield size={22} />
         </div>
         <div>
-          <h3 className={styles.title}>SecureNet</h3>
-          <p className={styles.subtitle}>AI-Powered Network Intrusion Detection System</p>
+          <h3 className={styles.title}>About SecureNet</h3>
+          <p className={styles.subtitle}>Network intrusion detection for your computer and network</p>
         </div>
       </div>
 
       <div className={styles.body}>
         <p className={styles.description}>
-          SecureNet is an AI-powered network intrusion detection system that uses a
-          two-stage machine-learning pipeline to identify anomalous traffic and classify
-          attack types in real time.
+          SecureNet keeps an eye on your network and warns you when something suspicious happens. It
+          recognises attacks by how they behave, so it can catch threats it has never seen before — and it
+          tells you right away, on screen and by email.
         </p>
 
         <div className={styles.featureList}>
-          <div className={styles.feature}>
-            <span className={styles.featureDot} aria-hidden="true" />
-            <div>
-              <strong>Stage 1 — Isolation Forest:</strong> Unsupervised anomaly
-              detection across 78 extracted network-flow features.
+          {FEATURES.map((f) => (
+            <div key={f.title} className={styles.feature}>
+              <span className={styles.featureDot} aria-hidden="true" />
+              <div>
+                <strong>{f.title}:</strong> {f.text}
+              </div>
             </div>
-          </div>
-          <div className={styles.feature}>
-            <span className={styles.featureDot} aria-hidden="true" />
-            <div>
-              <strong>Stage 2 — XGBoost:</strong> Supervised classification of
-              anomalous flows into specific attack categories.
-            </div>
-          </div>
-          <div className={styles.feature}>
-            <span className={styles.featureDot} aria-hidden="true" />
-            <div>
-              <strong>Live monitoring:</strong> WebSocket-powered real-time anomaly
-              scoring stream on the dashboard.
-            </div>
-          </div>
-          <div className={styles.feature}>
-            <span className={styles.featureDot} aria-hidden="true" />
-            <div>
-              <strong>Protection mode:</strong> Optional automatic IP blocking for
-              high-severity threats.
-            </div>
-          </div>
+          ))}
         </div>
-
-        <dl className={styles.metaGrid}>
-          <div className={styles.metaRow}>
-            <dt className={styles.metaLabel}>Version</dt>
-            <dd className={styles.metaValue}>1.0.0</dd>
-          </div>
-          <div className={styles.metaRow}>
-            <dt className={styles.metaLabel}>Pipeline</dt>
-            <dd className={styles.metaValue}>Isolation Forest + XGBoost</dd>
-          </div>
-          <div className={styles.metaRow}>
-            <dt className={styles.metaLabel}>Features</dt>
-            <dd className={styles.metaValue}>78-feature network flow model</dd>
-          </div>
-          <div className={styles.metaRow}>
-            <dt className={styles.metaLabel}>Protocols</dt>
-            <dd className={styles.metaValue}>TCP, UDP, ICMP</dd>
-          </div>
-        </dl>
       </div>
     </Card>
   );

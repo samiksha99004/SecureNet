@@ -1,17 +1,25 @@
 /**
  * IDS Control Widget
  *
- * Prominent IDS ON/OFF control with current monitoring status.
- * Shows:
- * - IDS ON/OFF state
- * - Current monitoring status: NORMAL / ABNORMAL / attack type
- * - Latest incident details when abnormal detected
+ * ON / OFF control plus live IDS status:
+ *  - power toggle (every signed-in user). ON = capture, detect, alert + email.
+ *  - capture + detector state (clearly says when no model is loaded)
+ *  - current status: NORMAL or the latest incident's attack category
+ *  - live counters from the backend
  */
 
 import { useState } from 'react';
-import { Power, Shield, AlertTriangle } from 'lucide-react';
+import { Power, Shield, AlertTriangle, Info } from 'lucide-react';
 import { useToast } from '../common/Toast';
-import { startIDS, stopIDS, type IDSStatus } from '../../services/idsService';
+import { useAuth } from '../../contexts/AuthContext';
+import {
+  DETECTOR_LABELS,
+  startIDS,
+  stopIDS,
+  type IDSStatus,
+} from '../../services/idsService';
+import { requestDesktopNotifications } from '../../utils/alertChannels';
+import { formatTimestamp, formatDuration } from '../../utils/format';
 import type { SecurityEvent } from '../../types/security.types';
 import styles from './IDSControlWidget.module.css';
 
@@ -29,169 +37,160 @@ export function IDSControlWidget({
   onStatusChange,
 }: IDSControlWidgetProps) {
   const { showToast } = useToast();
-  const [isToggling, setIsToggling] = useState(false);
+  const { isAdmin } = useAuth();
+  const [isBusy, setIsBusy] = useState(false);
 
   const isEnabled = idsStatus?.enabled ?? false;
-  const hasAbnormalEvent = latestEvent && latestEvent.severity !== 'low';
+  const hasAbnormalEvent = !!latestEvent && latestEvent.state === 'active' && latestEvent.severity !== 'low';
 
-  async function handleToggle() {
-    setIsToggling(true);
+  async function run(action: () => Promise<unknown>, success: string) {
+    setIsBusy(true);
     try {
-      if (isEnabled) {
-        await stopIDS();
-        showToast({ message: 'IDS stopped', variant: 'success' });
-      } else {
-        await startIDS();
-        showToast({ message: 'IDS started — monitoring and protection active', variant: 'success' });
-      }
+      await action();
+      showToast({ message: success, variant: 'success' });
       onStatusChange();
-    } catch (err: any) {
-      // Check if it's an authentication error
-      const isAuthError = err?.status === 401 || err?.code === 'UNAUTHORIZED';
-      const message = isAuthError 
-        ? 'Session expired — please log in again'
-        : `Failed to ${isEnabled ? 'stop' : 'start'} IDS — ${err?.message || 'backend not connected'}`;
-      
+    } catch (err) {
       showToast({
-        message,
+        message: err instanceof Error && err.message ? err.message : 'The IDS request failed.',
         variant: 'error',
       });
-      
-      // If auth error, redirect to login after a short delay
-      if (isAuthError) {
-        setTimeout(() => {
-          window.location.href = '/login';
-        }, 2000);
-      }
     } finally {
-      setIsToggling(false);
+      setIsBusy(false);
     }
   }
 
-  // Determine monitoring status
-  let statusLabel = 'NORMAL';
-  let statusIcon = <Shield size={20} />;
-  let statusClass = styles.statusNormal;
-
-  if (hasAbnormalEvent) {
-    const attackType = latestEvent.attackType;
-    if (attackType && attackType !== 'Unknown') {
-      statusLabel = attackType.toUpperCase();
+  function handleToggle() {
+    if (isEnabled) {
+      void run(stopIDS, 'IDS stopped');
     } else {
-      statusLabel = 'UNKNOWN ATTACK TYPE';
+      void requestDesktopNotifications();
+      void run(() => startIDS('monitor'), 'IDS started');
     }
-    statusIcon = <AlertTriangle size={20} />;
-    statusClass = styles.statusAbnormal;
   }
+
+  const statusLabel = hasAbnormalEvent
+    ? (latestEvent.attackType ?? 'UNCLASSIFIED ANOMALY').toUpperCase()
+    : 'NORMAL';
 
   return (
     <div className={styles.widget}>
-      {/* IDS Power Control */}
+      {/* ── Power ─────────────────────────────────────────────────────── */}
       <div className={styles.powerSection}>
         <div className={styles.powerHeader}>
-          <h2 className={styles.title}>Intrusion Detection System</h2>
-          <button
-            type="button"
-            className={`${styles.powerButton} ${isEnabled ? styles.powerOn : styles.powerOff}`}
-            onClick={handleToggle}
-            disabled={isToggling || isLoading}
-            aria-label={isEnabled ? 'Stop IDS' : 'Start IDS'}
-          >
-            <Power size={20} aria-hidden="true" />
-            <span className={styles.powerLabel}>{isEnabled ? 'ON' : 'OFF'}</span>
-          </button>
+          <div>
+            <h2 className={styles.title}>Intrusion Detection System</h2>
+            <p className={styles.subtitle}>
+              {isEnabled
+                ? 'Running' + (idsStatus?.uptimeSeconds ? ` · up ${formatDuration(idsStatus.uptimeSeconds)}` : '')
+                : 'Stopped'}
+            </p>
+          </div>
+
+          <div className={styles.controls}>
+            <button
+              type="button"
+              className={`${styles.powerButton} ${isEnabled ? styles.powerOn : styles.powerOff}`}
+              onClick={handleToggle}
+              disabled={isBusy || isLoading}
+              aria-label={isEnabled ? 'Stop IDS' : 'Start IDS'}
+            >
+              <Power size={18} aria-hidden="true" />
+              <span className={styles.powerLabel}>{isEnabled ? 'ON' : 'OFF'}</span>
+            </button>
+          </div>
         </div>
 
-        {!isEnabled && (
-          <p className={styles.offMessage}>
-            Network monitoring, detection, and protection are currently disabled.
+        {idsStatus?.captureError && (
+          <p className={`${styles.notice} ${styles.noticeError}`} role="alert">
+            <AlertTriangle size={14} aria-hidden="true" /> {idsStatus.captureError}
+          </p>
+        )}
+        {idsStatus && !idsStatus.mlLoaded && (
+          <p className={styles.notice}>
+            <Info size={14} aria-hidden="true" />{' '}
+            {isAdmin
+              ? 'No detection model is loaded — the IDS captures and counts traffic but does not score it. Load Isolation Forest and/or XGBoost from Settings → Model.'
+              : 'Attack detection is not set up yet — your SecureNet admin needs to finish the setup. Traffic is still counted while the IDS is on.'}
           </p>
         )}
       </div>
 
-      {/* Monitoring Status */}
-      {isEnabled && (
-        <div className={styles.statusSection}>
-          <div className={`${styles.statusCard} ${statusClass}`}>
-            <div className={styles.statusIcon}>{statusIcon}</div>
-            <div className={styles.statusContent}>
-              <span className={styles.statusLabel}>Current Status</span>
-              <span className={styles.statusValue}>{statusLabel}</span>
-            </div>
+      {/* ── Current status ────────────────────────────────────────────────── */}
+      <div className={styles.statusSection}>
+        <div className={`${styles.statusCard} ${hasAbnormalEvent ? styles.statusAbnormal : styles.statusNormal}`}>
+          <div className={styles.statusIcon}>
+            {hasAbnormalEvent ? <AlertTriangle size={22} /> : <Shield size={22} />}
           </div>
-
-          {/* Latest Incident Details */}
-          {hasAbnormalEvent && latestEvent && (
-            <div className={styles.incidentDetails}>
-              <h3 className={styles.incidentTitle}>Latest Incident</h3>
-              <div className={styles.incidentGrid}>
-                <DetailRow label="Severity" value={latestEvent.severity.toUpperCase()} />
-                <DetailRow label="Anomaly Score" value={latestEvent.anomalyScore.toFixed(4)} />
-                {latestEvent.confidence && (
-                  <DetailRow label="Confidence" value={`${(latestEvent.confidence * 100).toFixed(1)}%`} />
-                )}
-                <DetailRow label="Source IP" value={latestEvent.sourceIp} />
-                <DetailRow label="Destination IP" value={latestEvent.destinationIp} />
-                <DetailRow label="Protocol" value={latestEvent.protocol} />
-                <DetailRow
-                  label="Time"
-                  value={new Date(latestEvent.timestamp).toLocaleString()}
-                />
-                {latestEvent.actionTaken && (
-                  <DetailRow
-                    label="Action"
-                    value={latestEvent.actionTaken.toUpperCase()}
-                    highlight={latestEvent.actionTaken === 'blocked'}
-                  />
-                )}
-              </div>
-              {latestEvent.detectionReason && (
-                <div className={styles.reasonBox}>
-                  <span className={styles.reasonLabel}>Detection Reason:</span>
-                  <p className={styles.reasonText}>{latestEvent.detectionReason}</p>
-                </div>
-              )}
-            </div>
-          )}
+          <div className={styles.statusContent}>
+            <span className={styles.statusLabel}>Current Status</span>
+            <span className={styles.statusValue}>{statusLabel}</span>
+          </div>
+          <div className={styles.detectorInfo}>
+            <span className={styles.statusLabel}>{isAdmin ? 'Detector' : 'Detection'}</span>
+            <span className={styles.detectorValue}>
+              {isAdmin
+                ? DETECTOR_LABELS[idsStatus?.detector ?? 'none'] ?? idsStatus?.detector
+                : idsStatus?.mlLoaded ? 'Active' : 'Not set up yet'}
+            </span>
+          </div>
         </div>
-      )}
 
-      {/* Stats */}
-      {isEnabled && idsStatus && (
+        {hasAbnormalEvent && latestEvent && (
+          <div className={styles.incidentDetails}>
+            <h3 className={styles.incidentTitle}>Latest Unresolved Incident</h3>
+            <div className={styles.incidentGrid}>
+              <DetailRow label="Severity" value={latestEvent.severity.toUpperCase()} />
+              <DetailRow label="Anomaly Score" value={latestEvent.anomalyScore.toFixed(4)} />
+              {latestEvent.confidence !== null && (
+                <DetailRow label="Confidence" value={`${(latestEvent.confidence * 100).toFixed(1)}%`} />
+              )}
+              <DetailRow label="Source" value={`${latestEvent.sourceIp}:${latestEvent.sourcePort}`} />
+              <DetailRow label="Destination" value={`${latestEvent.destinationIp}:${latestEvent.destinationPort}`} />
+              <DetailRow label="Protocol" value={latestEvent.protocol} />
+              <DetailRow label="Time" value={formatTimestamp(latestEvent.timestamp)} />
+              <DetailRow
+                label="Action"
+                value={latestEvent.actionTaken.toUpperCase()}
+                highlight={latestEvent.actionTaken === 'blocked'}
+              />
+            </div>
+            {latestEvent.detectionReason && (
+              <div className={styles.reasonBox}>
+                <span className={styles.reasonLabel}>Detection Reason</span>
+                <p className={styles.reasonText}>{latestEvent.detectionReason}</p>
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+
+      {/* ── Live counters ─────────────────────────────────────────────────── */}
+      {idsStatus && (
         <div className={styles.statsRow}>
-          <Stat label="Packets Processed" value={idsStatus.packetsProcessed.toLocaleString()} />
-          <Stat label="Flows Analyzed" value={idsStatus.flowsAnalyzed.toLocaleString()} />
-          <Stat label="Anomalies" value={idsStatus.anomaliesDetected.toLocaleString()} />
-          <Stat label="Attacks" value={idsStatus.attacksDetected.toLocaleString()} />
+          <Stat label="Packets" value={idsStatus.packetsProcessed} />
+          <Stat label="Flows Analyzed" value={idsStatus.flowsAnalyzed} />
+          <Stat label="Active Flows" value={idsStatus.activeFlows} />
+          <Stat label="Anomalies" value={idsStatus.anomaliesDetected} />
+          <Stat label="Classified Attacks" value={idsStatus.attacksDetected} />
         </div>
       )}
     </div>
   );
 }
 
-function DetailRow({
-  label,
-  value,
-  highlight,
-}: {
-  label: string;
-  value: string;
-  highlight?: boolean;
-}) {
+function DetailRow({ label, value, highlight }: { label: string; value: string; highlight?: boolean }) {
   return (
     <div className={styles.detailRow}>
-      <span className={styles.detailLabel}>{label}:</span>
-      <span className={`${styles.detailValue} ${highlight ? styles.detailHighlight : ''}`}>
-        {value}
-      </span>
+      <span className={styles.detailLabel}>{label}</span>
+      <span className={`${styles.detailValue} ${highlight ? styles.detailHighlight : ''}`}>{value}</span>
     </div>
   );
 }
 
-function Stat({ label, value }: { label: string; value: string }) {
+function Stat({ label, value }: { label: string; value: number }) {
   return (
     <div className={styles.stat}>
-      <span className={styles.statValue}>{value}</span>
+      <span className={styles.statValue}>{value.toLocaleString()}</span>
       <span className={styles.statLabel}>{label}</span>
     </div>
   );

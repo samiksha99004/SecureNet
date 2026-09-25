@@ -11,16 +11,15 @@
  *  - Flow statistics
  *  - Actions (Resolve, Mark as False Positive)
  *
- * Actions are UI-only until backend is connected.
+ * Resolve / false-positive actions are shown to the admin only.
  * Accessible: focus-traps on open, closes on Escape, role="dialog".
  */
 
 import { useEffect, useRef, useCallback } from 'react';
-import { X, ExternalLink } from 'lucide-react';
+import { X } from 'lucide-react';
 import type { SecurityEvent } from '../../types/security.types';
 import { SeverityBadge } from '../common/SeverityBadge';
 import { StatusBadge } from '../common/StatusBadge';
-import { ModeBadge } from '../common/ModeBadge';
 import {
   formatTimestamp,
   formatScore,
@@ -153,7 +152,6 @@ export function IncidentDetailsDrawer({
                       | 'false_positive'
                   }
                 />
-                <ModeBadge mode={event.mode} />
               </div>
 
               {/* ── Section: Event metadata ────────────────────────────── */}
@@ -204,7 +202,7 @@ export function IncidentDetailsDrawer({
                     label="Attack Type"
                     value={
                       event.attackType ?? (
-                        <span className={styles.normal}>Normal / No attack</span>
+                        <span className={styles.normal}>Unclassified anomaly</span>
                       )
                     }
                   />
@@ -299,38 +297,30 @@ export function IncidentDetailsDrawer({
                 </section>
               )}
 
-              {/* ── Actions ───────────────────────────────────────────── */}
-              <section aria-label="Event actions" className={styles.actionsSection}>
-                <SectionHeading>Actions</SectionHeading>
-
-                <div className={styles.noticeBox} role="note">
-                  <ExternalLink size={13} aria-hidden="true" />
-                  Actions are available once the backend API is connected.
-                </div>
-
-                <div className={styles.actionButtons}>
-                  <button
-                    className={styles.resolveButton}
-                    onClick={handleResolve}
-                    disabled={
-                      event.state === 'resolved' || !onResolve
-                    }
-                    aria-label="Mark event as resolved"
-                  >
-                    Mark Resolved
-                  </button>
-                  <button
-                    className={styles.fpButton}
-                    onClick={handleFalsePositive}
-                    disabled={
-                      event.state === 'false_positive' || !onMarkFalsePositive
-                    }
-                    aria-label="Mark event as false positive"
-                  >
-                    False Positive
-                  </button>
-                </div>
-              </section>
+              {/* ── Actions (admin only; hidden for SecureNet users) ───── */}
+              {(onResolve || onMarkFalsePositive) && (
+                <section aria-label="Event actions" className={styles.actionsSection}>
+                  <SectionHeading>Actions</SectionHeading>
+                  <div className={styles.actionButtons}>
+                    <button
+                      className={styles.resolveButton}
+                      onClick={handleResolve}
+                      disabled={event.state === 'resolved' || !onResolve}
+                      aria-label="Mark event as resolved"
+                    >
+                      Mark Resolved
+                    </button>
+                    <button
+                      className={styles.fpButton}
+                      onClick={handleFalsePositive}
+                      disabled={event.state === 'false_positive' || !onMarkFalsePositive}
+                      aria-label="Mark event as false positive"
+                    >
+                      False Positive
+                    </button>
+                  </div>
+                </section>
+              )}
             </>
           )}
         </div>

@@ -1,18 +1,12 @@
 /**
  * SecureNet — Authentication Service
  *
- * All auth interactions go through this service.
- * Components call these functions; the service communicates
- * with the backend via the API client.
- *
- * Token storage is handled here so components never touch
- * localStorage or token headers directly.
- *
- * TODO (backend): Replace placeholder endpoint paths with
- * actual backend routes once the API is ready.
+ * All auth interactions go through this service. Token storage is handled
+ * here (via apiClient.tokenStore) so components never touch localStorage.
+ * The backend returns camelCase JSON matching src/types/auth.types.ts.
  */
 
-import { apiClient } from './apiClient';
+import { apiClient, tokenStore } from './apiClient';
 import type {
   LoginRequest,
   SignupRequest,
@@ -21,222 +15,175 @@ import type {
   OtpVerifyResponse,
   AuthResponse,
   ChangePasswordRequest,
-  ForgotPasswordRequest,
+  CompleteSignupRequest,
+  PasswordResetVerifyResponse,
+  ProfileChangeRequest,
+  ProfileChangeStarted,
   ResetPasswordRequest,
   User,
 } from '../types/auth.types';
 import type { MessageResponse } from '../types/api.types';
+import { storageGet, storageGetJson, storageRemove, storageSet } from '../utils/storage';
 
-// ── Token Storage Keys ────────────────────────────────────────────────────────
-
-const ACCESS_TOKEN_KEY = 'sn_access_token';
-const REFRESH_TOKEN_KEY = 'sn_refresh_token';
 const USER_KEY = 'sn_user';
+const PENDING_EMAIL_KEY = 'sn_pending_email';
+const SETUP_TOKEN_KEY = 'sn_setup_token';
 
-// ── Token Helpers ─────────────────────────────────────────────────────────────
+// ── Session Helpers ───────────────────────────────────────────────────────────
 
-export function storeTokens(accessToken: string, refreshToken: string): void {
-  localStorage.setItem(ACCESS_TOKEN_KEY, accessToken);
-  localStorage.setItem(REFRESH_TOKEN_KEY, refreshToken);
+export function storeSession(auth: AuthResponse): void {
+  tokenStore.set(auth.tokens.accessToken, auth.tokens.refreshToken);
+  storeUser(auth.user);
 }
 
 export function clearTokens(): void {
-  localStorage.removeItem(ACCESS_TOKEN_KEY);
-  localStorage.removeItem(REFRESH_TOKEN_KEY);
-  localStorage.removeItem(USER_KEY);
+  tokenStore.clear();
 }
 
 export function getAccessToken(): string | null {
-  return localStorage.getItem(ACCESS_TOKEN_KEY);
+  return tokenStore.getAccess();
 }
 
 export function storeUser(user: User): void {
-  localStorage.setItem(USER_KEY, JSON.stringify(user));
+  storageSet(USER_KEY, JSON.stringify(user));
 }
 
+/**
+ * Stored profile, validated. Anything malformed (e.g. a snake_case profile
+ * saved by an older build) is normalised or discarded — never trusted as-is,
+ * because the UI dereferences these fields while rendering.
+ */
 export function getStoredUser(): User | null {
-  const raw = localStorage.getItem(USER_KEY);
-  if (!raw) return null;
-  try {
-    return JSON.parse(raw) as User;
-  } catch {
-    return null;
-  }
+  const raw = storageGetJson<Record<string, unknown> | null>(USER_KEY, null);
+  const user = raw && typeof raw === 'object' ? normaliseUser(raw) : null;
+  if (!user) storageRemove(USER_KEY);
+  return user;
 }
 
-export function isAuthenticated(): boolean {
-  return getAccessToken() !== null;
+function normaliseUser(raw: Record<string, unknown>): User | null {
+  const str = (...keys: string[]): string | null => {
+    for (const key of keys) {
+      const value = raw[key];
+      if (typeof value === 'string' && value) return value;
+    }
+    return null;
+  };
+  const id = str('id');
+  const email = str('email');
+  if (!id || !email) return null;
+  const role = str('role');
+  return {
+    id,
+    email,
+    fullName: str('fullName', 'full_name') ?? email,
+    role: role === 'admin' || role === 'analyst' ? role : 'viewer',
+    accountStatus: (str('accountStatus', 'account_status') ?? 'active') as User['accountStatus'],
+    authProvider: (str('authProvider', 'auth_provider') ?? 'local') as User['authProvider'],
+    createdAt: str('createdAt', 'created_at') ?? '',
+    lastLoginAt: str('lastLoginAt', 'last_login_at'),
+    avatarUrl: str('avatarUrl', 'avatar_url'),
+    phoneNumber: str('phoneNumber', 'phone_number'),
+  };
+}
+
+/** Email waiting for OTP verification (survives a page refresh). */
+export function setPendingEmail(email: string | null): void {
+  if (email) storageSet(PENDING_EMAIL_KEY, email, 'session');
+  else storageRemove(PENDING_EMAIL_KEY, 'session');
+}
+
+export function getPendingEmail(): string {
+  return storageGet(PENDING_EMAIL_KEY, 'session') ?? '';
+}
+
+/** Token from a verified code, kept for this tab only (survives a refresh). */
+export function getSetupToken(): string {
+  return storageGet(SETUP_TOKEN_KEY, 'session') ?? '';
 }
 
 // ── Auth API Calls ────────────────────────────────────────────────────────────
 
-/**
- * Log in with email + password.
- * TODO (backend): POST /auth/login
- */
+/** POST /auth/login */
 export async function login(request: LoginRequest): Promise<AuthResponse> {
-  const response = await apiClient.post<any>('/auth/login', request, {
-    skipAuth: true,
-  });
-  
-  // Transform snake_case to camelCase
-  const transformedResponse: AuthResponse = {
-    user: {
-      id: response.user.id,
-      email: response.user.email,
-      fullName: response.user.full_name,
-      role: response.user.role,
-      accountStatus: response.user.account_status,
-      authProvider: response.user.auth_provider,
-      createdAt: response.user.created_at,
-      lastLoginAt: response.user.last_login_at,
-      avatarUrl: response.user.avatar_url
-    },
-    tokens: response.tokens
-  };
-  
-  storeTokens(transformedResponse.tokens.accessToken, transformedResponse.tokens.refreshToken);
-  storeUser(transformedResponse.user);
-  return transformedResponse;
-}
-
-/**
- * Register a new user account.
- * TODO (backend): POST /auth/signup
- */
-export async function signup(request: SignupRequest): Promise<MessageResponse> {
-  return apiClient.post<MessageResponse>('/auth/signup', request, {
-    skipAuth: true,
-  });
-}
-
-/**
- * Verify the OTP sent to the user's email.
- * TODO (backend): POST /auth/otp/verify
- */
-export async function verifyOtp(request: OtpVerifyRequest): Promise<OtpVerifyResponse> {
-  const response = await apiClient.post<any>(
-    '/auth/otp/verify',
-    request,
-    { skipAuth: true }
-  );
-  
-  if (response.authResponse && response.authResponse.user) {
-    // Transform snake_case to camelCase
-    const transformedUser: User = {
-      id: response.authResponse.user.id,
-      email: response.authResponse.user.email,
-      fullName: response.authResponse.user.full_name,
-      role: response.authResponse.user.role,
-      accountStatus: response.authResponse.user.account_status,
-      authProvider: response.authResponse.user.auth_provider,
-      createdAt: response.authResponse.user.created_at,
-      lastLoginAt: response.authResponse.user.last_login_at,
-      avatarUrl: response.authResponse.user.avatar_url
-    };
-    
-    storeTokens(
-      response.authResponse.tokens.accessToken,
-      response.authResponse.tokens.refreshToken
-    );
-    storeUser(transformedUser);
-    
-    return {
-      verified: response.verified,
-      authResponse: {
-        user: transformedUser,
-        tokens: response.authResponse.tokens
-      }
-    };
-  }
-  
+  const response = await apiClient.post<AuthResponse>('/auth/login', request, { skipAuth: true });
+  storeSession(response);
   return response;
 }
 
-/**
- * Resend OTP to the given email.
- * TODO (backend): POST /auth/otp/resend
- */
-export async function resendOtp(request: OtpResendRequest): Promise<MessageResponse> {
-  return apiClient.post<MessageResponse>('/auth/otp/resend', request, {
-    skipAuth: true,
-  });
+/** POST /auth/signup — step 1: sends a verification code to the email address. */
+export async function signup(request: SignupRequest): Promise<MessageResponse> {
+  const response = await apiClient.post<MessageResponse>('/auth/signup', request, { skipAuth: true });
+  setPendingEmail(request.email);
+  return response;
 }
 
-/**
- * Log out — clears local tokens.
- * TODO (backend): POST /auth/logout (optional server-side session invalidation)
- */
+/** POST /auth/otp/verify — step 2: a correct code allows choosing the password. */
+export async function verifyOtp(request: OtpVerifyRequest): Promise<OtpVerifyResponse> {
+  const response = await apiClient.post<OtpVerifyResponse>('/auth/otp/verify', request, { skipAuth: true });
+  storageSet(SETUP_TOKEN_KEY, response.setupToken, 'session');
+  return response;
+}
+
+/** POST /auth/signup/complete — step 3: sets the password; the new account is signed in. */
+export async function completeSignup(request: CompleteSignupRequest): Promise<AuthResponse> {
+  const response = await apiClient.post<AuthResponse>('/auth/signup/complete', request, { skipAuth: true });
+  storeSession(response);
+  setPendingEmail(null);
+  storageRemove(SETUP_TOKEN_KEY, 'session');
+  return response;
+}
+
+/** POST /auth/otp/resend */
+export async function resendOtp(request: OtpResendRequest): Promise<MessageResponse> {
+  return apiClient.post<MessageResponse>('/auth/otp/resend', request, { skipAuth: true });
+}
+
+/** POST /auth/password/forgot — step 1: emails a reset code (generic answer). */
+export async function forgotPassword(email: string): Promise<MessageResponse> {
+  return apiClient.post<MessageResponse>('/auth/password/forgot', { email }, { skipAuth: true });
+}
+
+/** POST /auth/password/verify — step 2: a correct code allows choosing a new password. */
+export async function verifyPasswordReset(request: OtpVerifyRequest): Promise<PasswordResetVerifyResponse> {
+  return apiClient.post<PasswordResetVerifyResponse>('/auth/password/verify', request, { skipAuth: true });
+}
+
+/** POST /auth/password/reset — step 3: sets the new password. */
+export async function resetPassword(request: ResetPasswordRequest): Promise<MessageResponse> {
+  return apiClient.post<MessageResponse>('/auth/password/reset', request, { skipAuth: true });
+}
+
+/** POST /auth/logout — always clears local tokens. */
 export async function logout(): Promise<void> {
   try {
     await apiClient.post<MessageResponse>('/auth/logout', {});
   } catch {
-    // Always clear local state even if server call fails
+    // Always clear local state even if the server call fails
   } finally {
     clearTokens();
   }
 }
 
-/**
- * Fetch the currently authenticated user's profile.
- * TODO (backend): GET /auth/me
- */
+/** GET /auth/me */
 export async function getCurrentUser(): Promise<User> {
-  const response = await apiClient.get<any>('/auth/me');
-  
-  // Transform snake_case to camelCase
-  return {
-    id: response.id,
-    email: response.email,
-    fullName: response.full_name,
-    role: response.role,
-    accountStatus: response.account_status,
-    authProvider: response.auth_provider,
-    createdAt: response.created_at,
-    lastLoginAt: response.last_login_at,
-    avatarUrl: response.avatar_url
-  };
+  const user = await apiClient.get<User>('/auth/me');
+  storeUser(user);
+  return user;
 }
 
-/**
- * Request a password-reset email.
- * TODO (backend): POST /auth/forgot-password
- */
-export async function forgotPassword(
-  request: ForgotPasswordRequest
-): Promise<MessageResponse> {
-  return apiClient.post<MessageResponse>('/auth/forgot-password', request, {
-    skipAuth: true,
-  });
+/** POST /auth/profile/change — step 1: emails a code confirming the change. */
+export async function requestProfileChange(request: ProfileChangeRequest): Promise<ProfileChangeStarted> {
+  return apiClient.post<ProfileChangeStarted>('/auth/profile/change', request);
 }
 
-/**
- * Reset password using a token from the reset email.
- * TODO (backend): POST /auth/reset-password
- */
-export async function resetPassword(
-  request: ResetPasswordRequest
-): Promise<MessageResponse> {
-  return apiClient.post<MessageResponse>('/auth/reset-password', request, {
-    skipAuth: true,
-  });
+/** POST /auth/profile/confirm — step 2: the code applies the change; returns the updated profile. */
+export async function confirmProfileChange(changeToken: string, otp: string): Promise<User> {
+  const user = await apiClient.post<User>('/auth/profile/confirm', { changeToken, otp });
+  storeUser(user);
+  return user;
 }
 
-/**
- * Change password for an authenticated user.
- * TODO (backend): POST /auth/change-password
- */
-export async function changePassword(
-  request: ChangePasswordRequest
-): Promise<MessageResponse> {
+/** POST /auth/change-password */
+export async function changePassword(request: ChangePasswordRequest): Promise<MessageResponse> {
   return apiClient.post<MessageResponse>('/auth/change-password', request);
-}
-
-/**
- * Initiate Google OAuth login flow.
- * TODO (backend): GET /auth/google — redirect to Google consent screen.
- * The frontend navigates to this URL; OAuth callback is handled server-side.
- */
-export function getGoogleOAuthUrl(): string {
-  return `${import.meta.env.VITE_API_BASE_URL ?? ''}/auth/google`;
 }

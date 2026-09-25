@@ -10,9 +10,13 @@
  * Never fabricates accuracy, confidence, or model metadata.
  */
 
-import { useCallback } from 'react';
+import { useCallback, useState } from 'react';
+import { RefreshCw } from 'lucide-react';
 import { useAsyncData } from '../../hooks/useAsyncData';
-import { getModelInfo } from '../../services/modelService';
+import { useAuth } from '../../contexts/AuthContext';
+import { useToast } from '../common/Toast';
+import { errorMessage } from '../../utils/errors';
+import { getModelInfo, reloadModels } from '../../services/modelService';
 import type { IsolationForestInfo, XGBoostInfo, ModelStatus } from '../../types/model.types';
 import { LoadingState } from '../common/LoadingState';
 import { ErrorState } from '../common/ErrorState';
@@ -71,8 +75,8 @@ function IsolationForestCard({ info }: { info: IsolationForestInfo }) {
 
       <p className={styles.featureStatement}>
         {info.featureCount !== null
-          ? `${info.featureCount}-feature model`
-          : '78-feature model'} — analyses each network flow across extracted traffic features.
+          ? `${info.featureCount} CICIDS2018 flow features`
+          : 'CICIDS2018 flow features'} — scores how isolated each network flow is from normal traffic.
       </p>
 
       <dl className={styles.infoGrid}>
@@ -96,7 +100,7 @@ function IsolationForestCard({ info }: { info: IsolationForestInfo }) {
         </div>
       ) : (
         <p className={styles.metricsUnavailable}>
-          Performance metrics not available — connect the backend to view model evaluation results.
+          Evaluation metrics are not stored with the model files.
         </p>
       )}
     </div>
@@ -119,7 +123,7 @@ function XGBoostCard({ info }: { info: XGBoostInfo }) {
       <p className={styles.featureStatement}>
         {info.featureCount !== null
           ? `${info.featureCount}-feature model`
-          : '78-feature model'} — classifies flagged flows into specific attack categories.
+          : 'CICIDS2018 flow features'} — classifies flagged flows into specific attack categories.
       </p>
 
       <dl className={styles.infoGrid}>
@@ -184,7 +188,7 @@ function XGBoostCard({ info }: { info: XGBoostInfo }) {
         </div>
       ) : (
         <p className={styles.metricsUnavailable}>
-          Performance metrics not available — connect the backend to view model evaluation results.
+          Evaluation metrics are not stored with the model files.
         </p>
       )}
     </div>
@@ -197,13 +201,29 @@ export function ModelTab() {
   const { data, isLoading, isError, refetch } = useAsyncData(
     useCallback(() => getModelInfo(), [])
   );
+  const { user } = useAuth();
+  const { showToast } = useToast();
+  const [reloading, setReloading] = useState(false);
+
+  async function handleReload() {
+    setReloading(true);
+    try {
+      await reloadModels();
+      showToast({ message: 'Models loaded.', variant: 'success' });
+    } catch (err) {
+      showToast({ message: errorMessage(err, 'Could not load models.'), variant: 'error' });
+    } finally {
+      setReloading(false);
+      void refetch();
+    }
+  }
 
   if (isLoading) return <LoadingState message="Loading model information…" />;
   if (isError || !data) {
     return (
       <ErrorState
         title="Model information unavailable"
-        message="Model metadata could not be loaded. The backend API is not yet connected."
+        message="Model information could not be loaded. Please try again."
         onRetry={refetch}
       />
     );
@@ -213,12 +233,25 @@ export function ModelTab() {
     <div className={tabStyles.tabContent}>
       <SettingsSection
         title="ML Detection Pipeline"
-        description="Two-stage pipeline: unsupervised anomaly detection (Stage 1) followed by supervised attack classification (Stage 2)."
+        description="Two-stage pipeline: unsupervised anomaly detection (Stage 1) followed by supervised attack classification (Stage 2). Either stage — or both — can be used."
       >
         <p className={styles.pipelineNote}>
-          The 78-feature model analyses TCP/UDP/ICMP network flows, extracting packet-level
-          and flow-level statistics. Stage 1 flags anomalies; Stage 2 classifies attack type.
+          Live TCP/UDP/ICMP flows are converted into CICIDS2018 flow features. Stage 1 (Isolation
+          Forest) flags flows whose anomaly score exceeds the threshold; Stage 2 (XGBoost) assigns an
+          attack category. Model files are read from the backend&apos;s <code>models/</code> folder; with no
+          model loaded the IDS only captures and counts traffic.
         </p>
+        {user?.role === 'admin' && (
+          <button
+            type="button"
+            className={styles.reloadButton}
+            onClick={() => void handleReload()}
+            disabled={reloading}
+          >
+            <RefreshCw size={14} aria-hidden="true" />
+            {reloading ? 'Loading models…' : 'Load / reload models'}
+          </button>
+        )}
         {data.lastRefreshedAt && (
           <p className={styles.refreshedAt}>
             Last refreshed: {formatDate(data.lastRefreshedAt)}
