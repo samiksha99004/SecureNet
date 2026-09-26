@@ -17,6 +17,8 @@ interface HostStatusCardProps {
   isLoading: boolean;
   isError: boolean;
   onRetry?: () => void;
+  /** IDS is OFF: no live values on the dashboard */
+  idsOff?: boolean;
 }
 
 interface MetricRowProps {
@@ -42,7 +44,24 @@ export function HostStatusCard({
   isLoading,
   isError,
   onRetry,
+  idsOff = false,
 }: HostStatusCardProps) {
+  if (idsOff) {
+    return (
+      <div className={styles.card}>
+        <div className={styles.header}>
+          <Monitor size={16} className={styles.headerIcon} aria-hidden="true" />
+          <h3 className={styles.title}>Host Status</h3>
+        </div>
+        <div className={styles.metrics}>
+          <MetricRow icon={<Network size={14} />} label="Network" value="—" />
+          <MetricRow icon={<Clock size={14} />} label="Uptime" value="—" />
+          <MetricRow icon={<Monitor size={14} />} label="OS" value="—" />
+          <p className={styles.noData}>IDS is off — no live values.</p>
+        </div>
+      </div>
+    );
+  }
   return (
     <div className={styles.card}>
       <div className={styles.header}>

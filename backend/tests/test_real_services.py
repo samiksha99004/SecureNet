@@ -62,3 +62,30 @@ async def test_signup_without_email_setup_is_refused(client):
     # nothing half-created: no pending account, no code to verify
     r2 = await client.post("/api/auth/otp/verify", json={"email": "real.person@gmail.com", "otp": "123456"})
     assert r2.status_code == 400 and "No verification code" in r2.json()["message"]
+
+
+async def test_code_email_design_and_subjects(monkeypatch):
+    """Code emails: "[SecureNet] <purpose> verification code", one box per digit, selectable code, 5 minutes."""
+    sent = []
+
+    async def fake_send(recipients, subject, text, html, attachments=None, reply_to=None):
+        sent.append((recipients, subject, text, html))
+
+    monkeypatch.setattr(email_mod, "send_email", fake_send)
+    await email_mod.send_login_code_email("a@example.com", "137296")
+    await email_mod.send_otp_email("a@example.com", "000111")
+    await email_mod.send_password_reset_email("a@example.com", "222333")
+    await email_mod.send_password_change_email("a@example.com", "444555")
+    await email_mod.send_profile_change_email("a@example.com", "666777", "name")
+    subjects = [s for _, s, _, _ in sent]
+    assert subjects == [
+        "[SecureNet] Sign-in verification code", "[SecureNet] Sign-up verification code",
+        "[SecureNet] Password reset verification code", "[SecureNet] Password change verification code",
+        "[SecureNet] Profile change verification code",
+    ]
+    _, _, text, html = sent[0]
+    assert "verification code is: 137296" in text and "5 minutes" in text
+    assert "Code requested" in html and "Copy code" in html and "5 minutes" in html
+    for digit in "137296":
+        assert f'color:#1f2328">{digit}</div>' in html          # one box per digit
+    assert html.count("137296") >= 2                           # preview line + selectable code

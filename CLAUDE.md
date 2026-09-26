@@ -138,6 +138,11 @@ Frontend: NotificationProvider (inside BrowserRouter) listens to WS `alert` → 
    bell feed + unread badge (NotificationBell, read state per user in localStorage), alert tone,
    desktop notification when the tab is not focused; "View incident" → /history?event=<id> opens the drawer.
    Dashboard polls every 15 s + refreshes on `alert` / `system_status` WS messages.
+   **IDS OFF ⇒ dashboard shows no values** (session 27): `DashboardPage` computes `idsOff` from `/ids/status`; KPI
+   cards show "—", Host Status rows "—" (no hostname), Security Summary / Network Traffic / Live chart / Why was this
+   detected / Top Sources / Recent events show `IdsOffNote` ("IDS is off" + links to History and Reports), the IDS
+   widget hides counters + incident panel; only `/ids/status` is polled while off; turning ON refetches everything.
+   History and Reports are unaffected.
 WebSocket auth: a bad/expired token is accepted then closed with **1008** (not a failed handshake).
    `websocketService` gets a fresh token before every (re)connect (`freshAccessToken()` in apiClient),
    refreshes once on 1008, and never stops retrying (30 s max back-off; "Connection error" after 10 tries).
@@ -167,6 +172,11 @@ session tokens**; `loginToken` = JWT type `login`, 15 min, bound to the password
 {loginToken} → new code (60 s cooldown). UI: `LoginForm` step 2 "Check your email" (`#login-code`, Verify and sign in,
 Resend code, Use a different account); `AuthContext.login` returns the challenge, `verifyLogin` signs in.
 **All emailed codes are valid 5 minutes** (`OTP_EXPIRE_MINUTES=5`, also in the owner's `.env`); max 5 tries per code.
+**Code email design (session 27)**: `render_code_email()` in `utils/email.py` — subject `[SecureNet] <Sign-up | Sign-in |
+Password reset | Password change | Profile change> verification code` (like GitHub's), hidden preview line with the
+code, grey "Code requested" panel with one white box per digit, a "Copy code" pill holding the whole code (select +
+copy — emails can't run a real copy button; Gmail adds its own *Copy code* card), expiry + "never share" note.
+Table layout + inline styles only (Gmail/Outlook/phones). Plain-text part still starts "verification code is: NNNNNN".
 
 **Forgot password (3 steps)**: `/forgot-password` → `POST /auth/password/forgot` {email} (generic answer; code only for
 ACTIVE accounts; 60 s cooldown while a code is outstanding) → `POST /auth/password/verify` {email, otp} → `resetToken`
@@ -274,6 +284,11 @@ every time:          double-click START_SECURENET.bat  (right-click → Run as a
 - Electron: `npm run build:frontend` then `npm start` in `desktop\` (backend serves the SPA on :8000).
 
 ## 6. Verification status (2026-09-25)
+- **Session 27 — empty dashboard while OFF + new code email (2026-09-26):** Chrome on the harness (fake capture, one
+  past attack): OFF → 12 "IDS is off" notes, KPI "—", no hostname/counters/attack names on the dashboard, History
+  still lists the attack and Reports still offers the download; ON → values, host network rate and the attack back;
+  0 page errors (screenshot checked). Code email rendered in Chrome at 620 px and 360 px (panel, 6 digit boxes, Copy
+  code pill). Backend **105/105** (+ `test_code_email_design_and_subjects`). tsc/oxlint (0 errors)/build clean.
 - **Session 26 — "IDS IS OFF" status (2026-09-26):** dashboard *Current Status* no longer says NORMAL while the IDS
   is stopped. Chrome on the harness (fake capture): OFF → "IDS IS OFF" + "Press ON to start monitoring", ON →
   NORMAL, OFF again → "IDS IS OFF"; screenshots in peach and dark themes; 0 page errors. tsc/oxlint (0 errors)/build
@@ -495,6 +510,8 @@ every time:          double-click START_SECURENET.bat  (right-click → Run as a
 | P24 | A correct password alone signed you in | Session 25: every sign-in needs a 6-digit code emailed to the account (5-minute codes everywhere) |
 | P25 | A fresh download could clash with the user's PC: tools written to any F: drive, busy ports 8000/5173 taken for SecureNet, empty database never got tables, `.env` had to be written by hand with a placeholder JWT secret accepted | Session 25: `.local` unless the owner's F: folders exist; free-port selection passed to both servers; SETUP creates `.env` (random secret) and runs migrations; placeholder secret refused |
 | P26 | Dashboard *Current Status* showed a green NORMAL while the IDS was OFF (nothing was being watched) | Session 26: neutral grey card "IDS IS OFF" + hint to press ON; NORMAL / attack name only while running; "CHECKING…" before the status loads |
+| P27 | Dashboard kept showing values (host network/uptime/OS, KPIs, charts, recent events) while the IDS was OFF | Session 27: every dashboard card empty with "IDS is off" while stopped; History/Reports unchanged |
+| P28 | Code emails were a plain "Your verification code is" page | Session 27: GitHub-style "[SecureNet] … verification code" email with a Code requested panel, digit boxes and a copyable code |
 | P5 | First start on a fresh install could show the boot error while Vite prepared dependencies | `index.html` retries once automatically before reporting |
 | M14 | No alert notifications | Full notification system (pop-ups, bell feed, sound, desktop, batched emails to registered users, digest, test email) |
 | L1–L4, L6, L7, L9 | Deprecations, no-op middleware, unused deps, stats, clutter, LIKE escaping, unverified build | Fixed / archived |
@@ -559,3 +576,4 @@ every time:          double-click START_SECURENET.bat  (right-click → Run as a
 | 2026-09-25 (24) | **IDS stays on after shutdown/restart + desktop notice** (owner: if the IDS is on when the computer is shut down it should be on again when the computer starts, with one desktop-only notification "SecureNet is on and is monitoring", no email). New `app/services/autostart.py` (state file, Startup `.lnk` via PowerShell WScript.Shell, `resume_after_restart`), `app/utils/desktop.py` (Windows toast, HKCU AppUserModelId `SecureNet.IDS`, text passed via env vars), `backend/scripts/autostart.py` (pythonw launcher, port check, log rotation). `config.py`: `IDS_AUTOSTART`, `IDS_STATE_FILE`, `IDS_STARTUP_DIR`, `DESKTOP_NOTIFICATIONS` (+ `.env.example`); `ids.py` remembers ON/OFF; `main.py` lifespan starts/cancels the resume task; `backend/.gitignore` `data/`; conftest + harness use temp dirs and no pop-ups (harness `HARNESS_FAKE_CAPTURE=1`). Guide text updated (restart behaviour; password change by code). 94/94 pytest, harness restart simulation, real shortcut start on Neon. Real app relaunched via the launcher. Not committed. |
 | 2026-09-26 (25) | **Sign-in with an emailed code, 5-minute codes, portable download, GitHub README** (owner: OTP for login and for personal-detail changes, code expiry 5 minutes; proper README with download/run steps; must not clash when run locally by others; push to GitHub). Personal-detail changes already required a code (session 18) — re-verified. Backend: `LOGIN_TOKEN_TYPE` + `create_login_token`, `LoginChallenge`/`LoginVerifyRequest`/`LoginResendRequest`, `send_login_code_email`, `/auth/login` → challenge, new `/auth/login/verify` + `/auth/login/resend`; `OTP_EXPIRE_MINUTES` 10 → 5 (config default, owner `.env`, `.env.example`); JWT secret validator. Frontend: `LoginChallenge` type, `verifyLogin`/`resendLoginCode`, AuthContext `login` → challenge + `verifyLogin`, `LoginForm` code step; guide step "Sign in safely". Portability: `securenet-env.ps1` (F: only if the owner's folders exist; port helpers), `START_SECURENET.ps1` (free ports, env for both servers, `-NoBrowser`), `SETUP.ps1` (creates `.env` with random secret), `check_setup.py` (example-URL check, `alembic upgrade head`), `scripts/autostart.py` (saved ports). Docs: new root `README.md`, `backend/README.md` refreshed. Tests: 104/104 pytest, Chrome 10/10 + 42/43, API 84/84, fresh-download + port-clash runs. Committed and pushed to GitHub. |
 | 2026-09-26 (26) | **"IDS IS OFF" instead of NORMAL** (owner: when detection is off it should not show normal). `IDSControlWidget.tsx`: status = IDS IS OFF while stopped (ShieldOff icon, hint "Your network is not being watched. Press ON to start monitoring."), NORMAL / latest unresolved attack only while running, CHECKING… / STATUS UNKNOWN before the status arrives; `.statusOff` + `.statusHint` in `IDSControlWidget.module.css` (theme tokens only). Chrome check on the harness in both themes. Committed and pushed to GitHub. |
+| 2026-09-26 (27) | **Dashboard empty while the IDS is OFF + GitHub-style code emails** (owner: when the IDS is off nothing on the dashboard should have values — only detection is off, History/Reports keep working; make the OTP email look like GitHub's "Code requested" email; update CLAUDE.md + README; push). Frontend: new `components/dashboard/IdsOffNote.tsx` (+ css), `idsOff` prop on HostStatusCard, SecuritySummaryCard, ProtocolDistributionCard, TopSourcesCard, DetectionReasonCard, RecentEventsTable, LiveAnomalyChart; IDSControlWidget hides counters/incident while off; DashboardPage `idsOff` / `idsPending`, polls only the IDS status while off and refetches when it turns on. Backend: `render_code_email()` + `_send_code(email, code, purpose, next_step)` with the new subjects; test added (105/105). README features/usage updated. Committed and pushed to GitHub. |

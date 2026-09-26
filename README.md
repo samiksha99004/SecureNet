@@ -30,7 +30,8 @@ unusual traffic flows, then **XGBoost** names the attack type (categories from t
 ## Features
 
 - **Live monitoring**: turn the IDS **ON / OFF** from the dashboard; live score graph, traffic counters and
-  a status card.
+  a status card. While the IDS is **OFF** the dashboard shows no values at all (every card says
+  *"IDS is off"*); past events stay available in History and Reports.
 - **Instant alerts**: on-screen pop-ups, a notification bell, an alert sound and Windows desktop notifications.
 - **Email alerts**: every registered user gets an email for each attack (grouped into one email when there
   are many), with the incident report attached. The admin gets a detailed copy.
@@ -38,7 +39,9 @@ unusual traffic flows, then **XGBoost** names the attack type (categories from t
 - **Incident history**: search, filter, sort and export every detected event.
 - **Safe accounts**: every sign-up, **every sign-in**, every password change and every change to your
   personal details is confirmed with a **6-digit code sent to your email** (valid for 5 minutes).
-  Repeated wrong passwords or codes are blocked.
+  The email, *"[SecureNet] Sign-in verification code"*, shows the code in a **"Code requested"** panel
+  with one box per digit plus the whole code ready to select and copy; Gmail also adds its own
+  *Copy code* button to such emails. Repeated wrong passwords or codes are blocked.
 - **Stays on**: if you shut down the computer while the IDS is ON, it turns itself back on when you
   start the computer again and shows *"SecureNet is on and is monitoring."*
 - **Two roles**: the **Admin** configures detection, email alerts and the whitelist; every other account is a
@@ -182,8 +185,10 @@ right-click → **Run as administrator**.
 2. **Sign in**: email + password → enter the **sign-in code** from your email (it works for 5 minutes;
    *Resend code* is available after a minute).
 3. **Turn the IDS on**: Dashboard → **ON**. Alerts appear as pop-ups, in the bell, as Windows
-   notifications and by email.
-4. **Look back**: *History* lists every incident; *Reports* has one downloadable report per day with attacks.
+   notifications and by email. While the IDS is OFF the dashboard stays empty ("IDS is off") —
+   nothing is being watched, so it shows no values.
+4. **Look back** (works whether the IDS is on or off): *History* lists every incident; *Reports* has one
+   downloadable report per day with attacks.
 5. **Your account**: *Account* → change your name, phone, email or password (each confirmed with an
    emailed code).
 6. **Admin only**: *Settings* → Detection (sensitivity), Email Alerts (who gets what, test email),

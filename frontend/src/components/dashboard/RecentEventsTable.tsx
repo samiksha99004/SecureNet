@@ -13,6 +13,7 @@ import type { SecurityEvent } from '../../types/security.types';
 import { SeverityBadge } from '../common/SeverityBadge';
 import { StatusBadge } from '../common/StatusBadge';
 import { EmptyState } from '../common/EmptyState';
+import { IdsOffNote } from './IdsOffNote';
 import { LoadingState } from '../common/LoadingState';
 import { formatTimestamp, formatScore } from '../../utils/format';
 import styles from './RecentEventsTable.module.css';
@@ -20,9 +21,11 @@ import styles from './RecentEventsTable.module.css';
 interface RecentEventsTableProps {
   events: SecurityEvent[];
   isLoading: boolean;
+  /** IDS is OFF: no live values on the dashboard (past events: History / Reports) */
+  idsOff?: boolean;
 }
 
-export function RecentEventsTable({ events, isLoading }: RecentEventsTableProps) {
+export function RecentEventsTable({ events, isLoading, idsOff = false }: RecentEventsTableProps) {
   return (
     <div className={styles.card}>
       <div className={styles.header}>
@@ -32,16 +35,18 @@ export function RecentEventsTable({ events, isLoading }: RecentEventsTableProps)
         </Link>
       </div>
 
-      {isLoading && <LoadingState message="Loading recent events…" />}
+      {idsOff && <IdsOffNote what="events" />}
 
-      {!isLoading && events.length === 0 && (
+      {!idsOff && isLoading && <LoadingState message="Loading recent events…" />}
+
+      {!idsOff && !isLoading && events.length === 0 && (
         <EmptyState
           title="No security events available."
           description="No security events have been recorded yet."
         />
       )}
 
-      {!isLoading && events.length > 0 && (
+      {!idsOff && !isLoading && events.length > 0 && (
         <div className={styles.tableWrapper} role="region" aria-label="Recent security events">
           <table className={styles.table}>
             <thead>

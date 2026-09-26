@@ -10,6 +10,7 @@ import type { DashboardSummary } from '../../types/security.types';
 import { LoadingState } from '../common/LoadingState';
 import { ErrorState } from '../common/ErrorState';
 import { EmptyState } from '../common/EmptyState';
+import { IdsOffNote } from './IdsOffNote';
 import styles from './SecuritySummaryCard.module.css';
 
 interface SecuritySummaryCardProps {
@@ -17,6 +18,8 @@ interface SecuritySummaryCardProps {
   isLoading: boolean;
   isError: boolean;
   onRetry?: () => void;
+  /** IDS is OFF: no live values on the dashboard */
+  idsOff?: boolean;
 }
 
 interface SeverityBarProps {
@@ -52,7 +55,16 @@ export function SecuritySummaryCard({
   isLoading,
   isError,
   onRetry,
+  idsOff = false,
 }: SecuritySummaryCardProps) {
+  if (idsOff) {
+    return (
+      <div className={styles.card}>
+        <h3 className={styles.title}>Security Summary</h3>
+        <IdsOffNote what="summary" />
+      </div>
+    );
+  }
   const total = data
     ? data.severityBreakdown.low +
       data.severityBreakdown.medium +

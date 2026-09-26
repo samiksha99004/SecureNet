@@ -146,7 +146,7 @@ export function IDSControlWidget({
           </div>
         </div>
 
-        {hasAbnormalEvent && latestEvent && (
+        {!isOff && hasAbnormalEvent && latestEvent && (
           <div className={styles.incidentDetails}>
             <h3 className={styles.incidentTitle}>Latest Unresolved Incident</h3>
             <div className={styles.incidentGrid}>
@@ -175,8 +175,8 @@ export function IDSControlWidget({
         )}
       </div>
 
-      {/* ── Live counters ─────────────────────────────────────────────────── */}
-      {idsStatus && (
+      {/* ── Live counters (only while the IDS runs) ─────────────────────────── */}
+      {idsStatus && !isOff && (
         <div className={styles.statsRow}>
           <Stat label="Packets" value={idsStatus.packetsProcessed} />
           <Stat label="Flows Analyzed" value={idsStatus.flowsAnalyzed} />

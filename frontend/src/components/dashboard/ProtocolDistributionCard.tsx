@@ -9,6 +9,7 @@ import { PieChart, Pie, Cell, Tooltip, Legend, ResponsiveContainer } from 'recha
 import type { ProtocolDistribution } from '../../types/security.types';
 import { LoadingState } from '../common/LoadingState';
 import { EmptyState } from '../common/EmptyState';
+import { IdsOffNote } from './IdsOffNote';
 import { ErrorState } from '../common/ErrorState';
 import styles from './ProtocolDistributionCard.module.css';
 
@@ -17,6 +18,8 @@ interface ProtocolDistributionCardProps {
   isLoading: boolean;
   isError: boolean;
   onRetry?: () => void;
+  /** IDS is OFF: no live values on the dashboard */
+  idsOff?: boolean;
 }
 
 const PROTOCOL_COLORS = {
@@ -31,7 +34,16 @@ export function ProtocolDistributionCard({
   isLoading,
   isError,
   onRetry,
+  idsOff = false,
 }: ProtocolDistributionCardProps) {
+  if (idsOff) {
+    return (
+      <div className={styles.card}>
+        <h3 className={styles.title}>Network Traffic</h3>
+        <IdsOffNote what="traffic data" />
+      </div>
+    );
+  }
   const chartData = data
     ? [
         { name: 'TCP',   value: data.tcp   },

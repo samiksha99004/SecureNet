@@ -7,6 +7,7 @@ configured, callers get EmailDeliveryError — nothing is faked or printed.
 """
 
 import asyncio
+import html as html_mod
 import smtplib
 from dataclasses import dataclass
 from email.mime.application import MIMEApplication
@@ -109,48 +110,91 @@ async def send_email(recipients: Iterable[str], subject: str, text: str, html: s
     logger.info(f"Email sent to {len(rcpts)} recipient(s): {subject}")
 
 
-async def _send_code(email: str, code: str, subject: str, heading: str, next_step: str) -> None:
+def render_code_email(code: str, heading: str, next_step: str) -> tuple[str, str]:
+    """(text, html) of a verification-code email.
+
+    Layout like the big services' code emails: a grey "Code requested" panel
+    with every digit in its own box, then the one-line code that can be
+    selected and copied in one go. Table-based with inline styles only, so
+    Gmail / Outlook / phone mail apps show it the same way. (Gmail adds its
+    own "Copy code" button for emails like this; an email cannot contain a
+    working copy button itself.)
+    """
+    app = html_mod.escape(settings.APP_NAME)
+    minutes = settings.OTP_EXPIRE_MINUTES
     text = (
         f"Your {settings.APP_NAME} verification code is: {code}\n\n"
         f"{next_step}\n"
-        f"This code will expire in {settings.OTP_EXPIRE_MINUTES} minutes.\n"
-        "If you didn't request this code, please ignore this email."
+        f"This code expires in {minutes} minutes and works only once.\n"
+        "If you didn't request this code, you can ignore this email."
     )
-    html = f"""
-    <html><body style="font-family:Arial,sans-serif">
-      <h2>{settings.APP_NAME} - {heading}</h2>
-      <p>Your verification code is:</p>
-      <h1 style="font-size:32px;letter-spacing:8px;color:#0ea5e9;">{code}</h1>
-      <p>{next_step}</p>
-      <p>This code will expire in {settings.OTP_EXPIRE_MINUTES} minutes.</p>
-      <p>If you didn't request this code, please ignore this email.</p>
-    </body></html>
-    """
-    await send_email([email], f"{settings.APP_NAME} - {subject}", text, html)
+    digits = "".join(
+        '<td style="padding:0 3px">'
+        '<div style="width:34px;height:44px;line-height:44px;background:#ffffff;border:1px solid #d9dee6;'
+        "border-radius:6px;text-align:center;font-family:Consolas,'Courier New',monospace;font-size:24px;"
+        f'color:#1f2328">{html_mod.escape(ch)}</div></td>'
+        for ch in code
+    )
+    body = f"""<!DOCTYPE html>
+<html><body style="margin:0;padding:0;background:#ffffff;font-family:Arial,Helvetica,sans-serif;color:#1f2328">
+<div style="display:none;max-height:0;overflow:hidden">Your {app} verification code is {code}</div>
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#ffffff">
+  <tr><td align="center" style="padding:24px 12px">
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:520px">
+      <tr><td style="font-size:20px;font-weight:bold;color:#c2562f;padding:0 0 4px">&#128737; {app}</td></tr>
+      <tr><td style="font-size:22px;padding:4px 0 16px">{html_mod.escape(heading)} verification code</td></tr>
+      <tr><td style="background:#eef1f6;border-radius:12px;padding:20px 22px">
+        <div style="font-size:15px;color:#3d444d;margin:0 0 12px">Code requested</div>
+        <table role="presentation" cellpadding="0" cellspacing="0" style="margin:0 0 16px -3px"><tr>{digits}</tr></table>
+        <div style="font-size:13px;color:#59636e;margin:0 0 6px">Copy code</div>
+        <div style="display:inline-block;background:#0969da;color:#ffffff;border-radius:22px;padding:10px 22px;
+                    font-family:Consolas,'Courier New',monospace;font-size:18px;font-weight:bold;letter-spacing:2px">{code}</div>
+        <div style="font-size:12px;color:#59636e;margin:8px 0 0">Tap or double-click the code to select it, then copy.</div>
+      </td></tr>
+      <tr><td style="font-size:14px;line-height:1.5;padding:18px 2px 0">
+        <p style="margin:0 0 10px">{html_mod.escape(next_step)}</p>
+        <p style="margin:0 0 10px">This code expires in <b>{minutes} minutes</b> and works only once.</p>
+        <p style="margin:0;color:#59636e">If you didn't request this code, you can ignore this email.
+           Never share this code with anyone.</p>
+      </td></tr>
+      <tr><td style="font-size:12px;color:#8c959f;padding:24px 2px 0;border-top:1px solid #e6e9ee">
+        Sent by {app} - Behavioural Intrusion Detection System</td></tr>
+    </table>
+  </td></tr>
+</table>
+</body></html>"""
+    return text, body
+
+
+async def _send_code(email: str, code: str, purpose: str, next_step: str) -> None:
+    """Email a code. Subject "[SecureNet] <purpose> verification code" (like GitHub's), which
+    also helps mail apps recognise it as a code email."""
+    text, body = render_code_email(code, purpose, next_step)
+    await send_email([email], f"[{settings.APP_NAME}] {purpose} verification code", text, body)
 
 
 async def send_otp_email(email: str, otp_code: str) -> None:
     """Registration code. Raises EmailDeliveryError if it cannot be sent."""
-    await _send_code(email, otp_code, "Verification Code", "Email Verification",
+    await _send_code(email, otp_code, "Sign-up",
                      f"Enter it on the {settings.APP_NAME} sign-up page, then create your password.")
 
 
 async def send_password_reset_email(email: str, otp_code: str) -> None:
     """Forgot-password code. Raises EmailDeliveryError if it cannot be sent."""
-    await _send_code(email, otp_code, "Password Reset Code", "Password Reset",
+    await _send_code(email, otp_code, "Password reset",
                      f"Enter it on the {settings.APP_NAME} forgot-password page, then choose a new password.")
 
 
 async def send_login_code_email(email: str, otp_code: str) -> None:
     """Sign-in code (second step after the password). Raises EmailDeliveryError."""
-    await _send_code(email, otp_code, "Your sign-in code", "Sign-in Code",
+    await _send_code(email, otp_code, "Sign-in",
                      f"Your password was just entered on the {settings.APP_NAME} sign-in page. Enter this code to "
                      "finish signing in. If this was not you, change your password right away - someone knows it.")
 
 
 async def send_password_change_email(email: str, otp_code: str) -> None:
     """Code confirming a signed-in user's password change. Raises EmailDeliveryError."""
-    await _send_code(email, otp_code, "Confirm your password change", "Password Change",
+    await _send_code(email, otp_code, "Password change",
                      f"Someone signed in to your {settings.APP_NAME} account asked to change its password. Enter "
                      "this code on the Account page to confirm. If this was not you, ignore this email, keep your "
                      f"password and tell the {settings.APP_NAME} admin.")
@@ -158,6 +202,6 @@ async def send_password_change_email(email: str, otp_code: str) -> None:
 
 async def send_profile_change_email(email: str, otp_code: str, summary: str) -> None:
     """Code confirming a change of the user's own details. Raises EmailDeliveryError."""
-    await _send_code(email, otp_code, "Confirm your profile change", "Profile Change",
+    await _send_code(email, otp_code, "Profile change",
                      f"You asked to change your {summary}. Enter this code on the {settings.APP_NAME} Account page "
                      "to confirm. If this was not you, ignore this email and nothing will change.")

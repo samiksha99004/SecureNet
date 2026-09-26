@@ -9,6 +9,7 @@
 import type { TopSource } from '../../types/security.types';
 import { LoadingState } from '../common/LoadingState';
 import { EmptyState } from '../common/EmptyState';
+import { IdsOffNote } from './IdsOffNote';
 import { ErrorState } from '../common/ErrorState';
 import { SeverityBadge } from '../common/SeverityBadge';
 import { formatTimestamp } from '../../utils/format';
@@ -19,6 +20,8 @@ interface TopSourcesCardProps {
   isLoading: boolean;
   isError: boolean;
   onRetry?: () => void;
+  /** IDS is OFF: no live values on the dashboard */
+  idsOff?: boolean;
 }
 
 export function TopSourcesCard({
@@ -26,7 +29,16 @@ export function TopSourcesCard({
   isLoading,
   isError,
   onRetry,
+  idsOff = false,
 }: TopSourcesCardProps) {
+  if (idsOff) {
+    return (
+      <div className={styles.card}>
+        <h3 className={styles.title}>Top Sources</h3>
+        <IdsOffNote what="sources" />
+      </div>
+    );
+  }
   return (
     <div className={styles.card}>
       <h3 className={styles.title}>Top Sources</h3>

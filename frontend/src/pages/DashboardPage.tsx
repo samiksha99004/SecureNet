@@ -13,6 +13,10 @@
  *
  * All data fetched from services — no hardcoded values.
  * Components show loading/empty/error states appropriately.
+ *
+ * While the IDS is OFF the dashboard shows no values at all (every card says
+ * "IDS is off" and only the IDS status is polled); past events stay in
+ * History and Reports. Turning it ON loads everything again.
  */
 
 import { useCallback, useEffect, useRef, Suspense, lazy } from 'react';
@@ -60,17 +64,29 @@ export function DashboardPage() {
   const idsStatus = useAsyncData(useCallback(() => getIDSStatus(), []));
   const detection = useAsyncData(useCallback(() => getDetectionSettings(), []));
 
+  // IDS OFF (known) → no live values anywhere on the dashboard
+  const idsOff = idsStatus.data !== null && !idsStatus.data.enabled;
+  const idsPending = idsStatus.data === null && idsStatus.isLoading;
+
   // Latest "refresh everything" callback, kept in a ref for timers / socket events
   const refetchAll = useRef<() => void>(() => {});
   useEffect(() => {
     refetchAll.current = () => {
+      void idsStatus.refetch();
+      if (idsOff) return; // nothing else is shown while the IDS is off
       void summary.refetch();
       void host.refetch();
       void protocol.refetch();
       void sources.refetch();
-      void idsStatus.refetch();
     };
   });
+
+  // IDS just turned ON: load fresh values straight away
+  const wasOff = useRef(idsOff);
+  useEffect(() => {
+    if (wasOff.current && !idsOff) refetchAll.current();
+    wasOff.current = idsOff;
+  }, [idsOff]);
 
   // Periodic refresh (keeps host metrics and counters current)
   useEffect(() => {
@@ -95,7 +111,9 @@ export function DashboardPage() {
   const refetchIds = idsStatus.refetch;
   useWebSocketMessage('system_status', useCallback(() => void refetchIds(), [refetchIds]));
 
-  const s = summary.data;
+  const s = idsOff ? null : summary.data;
+  const kpiLoading = idsPending || (!idsOff && summary.isLoading);
+  const kpiValue = (v: string | null) => (idsOff ? '—' : v);
 
   // The highest-scoring recent event drives the Detection Reason card.
   const topRecentEvent = s?.recentEvents.length
@@ -127,31 +145,31 @@ export function DashboardPage() {
         >
           <KPICard
             title="Active Flows"
-            value={s ? formatNumber(s.activeFlows) : null}
+            value={kpiValue(s ? formatNumber(s.activeFlows) : null)}
             icon={<Activity size={16} />}
             accent="info"
-            isLoading={summary.isLoading}
+            isLoading={kpiLoading}
           />
           <KPICard
             title="Anomalies — Last 1 Hour"
-            value={s ? formatNumber(s.anomaliesLastHour) : null}
+            value={kpiValue(s ? formatNumber(s.anomaliesLastHour) : null)}
             icon={<AlertTriangle size={16} />}
             accent="medium"
-            isLoading={summary.isLoading}
+            isLoading={kpiLoading}
           />
           <KPICard
             title="High Severity"
-            value={s ? formatNumber(s.highSeverityCount) : null}
+            value={kpiValue(s ? formatNumber(s.highSeverityCount) : null)}
             icon={<ShieldAlert size={16} />}
             accent="high"
-            isLoading={summary.isLoading}
+            isLoading={kpiLoading}
           />
           <KPICard
             title="Avg Anomaly Score"
-            value={s ? formatScore(s.averageAnomalyScore) : null}
+            value={kpiValue(s ? formatScore(s.averageAnomalyScore) : null)}
             icon={<BarChart2 size={16} />}
             accent="default"
-            isLoading={summary.isLoading}
+            isLoading={kpiLoading}
           />
         </section>
 
@@ -159,28 +177,31 @@ export function DashboardPage() {
         <section className={styles.statusGrid} aria-label="System status">
           <HostStatusCard
             data={host.data}
-            isLoading={host.isLoading}
+            isLoading={idsPending || host.isLoading}
             isError={host.isError}
             onRetry={host.refetch}
+            idsOff={idsOff}
           />
           <SecuritySummaryCard
             data={summary.data}
-            isLoading={summary.isLoading}
+            isLoading={idsPending || summary.isLoading}
             isError={summary.isError}
             onRetry={summary.refetch}
+            idsOff={idsOff}
           />
           <ProtocolDistributionCard
             data={protocol.data}
-            isLoading={protocol.isLoading}
+            isLoading={idsPending || protocol.isLoading}
             isError={protocol.isError}
             onRetry={protocol.refetch}
+            idsOff={idsOff}
           />
         </section>
 
         {/* ── Row 3: Live chart ────────────────────────────────────────────── */}
         <section aria-label="Live anomaly monitoring">
           <Suspense fallback={<LoadingState message="Loading live chart..." />}>
-            <LiveAnomalyChart threshold={detection.data?.anomalyThreshold ?? 0.5} />
+            <LiveAnomalyChart threshold={detection.data?.anomalyThreshold ?? 0.5} idsOff={idsOff} />
           </Suspense>
         </section>
 
@@ -191,12 +212,14 @@ export function DashboardPage() {
             features={topRecentEvent?.contributingFeatures ?? []}
             attackType={topRecentEvent?.attackType ?? null}
             confidence={topRecentEvent?.confidence ?? null}
+            idsOff={idsOff}
           />
           <TopSourcesCard
             data={sources.data ?? []}
-            isLoading={sources.isLoading}
+            isLoading={idsPending || sources.isLoading}
             isError={sources.isError}
             onRetry={sources.refetch}
+            idsOff={idsOff}
           />
         </section>
 
@@ -204,7 +227,8 @@ export function DashboardPage() {
         <section aria-label="Recent security events">
           <RecentEventsTable
             events={s?.recentEvents ?? []}
-            isLoading={summary.isLoading}
+            isLoading={idsPending || summary.isLoading}
+            idsOff={idsOff}
           />
         </section>
 

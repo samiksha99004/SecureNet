@@ -10,6 +10,7 @@
 
 import type { ContributingFeature } from '../../types/security.types';
 import { EmptyState } from '../common/EmptyState';
+import { IdsOffNote } from './IdsOffNote';
 import { Lightbulb } from 'lucide-react';
 import styles from './DetectionReasonCard.module.css';
 
@@ -18,6 +19,8 @@ interface DetectionReasonCardProps {
   features: ContributingFeature[];
   attackType: string | null;
   confidence: number | null;
+  /** IDS is OFF: no live values on the dashboard */
+  idsOff?: boolean;
 }
 
 export function DetectionReasonCard({
@@ -25,6 +28,7 @@ export function DetectionReasonCard({
   features,
   attackType,
   confidence,
+  idsOff = false,
 }: DetectionReasonCardProps) {
   const hasData = features.length > 0 || reason !== null;
 
@@ -35,7 +39,9 @@ export function DetectionReasonCard({
         <h3 className={styles.title}>Why was this detected?</h3>
       </div>
 
-      {attackType && (
+      {idsOff && <IdsOffNote what="detection details" />}
+
+      {!idsOff && attackType && (
         <div className={styles.meta}>
           <span className={styles.attackLabel}>
             {attackType}
@@ -48,11 +54,11 @@ export function DetectionReasonCard({
         </div>
       )}
 
-      {reason && (
+      {!idsOff && reason && (
         <p className={styles.reason}>{reason}</p>
       )}
 
-      {!hasData ? (
+      {idsOff ? null : !hasData ? (
         <EmptyState
           title="No detection data"
           description="Select an event to see why it was flagged."

@@ -74,10 +74,30 @@ function AlertDot({ cx, cy, payload }: AlertDotProps) {
 interface LiveAnomalyChartProps {
   /** Current detection threshold θ (from Settings → Detection) */
   threshold?: number;
+  /** IDS is OFF: no live scores */
+  idsOff?: boolean;
 }
 
-export function LiveAnomalyChart({ threshold = 0.5 }: LiveAnomalyChartProps) {
+export function LiveAnomalyChart({ threshold = 0.5, idsOff = false }: LiveAnomalyChartProps) {
   const { status, chartData, lastScore, isConnecting } = useLiveMonitoring();
+
+  if (idsOff) {
+    return (
+      <div className={styles.card}>
+        <div className={styles.header}>
+          <div className={styles.headerLeft}>
+            <h3 className={styles.title}>Live Anomaly Score</h3>
+          </div>
+        </div>
+        <div className={styles.chartArea}>
+          <div className={styles.overlayMessage}>
+            <p className={styles.waitingText}>IDS is off</p>
+            <p className={styles.unavailableSubtext}>Live scores appear here while the IDS is ON.</p>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   const isUnavailable =
     status === 'disconnected' || status === 'error';
