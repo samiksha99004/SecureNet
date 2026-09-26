@@ -9,6 +9,10 @@ import styles from './GuideCard.module.css';
 
 const STEPS: { title: string; text: string }[] = [
   {
+    title: 'Sign in safely',
+    text: 'Enter your email and password, then the 6-digit code we email you. The code works for 5 minutes; if it does not arrive, press “Resend code” (and check your spam folder).',
+  },
+  {
     title: 'Turn the IDS on',
     text: 'On the Dashboard, press the ON/OFF button. While it is ON, SecureNet watches your network. If you shut down the computer while it is ON, it turns itself back on when you start the computer and a desktop notice says "SecureNet is on and is monitoring."',
   },

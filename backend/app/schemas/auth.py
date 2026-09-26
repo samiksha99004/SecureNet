@@ -148,6 +148,22 @@ class ProfileChangeConfirm(CamelModel):
     otp: str = Field(..., min_length=6, max_length=6, pattern=r"^\d{6}$")
 
 
+class LoginChallenge(CamelModel):
+    """Right email + password: a sign-in code was emailed; send it back with `login_token`."""
+    login_token: str
+    sent_to: str
+    message: str
+
+
+class LoginVerifyRequest(CamelModel):
+    login_token: str = Field(..., min_length=10)
+    otp: str = Field(..., min_length=6, max_length=6, pattern=r"^\d{6}$")
+
+
+class LoginResendRequest(CamelModel):
+    login_token: str = Field(..., min_length=10)
+
+
 class ChangePasswordRequest(CamelModel):
     """Step 1 of a password change: checked, then a code is emailed to the registered address."""
     current_password: str = Field(..., min_length=1)

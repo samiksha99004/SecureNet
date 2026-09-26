@@ -1,6 +1,8 @@
 # Shared helpers for SETUP.ps1 / START_SECURENET.ps1 / backend\setup.ps1 (dot-source this file).
-# Works on any Windows PC: tools and caches go to F: when that drive exists (owner's rule on the
-# original PC), otherwise to <project>\.local so nothing is scattered over C:.
+# Works on any Windows PC: tools and caches go to <project>\.local so nothing is scattered over C:
+# and nothing is written to other drives. Only on the original development PC, which already keeps
+# them in F:\tools / F:\dev-cache (owner's rule), are those folders reused. On another PC an F:
+# drive may be a USB stick or DVD drive, so its mere existence is not enough.
 
 $Script:RepoRoot = Split-Path -Parent $PSScriptRoot
 $Script:BackendDir = Join-Path $RepoRoot 'backend'
@@ -9,7 +11,7 @@ $Script:FrontendDir = Join-Path $RepoRoot 'frontend'
 function Get-SecureNetDirs {
     if ($env:SECURENET_TOOLS_DIR) {
         $tools = $env:SECURENET_TOOLS_DIR; $cache = Join-Path $tools 'cache'
-    } elseif (Test-Path 'F:\') {
+    } elseif ((Test-Path 'F:\tools\node\node.exe') -or (Test-Path 'F:\dev-cache\pip')) {
         $tools = 'F:\tools'; $cache = 'F:\dev-cache'
     } else {
         $tools = Join-Path $RepoRoot '.local\tools'; $cache = Join-Path $RepoRoot '.local\cache'
@@ -71,4 +73,45 @@ function Test-SecureNetVenv {
 
 function Test-SecureNetFrontendDeps {
     return (Test-Path (Join-Path $FrontendDir 'node_modules\.bin\vite.cmd'))
+}
+
+# ── Ports: 8000 (backend) / 5173 (dashboard), unless another program already uses them ──
+# The ports SecureNet last used are kept in backend\data\ports.json, so the Windows start-up entry
+# (backend\scripts\autostart.py) starts the backend on the same port the dashboard talks to.
+$Script:PortsFile = Join-Path $BackendDir 'data\ports.json'
+
+function Test-PortInUse([int]$port) {
+    [bool](Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction SilentlyContinue)
+}
+
+function Test-SecureNetBackend([int]$port) {
+    try {
+        $r = Invoke-RestMethod "http://127.0.0.1:$port/health" -TimeoutSec 15
+        return ($null -ne $r.ids -and $null -ne $r.detector)
+    } catch { return $false }
+}
+
+function Test-SecureNetDashboard([int]$port) {
+    try {
+        return ((Invoke-WebRequest "http://localhost:$port" -UseBasicParsing -TimeoutSec 10).Content -match '<title>SecureNet')
+    } catch { return $false }
+}
+
+# First port from $preferred..$last that is free (Running = $false) or already SecureNet (Running = $true).
+function Select-SecureNetPort([int]$preferred, [int]$last, [scriptblock]$isSecureNet) {
+    for ($p = $preferred; $p -le $last; $p++) {
+        if (-not (Test-PortInUse $p)) { return [pscustomobject]@{ Port = $p; Running = $false } }
+        if (& $isSecureNet $p) { return [pscustomobject]@{ Port = $p; Running = $true } }
+        Write-Host "Port $p is used by another program - trying the next one." -ForegroundColor Yellow
+    }
+    return $null
+}
+
+function Read-SecureNetPorts {
+    try { return (Get-Content $PortsFile -Raw -ErrorAction Stop | ConvertFrom-Json) } catch { return $null }
+}
+
+function Save-SecureNetPorts([int]$backend, [int]$frontend) {
+    New-Item -ItemType Directory -Force (Split-Path $PortsFile) | Out-Null
+    [IO.File]::WriteAllText($PortsFile, (@{ backend = $backend; frontend = $frontend } | ConvertTo-Json))
 }

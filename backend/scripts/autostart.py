@@ -6,15 +6,17 @@ pythonw.exe, so there is no window. It starts the SecureNet backend in the
 background; the backend sees that the IDS was on, turns it back on and shows
 one desktop notification. Output goes to backend/logs/autostart.log.
 Does nothing when a SecureNet backend is already running.
+Uses the ports START_SECURENET last chose (backend/data/ports.json), so the
+dashboard finds the backend even when 8000/5173 belong to other programs.
 """
 
+import json
 import os
 import socket
 import sys
 from pathlib import Path
 
 BACKEND = Path(__file__).resolve().parents[1]
-PORT = 8000
 MAX_LOG_BYTES = 5 * 1024 * 1024
 
 os.chdir(BACKEND)
@@ -28,6 +30,17 @@ if log_path.exists() and log_path.stat().st_size > MAX_LOG_BYTES:
 # pythonw has no console: everything (including the app's logger) goes to the file
 sys.stdout = sys.stderr = open(log_path, "a", encoding="utf-8", buffering=1)
 
+try:
+    saved = json.loads((BACKEND / "data" / "ports.json").read_text(encoding="utf-8-sig"))
+except (OSError, ValueError):
+    saved = {}
+PORT = int(saved.get("backend") or 8000)
+DASHBOARD_PORT = int(saved.get("frontend") or 5173)
+# same settings the launcher passes (environment variables win over backend/.env)
+os.environ["PORT"] = str(PORT)
+os.environ["CORS_ORIGINS"] = f"http://localhost:{DASHBOARD_PORT},http://127.0.0.1:{DASHBOARD_PORT}"
+os.environ["DASHBOARD_URL"] = f"http://localhost:{DASHBOARD_PORT}"
+
 
 def port_in_use(port: int) -> bool:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
@@ -36,7 +49,7 @@ def port_in_use(port: int) -> bool:
 
 
 if port_in_use(PORT):
-    print(f"SecureNet backend already running on port {PORT} - nothing to do.")
+    print(f"Port {PORT} is already in use (SecureNet is running, or another program took the port) - nothing to do.")
     sys.exit(0)
 
 import uvicorn  # noqa: E402

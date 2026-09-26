@@ -8,6 +8,7 @@
 
 import { apiClient, tokenStore } from './apiClient';
 import type {
+  LoginChallenge,
   LoginRequest,
   SignupRequest,
   OtpVerifyRequest,
@@ -105,10 +106,21 @@ export function getSetupToken(): string {
 // ── Auth API Calls ────────────────────────────────────────────────────────────
 
 /** POST /auth/login */
-export async function login(request: LoginRequest): Promise<AuthResponse> {
-  const response = await apiClient.post<AuthResponse>('/auth/login', request, { skipAuth: true });
+/** POST /auth/login — step 1: email + password; a sign-in code is emailed (no session yet). */
+export async function login(request: LoginRequest): Promise<LoginChallenge> {
+  return apiClient.post<LoginChallenge>('/auth/login', request, { skipAuth: true });
+}
+
+/** POST /auth/login/verify — step 2: the emailed code; stores the session. */
+export async function verifyLogin(loginToken: string, otp: string): Promise<AuthResponse> {
+  const response = await apiClient.post<AuthResponse>('/auth/login/verify', { loginToken, otp }, { skipAuth: true });
   storeSession(response);
   return response;
+}
+
+/** POST /auth/login/resend — a new sign-in code (at most one per minute). */
+export async function resendLoginCode(loginToken: string): Promise<MessageResponse> {
+  return apiClient.post<MessageResponse>('/auth/login/resend', { loginToken }, { skipAuth: true });
 }
 
 /** POST /auth/signup — step 1: sends a verification code to the email address. */

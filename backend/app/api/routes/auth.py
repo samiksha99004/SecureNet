@@ -18,12 +18,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.dependencies import get_current_user
 from app.core.config import settings
 from app.core.security import (
+    LOGIN_TOKEN_TYPE,
     PASSWORD_CHANGE_TOKEN_TYPE,
     REFRESH_TOKEN_TYPE,
     PROFILE_TOKEN_TYPE,
     RESET_TOKEN_TYPE,
     SIGNUP_TOKEN_TYPE,
     create_access_token,
+    create_login_token,
     create_password_change_token,
     create_profile_token,
     create_refresh_token,
@@ -46,7 +48,10 @@ from app.schemas.auth import (
     ChangePasswordRequest,
     CompleteSignupRequest,
     ForgotPasswordRequest,
+    LoginChallenge,
     LoginRequest,
+    LoginResendRequest,
+    LoginVerifyRequest,
     OtpResendRequest,
     OtpVerifyRequest,
     OtpVerifyResponse,
@@ -64,6 +69,7 @@ from app.utils.email import (
     EmailDeliveryError,
     email_delivery_status,
     send_email,
+    send_login_code_email,
     send_otp_email,
     send_password_change_email,
     send_password_reset_email,
@@ -253,9 +259,13 @@ async def complete_signup(request: CompleteSignupRequest, db: AsyncSession = Dep
     return create_auth_response(user)
 
 
-@router.post("/login", response_model=AuthResponse)
+@router.post("/login", response_model=LoginChallenge)
 async def login(request: LoginRequest, http: Request, db: AsyncSession = Depends(get_db)):
-    """Authenticate with email + password (with temporary lockout after repeated failures)."""
+    """Sign-in step 1: email + password (temporary lockout after repeated failures).
+
+    The right password is not enough: a 6-digit code is emailed to the account
+    and /login/verify finishes the sign-in (two-factor sign-in).
+    """
     ratelimit.enforce("login-fail", http)
     email = normalize_email(request.email)
     user = (await db.execute(select(User).where(func.lower(User.email) == email))).scalar_one_or_none()
@@ -294,10 +304,79 @@ async def login(request: LoginRequest, http: Request, db: AsyncSession = Depends
 
     user.failed_login_attempts = 0
     user.locked_until = None
-    user.last_login_at = now
+    code_email = normalize_email(user.email)
+    latest = await _latest_otp(db, code_email, unused_only=True)
+    just_sent = (latest is not None and latest.is_valid()
+                 and (now - latest.created_at).total_seconds() < settings.OTP_RESEND_COOLDOWN_SECONDS)
+    if just_sent:
+        # signing in again straight away: the code emailed a moment ago still works
+        message = f"We just sent a 6-digit code to {_mask(code_email)}. Enter it to finish signing in."
+    else:
+        ratelimit.enforce("code-send", http)
+        otp_code = await _issue_otp(db, code_email)
+        try:
+            await send_login_code_email(code_email, otp_code)
+        except EmailDeliveryError as exc:
+            await db.rollback()
+            logger.error(f"Sign-in code for {email} could not be sent: {exc}")
+            raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=_email_failure_detail())
+        ratelimit.record("code-send", http)
+        message = f"We sent a 6-digit code to {_mask(code_email)}. Enter it to finish signing in."
     await db.commit()
-    logger.info(f"User logged in: {email}")
+    logger.info(f"Password accepted, sign-in code step for: {email}")
+    return LoginChallenge(
+        login_token=create_login_token(str(user.id), user.password_hash),
+        sent_to=_mask(code_email),
+        message=message,
+    )
+
+
+async def _user_from_login_token(db: AsyncSession, token: str) -> User:
+    """The account a sign-in token belongs to (400 when expired, used or the password changed)."""
+    expired = HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
+                            detail="This sign-in has expired. Please sign in again.")
+    payload = decode_token(token, expected_type=LOGIN_TOKEN_TYPE)
+    if not payload:
+        raise expired
+    try:
+        user_id = uuid.UUID(str(payload.get("sub")))
+    except (TypeError, ValueError):
+        raise expired
+    user = (await db.execute(select(User).where(User.id == user_id))).scalar_one_or_none()
+    if (user is None or user.account_status != AccountStatus.ACTIVE
+            or payload.get("pwv") != password_fingerprint(user.password_hash)):
+        raise expired
+    return user
+
+
+@router.post("/login/verify", response_model=AuthResponse)
+async def verify_login(request: LoginVerifyRequest, http: Request, db: AsyncSession = Depends(get_db)):
+    """Sign-in step 2: the emailed code; returns the session tokens."""
+    user = await _user_from_login_token(db, request.login_token)
+    await _consume_otp(db, normalize_email(user.email), request.otp, http)
+    user.last_login_at = utcnow()
+    await db.commit()
+    logger.info(f"User logged in (code confirmed): {user.email}")
     return create_auth_response(user)
+
+
+@router.post("/login/resend", response_model=MessageResponse)
+async def resend_login_code(request: LoginResendRequest, http: Request, db: AsyncSession = Depends(get_db)):
+    """Email a new sign-in code (the password step was already passed)."""
+    user = await _user_from_login_token(db, request.login_token)
+    code_email = normalize_email(user.email)
+    await _check_resend_cooldown(db, code_email)
+    ratelimit.enforce("code-send", http)
+    otp_code = await _issue_otp(db, code_email)
+    try:
+        await send_login_code_email(code_email, otp_code)
+    except EmailDeliveryError as exc:
+        await db.rollback()
+        logger.error(f"Sign-in code resend for {code_email} failed: {exc}")
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=_email_failure_detail())
+    await db.commit()
+    ratelimit.record("code-send", http)
+    return MessageResponse(message=f"A new code has been sent to {_mask(code_email)}.")
 
 
 @router.post("/otp/verify", response_model=OtpVerifyResponse)

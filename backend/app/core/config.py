@@ -69,7 +69,7 @@ class Settings(BaseSettings):
 
     # OTP
     OTP_LENGTH: int = 6
-    OTP_EXPIRE_MINUTES: int = 10
+    OTP_EXPIRE_MINUTES: int = 5
     OTP_RESEND_COOLDOWN_SECONDS: int = 60
     OTP_MAX_ATTEMPTS: int = 5
 
@@ -138,6 +138,11 @@ class Settings(BaseSettings):
                     "DATABASE_URL points to a local database. SecureNet uses the cloud PostgreSQL "
                     "database (Neon): postgresql+asyncpg://USER:PASSWORD@HOST.neon.tech/DB?ssl=require"
                 )
+        if len(self.JWT_SECRET) < 32 or self.JWT_SECRET.startswith("replace-with"):
+            raise ValueError(
+                "JWT_SECRET must be a long random value (at least 32 characters) - run SETUP.bat, which "
+                "creates one, or put your own random string in backend/.env"
+            )
         if not self.SMTP_FROM_EMAIL.strip():
             self.SMTP_FROM_EMAIL = self.SMTP_USER.strip()
         return self

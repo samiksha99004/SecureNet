@@ -35,6 +35,9 @@ RESET_TOKEN_TYPE = "reset"
 PROFILE_TOKEN_TYPE = "profile"
 # Carries a requested password change until the emailed code confirms it.
 PASSWORD_CHANGE_TOKEN_TYPE = "password"
+# Issued after the right email + password; only lets the holder finish signing
+# in with the emailed code (never an access token).
+LOGIN_TOKEN_TYPE = "login"
 
 
 def hash_password(password: str) -> str:
@@ -110,6 +113,13 @@ def create_password_change_token(user_id: str, password_hash: Optional[str], new
     return _encode({"sub": user_id, "pwv": password_fingerprint(password_hash),
                     "npw": new_password_digest(new_password)},
                    PASSWORD_CHANGE_TOKEN_TYPE, timedelta(minutes=SIGNUP_TOKEN_MINUTES))
+
+
+def create_login_token(user_id: str, password_hash: Optional[str]) -> str:
+    """Short-lived proof that the password was right; the emailed code completes the sign-in.
+    Bound to the current password, so it dies if the password changes meanwhile."""
+    return _encode({"sub": user_id, "pwv": password_fingerprint(password_hash)}, LOGIN_TOKEN_TYPE,
+                   timedelta(minutes=SIGNUP_TOKEN_MINUTES))
 
 
 def decode_token(token: str, expected_type: str = ACCESS_TOKEN_TYPE) -> Optional[Dict[str, Any]]:

@@ -6,6 +6,7 @@ from datetime import timedelta
 from sqlalchemy import select, update
 
 from app.core.security import create_access_token, create_signup_token, create_reset_token
+from app.core.config import settings
 from app.db.base import AsyncSessionLocal
 from app.models.otp import OTP
 from app.models.user import User
@@ -25,7 +26,7 @@ async def age_latest_otp(email, minutes):
     async with AsyncSessionLocal() as db:
         otp = (await db.execute(select(OTP).where(OTP.email == email).order_by(OTP.created_at.desc()))).scalars().first()
         otp.created_at = utcnow() - timedelta(minutes=minutes)
-        otp.expires_at = otp.created_at + timedelta(minutes=10)
+        otp.expires_at = otp.created_at + timedelta(minutes=settings.OTP_EXPIRE_MINUTES)
         await db.commit()
 
 
@@ -57,7 +58,7 @@ async def test_wrong_otp_counts_down_then_locks_the_code(client, captured_otps):
 async def test_late_otp_is_rejected(client, captured_otps):
     email = "late@example.com"
     await start_signup(client, email)
-    await age_latest_otp(email, 11)                       # issued 11 min ago, valid for 10
+    await age_latest_otp(email, 6)                        # issued 6 min ago, valid for 5
     r = await client.post("/api/auth/otp/verify", json={"email": email, "otp": captured_otps[email]})
     assert r.status_code == 400 and "expired" in r.json()["message"]
 
@@ -65,9 +66,18 @@ async def test_late_otp_is_rejected(client, captured_otps):
 async def test_otp_just_before_expiry_still_works(client, captured_otps):
     email = "ontime@example.com"
     await start_signup(client, email)
-    await age_latest_otp(email, 9)                        # 9 of 10 minutes used
+    await age_latest_otp(email, 4)                        # 4 of 5 minutes used
     r = await client.post("/api/auth/otp/verify", json={"email": email, "otp": captured_otps[email]})
     assert r.status_code == 200
+
+
+async def test_codes_expire_after_five_minutes(client, captured_otps):
+    assert settings.OTP_EXPIRE_MINUTES == 5
+    email = "five@example.com"
+    await start_signup(client, email)
+    async with AsyncSessionLocal() as db:
+        otp = (await db.execute(select(OTP).where(OTP.email == email))).scalars().first()
+    assert abs((otp.expires_at - otp.created_at).total_seconds() - 300) < 5
 
 
 async def test_otp_cannot_be_used_twice(client, captured_otps):
@@ -238,7 +248,7 @@ async def test_late_reset_code_is_rejected(client, captured_otps):
         await db.execute(update(OTP).where(OTP.email == email).values(is_used=True))
         await db.commit()
     assert (await client.post("/api/auth/password/forgot", json={"email": email})).status_code == 200
-    await age_latest_otp(email, 12)
+    await age_latest_otp(email, 6)
     r = await client.post("/api/auth/password/verify", json={"email": email, "otp": captured_otps[email]})
     assert r.status_code == 400 and "expired" in r.json()["message"]
 

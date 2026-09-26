@@ -22,6 +22,12 @@ def test_local_database_is_refused(url):
         _settings(DATABASE_URL=url)
 
 
+@pytest.mark.parametrize("secret", ["short", "replace-with-a-long-random-string-at-least-32-characters"])
+def test_example_or_short_jwt_secret_is_refused(secret):
+    with pytest.raises(ValidationError, match="JWT_SECRET"):
+        _settings(DATABASE_URL="postgresql+asyncpg://u:p@ep-x.aws.neon.tech/neondb?ssl=require", JWT_SECRET=secret)
+
+
 def test_cloud_database_is_accepted_and_sender_defaults_to_smtp_user():
     s = _settings(DATABASE_URL="postgresql+asyncpg://u:p@ep-x.aws.neon.tech/neondb?ssl=require",
                   SMTP_USER="owner@gmail.com")

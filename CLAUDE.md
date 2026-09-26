@@ -88,7 +88,7 @@ SecureNet/                                   ← git root F:\SecureNet (github.c
 │   ├── scripts/legacy/                      ← archived ad-hoc scripts (do not run; see README there)
 │   ├── create_admin_user.py                 ← create/promote an admin (password prompted)
 │   ├── setup.ps1                            ← compatibility wrapper → root SETUP.ps1
-│   ├── scripts/check_setup.py               ← SETUP's read-only check: .env, Neon connection, email status
+│   ├── scripts/check_setup.py               ← SETUP's check: .env, DB connection, `alembic upgrade head`, email status
 │   ├── scripts/autostart.py                 ← run by the Startup shortcut (pythonw, no window) → backend; log in logs/autostart.log
 │   ├── data/ids-state.json                  ← saved IDS ON/OFF choice for this computer (gitignored)
 │   ├── requirements.txt / requirements-ml.txt
@@ -144,7 +144,7 @@ WebSocket auth: a bad/expired token is accepted then closed with **1008** (not a
 ```
 
 **API** (all under `/api` except `/health`, `/ws/live`):
-`auth/{signup,otp/verify,signup/complete,login,otp/resend,password/forgot,password/verify,password/reset,profile/change,profile/confirm,refresh,logout,me,change-password,change-password/confirm}` ·
+`auth/{signup,otp/verify,signup/complete,login,login/verify,login/resend,otp/resend,password/forgot,password/verify,password/reset,profile/change,profile/confirm,refresh,logout,me,change-password,change-password/confirm}` ·
 `events` (list, `export?format=csv|pdf|json`, `{id}`, `{id}/resolve`, `{id}/false-positive`) ·
 `dashboard/{summary,host-status,protocol-distribution,top-sources}` · `ids/{status,control}` ·
 `model/{info,feature-importance,reload}` · `reports/daily?tzOffset=` (days with attacks) + `reports/daily/{YYYY-MM-DD}/download?format=txt|csv|pdf&tzOffset=` (UI; the old saved-report generate/list/download/delete endpoints were removed in session 21) ·
@@ -157,8 +157,16 @@ Errors are always `{status, code, message, details?}`.
 
 **Registration (3 steps)**: `POST /auth/signup` {fullName, email, phoneNumber} → 6-digit code emailed (real SMTP only) →
 `POST /auth/otp/verify` {email, otp} → 15-min `setupToken` (JWT type `signup`, never an access token) →
-`POST /auth/signup/complete` {setupToken, password, confirmPassword} → account ACTIVE + signed in. Afterwards: email + password.
+`POST /auth/signup/complete` {setupToken, password, confirmPassword} → account ACTIVE + signed in. Afterwards: two-step sign-in (below).
 UI: `/signup` → `/otp-verify` → `/create-password` → `/dashboard`. Phone stored normalised (`+?` 7–15 digits) in `users.phone_number`.
+
+**Sign-in (2 steps, session 25)**: `POST /auth/login` {email, password} → password checked (lockout, network limit,
+dummy hash for unknown emails) → a 6-digit code is emailed and the answer is `{loginToken, sentTo, message}` (**no
+session tokens**; `loginToken` = JWT type `login`, 15 min, bound to the password fingerprint). Signing in again within
+60 s reuses the code just sent. `POST /auth/login/verify` {loginToken, otp} → `AuthResponse`; `POST /auth/login/resend`
+{loginToken} → new code (60 s cooldown). UI: `LoginForm` step 2 "Check your email" (`#login-code`, Verify and sign in,
+Resend code, Use a different account); `AuthContext.login` returns the challenge, `verifyLogin` signs in.
+**All emailed codes are valid 5 minutes** (`OTP_EXPIRE_MINUTES=5`, also in the owner's `.env`); max 5 tries per code.
 
 **Forgot password (3 steps)**: `/forgot-password` → `POST /auth/password/forgot` {email} (generic answer; code only for
 ACTIVE accounts; 60 s cooldown while a code is outstanding) → `POST /auth/password/verify` {email, otp} → `resetToken`
@@ -225,6 +233,17 @@ one-time on any PC:  double-click SETUP.bat   (add -WithML from PowerShell: .\SE
 every time:          double-click START_SECURENET.bat  (right-click → Run as administrator for live capture/blocking)
                      → backend http://127.0.0.1:8000 + UI http://localhost:5173, browser opens when both are healthy
 ```
+- **Someone else downloading it** (session 25, verified with a fresh copy of the repo): README.md walks through it.
+  SETUP creates `backend\.env` from `.env.example` with a random 96-hex `JWT_SECRET` and stops with what to fill in
+  (own Neon `DATABASE_URL`, Gmail App Password, `ADMIN_EMAILS`); the backend refuses a placeholder/short JWT secret;
+  `check_setup.py` refuses the example database address, then runs **`alembic upgrade head`** (builds all 11 tables on
+  an empty database, no-op on an up-to-date one). Tools/caches go to `<project>\.local` unless the PC already has
+  `F:\tools\node\node.exe` or `F:\dev-cache\pip` (only the owner's PC) — an F: drive alone is no longer enough.
+  **Ports**: START uses 8000/5173 (or the last ones, `backend\data\ports.json`); a port held by another program is
+  skipped (next free 8001…/5174…, SecureNet is recognised by `/health` / the page title) and both servers get the
+  chosen ports via env vars (`PORT`, `CORS_ORIGINS`, `DASHBOARD_URL`, `VITE_API_BASE_URL`, `VITE_WS_URL`, Vite
+  `--port … --strictPort`); `scripts/autostart.py` reads the same file. `START_SECURENET.ps1 -NoBrowser` skips
+  opening the browser.
 - **Moving to another PC** (verified 2026-09-25 on a fresh copy with no venv/node_modules/Node):
   1. Copy the project folder (or `git clone`) **and copy `backend\.env`** — it is gitignored (Neon URL, JWT secret,
      SMTP). Without it SETUP stops with a clear message.
@@ -255,6 +274,20 @@ every time:          double-click START_SECURENET.bat  (right-click → Run as a
 - Electron: `npm run build:frontend` then `npm start` in `desktop\` (backend serves the SPA on :8000).
 
 ## 6. Verification status (2026-09-25)
+- **Session 25 — sign-in code, 5-minute codes, portable download, README (2026-09-26):** backend **104/104 pytest**
+  (new `tests/test_login_code.py`, 7 tests: password alone gives no session, login token isn't an access token, wrong
+  code, right code, code single-use, wrong password sends nothing, 6-min-old code refused + resend + cooldown, second
+  sign-in within 60 s reuses the code, token dies after a password reset, foreign tokens refused, email failure ⇒ 503
+  and nothing issued; `test_codes_expire_after_five_minutes`; JWT placeholder/short refused; conftest `login()` helper).
+  Chrome `qa3/login2fa.js` **10/10** (wrong password, code step with masked email + "5 minutes", still signed out,
+  resend timer, wrong/right code → dashboard, Edit Details still needs a code, "Use a different account");
+  regression suites updated for two-step sign-in: live API **84/84**, Chrome E2E **42/43** (known artefact).
+  **Fresh-download test** (repo copied without .env/venv/node_modules): SETUP run 1 created `.env` (random secret) and
+  stopped with instructions; run 2 built venv + npm and stopped at the example DATABASE_URL; run 3 (real DB address)
+  connected, tables up to date, reported email/Npcap, "Setup complete". **Port clash test**: two foreign web servers
+  on 8010/5180 (preferred ports) → launcher chose 8011/5181; Chrome: dashboard on 5181 called the API on 8011, no
+  CORS/browser errors, foreign servers untouched. Migrations on an empty SQLite DB build all 11 tables = models. Copy
+  deleted afterwards. tsc/oxlint (0 errors)/build clean.
 - **Session 24 — IDS stays on after a restart:** backend **94/94 pytest** (new `tests/test_autostart.py`, 8 tests:
   ON remembered + Startup entry, OFF forgets + entry removed, failed start not remembered, OFF clears a saved ON
   when not running, server shutdown keeps the choice, resume = IDS on + started_by + exactly one notice, no resume
@@ -455,6 +488,8 @@ every time:          double-click START_SECURENET.bat  (right-click → Run as a
 | R5 | Env (session 21) venv `.exe` launchers broken after renaming the folder | Same versions force-reinstalled (§5) |
 | P22 | Changing the password needed only the current password (no second factor) | Session 23: 6-digit code emailed to the registered address confirms every password change |
 | P23 | IDS was OFF after every restart even if the user left it ON | Session 24: saved ON/OFF choice + Startup-folder entry; resumes at start with one desktop notice |
+| P24 | A correct password alone signed you in | Session 25: every sign-in needs a 6-digit code emailed to the account (5-minute codes everywhere) |
+| P25 | A fresh download could clash with the user's PC: tools written to any F: drive, busy ports 8000/5173 taken for SecureNet, empty database never got tables, `.env` had to be written by hand with a placeholder JWT secret accepted | Session 25: `.local` unless the owner's F: folders exist; free-port selection passed to both servers; SETUP creates `.env` (random secret) and runs migrations; placeholder secret refused |
 | P5 | First start on a fresh install could show the boot error while Vite prepared dependencies | `index.html` retries once automatically before reporting |
 | M14 | No alert notifications | Full notification system (pop-ups, bell feed, sound, desktop, batched emails to registered users, digest, test email) |
 | L1–L4, L6, L7, L9 | Deprecations, no-op middleware, unused deps, stats, clutter, LIKE escaping, unverified build | Fixed / archived |
@@ -517,3 +552,4 @@ every time:          double-click START_SECURENET.bat  (right-click → Run as a
 | 2026-09-25 (22) | Owner asked to run the app: started with `START_SECURENET.bat` via Explorer (after the session-21 fixes) — `/health` OK (Neon connected), UI 200 on :5173, browser opened by the launcher. No code changes. |
 | 2026-09-25 (23) | **Two-factor password change** (owner: changing password had no 2FA; add an OTP to the registered email). Backend: `PASSWORD_CHANGE_TOKEN_TYPE`, `new_password_digest`, `create_password_change_token` (security.py); `ChangePasswordConfirm` schema; `send_password_change_email`; `/auth/change-password` now checks and emails a code (returns `changeToken`, `sentTo`, `message`), new `/auth/change-password/confirm`; conftest captures the new email; `test_change_password` extended. Frontend: `ChangePasswordConfirm` type, `confirmPasswordChange`, `ChangePasswordCard` code step. 86/86 pytest, tsc/oxlint/build clean, Chrome 11/11. Real backend restarted via the launcher. Not committed. |
 | 2026-09-25 (24) | **IDS stays on after shutdown/restart + desktop notice** (owner: if the IDS is on when the computer is shut down it should be on again when the computer starts, with one desktop-only notification "SecureNet is on and is monitoring", no email). New `app/services/autostart.py` (state file, Startup `.lnk` via PowerShell WScript.Shell, `resume_after_restart`), `app/utils/desktop.py` (Windows toast, HKCU AppUserModelId `SecureNet.IDS`, text passed via env vars), `backend/scripts/autostart.py` (pythonw launcher, port check, log rotation). `config.py`: `IDS_AUTOSTART`, `IDS_STATE_FILE`, `IDS_STARTUP_DIR`, `DESKTOP_NOTIFICATIONS` (+ `.env.example`); `ids.py` remembers ON/OFF; `main.py` lifespan starts/cancels the resume task; `backend/.gitignore` `data/`; conftest + harness use temp dirs and no pop-ups (harness `HARNESS_FAKE_CAPTURE=1`). Guide text updated (restart behaviour; password change by code). 94/94 pytest, harness restart simulation, real shortcut start on Neon. Real app relaunched via the launcher. Not committed. |
+| 2026-09-26 (25) | **Sign-in with an emailed code, 5-minute codes, portable download, GitHub README** (owner: OTP for login and for personal-detail changes, code expiry 5 minutes; proper README with download/run steps; must not clash when run locally by others; push to GitHub). Personal-detail changes already required a code (session 18) — re-verified. Backend: `LOGIN_TOKEN_TYPE` + `create_login_token`, `LoginChallenge`/`LoginVerifyRequest`/`LoginResendRequest`, `send_login_code_email`, `/auth/login` → challenge, new `/auth/login/verify` + `/auth/login/resend`; `OTP_EXPIRE_MINUTES` 10 → 5 (config default, owner `.env`, `.env.example`); JWT secret validator. Frontend: `LoginChallenge` type, `verifyLogin`/`resendLoginCode`, AuthContext `login` → challenge + `verifyLogin`, `LoginForm` code step; guide step "Sign in safely". Portability: `securenet-env.ps1` (F: only if the owner's folders exist; port helpers), `START_SECURENET.ps1` (free ports, env for both servers, `-NoBrowser`), `SETUP.ps1` (creates `.env` with random secret), `check_setup.py` (example-URL check, `alembic upgrade head`), `scripts/autostart.py` (saved ports). Docs: new root `README.md`, `backend/README.md` refreshed. Tests: 104/104 pytest, Chrome 10/10 + 42/43, API 84/84, fresh-download + port-clash runs. Committed and pushed to GitHub. |

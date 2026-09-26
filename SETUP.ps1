@@ -1,7 +1,8 @@
 # SecureNet one-time setup for a new (or moved) Windows PC.
 #   - Python venv + backend packages (rebuilt if it was copied from another PC)
 #   - Node.js (downloaded if missing) + frontend packages
-#   - checks backend\.env, the cloud database connection and email delivery
+#   - backend\.env: created from the example on first run (with a random JWT secret)
+#   - checks the cloud database connection, creates/updates its tables, checks email delivery
 # Safe to run again at any time. Use -WithML to also install scikit-learn / XGBoost.
 
 param([switch]$WithML)
@@ -15,14 +16,28 @@ $dirs = Get-SecureNetDirs
 Use-SecureNetCaches
 Write-Host "Tools: $($dirs.Tools)   Caches: $($dirs.Cache)" -ForegroundColor DarkGray
 
-# ── 1. backend\.env (holds the Neon database address, JWT secret, email settings) ──
+# ── 1. backend\.env (database address, sign-in secret, email settings — never committed) ──
 Step 'Checking backend\.env'
 $envFile = Join-Path $BackendDir '.env'
+function New-SecureNetSecret {
+    $bytes = New-Object byte[] 48
+    [Security.Cryptography.RandomNumberGenerator]::Create().GetBytes($bytes)
+    return (($bytes | ForEach-Object { $_.ToString('x2') }) -join '')
+}
 if (-not (Test-Path $envFile)) {
-    Fail ("backend\.env is missing.`n" +
-          "Copy backend\.env from the original computer (it is not stored in git because it contains the " +
-          "database password and secrets), or create it from backend\.env.example with your Neon DATABASE_URL, " +
-          "a JWT_SECRET and your Gmail SMTP settings. Then run SETUP again.")
+    $text = (Get-Content (Join-Path $BackendDir '.env.example') -Raw) -replace '(?m)^JWT_SECRET=.*$', "JWT_SECRET=$(New-SecureNetSecret)"
+    [IO.File]::WriteAllText($envFile, $text)
+    Fail ("Created backend\.env from backend\.env.example (with a new random JWT_SECRET).`n" +
+          "Open backend\.env in Notepad and fill in:`n" +
+          "  DATABASE_URL   your own free Neon PostgreSQL database (https://neon.tech), starting postgresql+asyncpg://`n" +
+          "  EMAIL_ENABLED=true, SMTP_USER, SMTP_PASSWORD   a Gmail address and its App Password (sign-in codes are emailed)`n" +
+          "  ADMIN_EMAILS   your own email address (that account becomes the SecureNet admin)`n" +
+          "Then run SETUP again. README.md (step 3) explains each value.")
+}
+$envText = Get-Content $envFile -Raw
+if ($envText -match '(?m)^JWT_SECRET=(replace-with.*)?\s*$') {
+    [IO.File]::WriteAllText($envFile, ($envText -replace '(?m)^JWT_SECRET=.*$', "JWT_SECRET=$(New-SecureNetSecret)"))
+    Write-Host 'Generated a random JWT_SECRET in backend\.env.'
 }
 Write-Host 'backend\.env found.'
 
@@ -90,7 +105,7 @@ try {
 Write-Host 'Frontend packages installed.'
 
 # ── 5. Configuration, cloud database and email ──
-Step 'Checking configuration, cloud database and email'
+Step 'Checking configuration, cloud database (creating/updating its tables) and email'
 Push-Location $BackendDir
 try {
     & $venvPy (Join-Path $BackendDir 'scripts\check_setup.py')

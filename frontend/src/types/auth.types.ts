@@ -33,6 +33,13 @@ export interface LoginRequest {
   password: string;
 }
 
+/** Right email + password: a sign-in code was emailed; send it back with `loginToken`. */
+export interface LoginChallenge {
+  loginToken: string;
+  sentTo: string;
+  message: string;
+}
+
 /** Registration step 1 — a verification code is emailed to `email`. */
 export interface SignupRequest {
   fullName: string;

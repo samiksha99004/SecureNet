@@ -17,7 +17,7 @@ import {
 } from 'react';
 import * as authService from '../services/authService';
 import { SESSION_EXPIRED_EVENT } from '../services/apiClient';
-import type { User, AuthState, LoginRequest, SignupRequest } from '../types/auth.types';
+import type { User, AuthState, LoginChallenge, LoginRequest, SignupRequest } from '../types/auth.types';
 import type { MessageResponse } from '../types/api.types';
 import { isAdminRole } from '../utils/roles';
 
@@ -65,7 +65,10 @@ function initialState(): State {
 // ── Context Shape ─────────────────────────────────────────────────────────────
 
 interface AuthContextValue extends State {
-  login: (request: LoginRequest) => Promise<void>;
+  /** Step 1: email + password → a sign-in code is emailed (still signed out). */
+  login: (request: LoginRequest) => Promise<LoginChallenge>;
+  /** Step 2: the emailed code → signed in. */
+  verifyLogin: (loginToken: string, otp: string) => Promise<void>;
   signup: (request: SignupRequest) => Promise<MessageResponse>;
   /** Sign in with a user already authenticated elsewhere (e.g. OTP verification). */
   completeLogin: (user: User) => void;
@@ -95,15 +98,21 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return () => window.removeEventListener(SESSION_EXPIRED_EVENT, onExpired);
   }, []);
 
-  const login = useCallback(async (request: LoginRequest): Promise<void> => {
+  const login = useCallback(async (request: LoginRequest): Promise<LoginChallenge> => {
     dispatch({ type: 'LOADING' });
     try {
-      const response = await authService.login(request);
-      dispatch({ type: 'AUTHENTICATED', user: response.user });
+      const challenge = await authService.login(request);
+      dispatch({ type: 'UNAUTHENTICATED' }); // not signed in until the emailed code is entered
+      return challenge;
     } catch (err) {
       dispatch({ type: 'ERROR', error: err instanceof Error ? err.message : 'Login failed.' });
       throw err;
     }
+  }, []);
+
+  const verifyLogin = useCallback(async (loginToken: string, otp: string): Promise<void> => {
+    const response = await authService.verifyLogin(loginToken, otp);
+    dispatch({ type: 'AUTHENTICATED', user: response.user });
   }, []);
 
   const signup = useCallback(async (request: SignupRequest): Promise<MessageResponse> => {
@@ -137,6 +146,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const value: AuthContextValue = {
     ...state,
     login,
+    verifyLogin,
     signup,
     completeLogin,
     logout,

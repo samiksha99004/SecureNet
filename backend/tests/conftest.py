@@ -70,6 +70,7 @@ def captured_otps(monkeypatch):
     monkeypatch.setattr("app.api.routes.auth.send_otp_email", fake_send)
     monkeypatch.setattr("app.api.routes.auth.send_password_reset_email", fake_send)
     monkeypatch.setattr("app.api.routes.auth.send_password_change_email", fake_send)
+    monkeypatch.setattr("app.api.routes.auth.send_login_code_email", fake_send)
 
     async def fake_profile_send(email: str, code: str, summary: str) -> None:
         codes[email] = code
@@ -88,6 +89,16 @@ async def register(client, captured_otps, email="admin@example.com", password="P
     token = r.json()["setupToken"]
     r = await client.post("/api/auth/signup/complete", json={
         "setupToken": token, "password": password, "confirmPassword": password})
+    assert r.status_code == 200, r.text
+    return r.json()
+
+
+async def login(client, captured_otps, email, password):
+    """Two-step sign-in: password -> emailed code. Returns the auth response JSON."""
+    r = await client.post("/api/auth/login", json={"email": email, "password": password})
+    assert r.status_code == 200, r.text
+    r = await client.post("/api/auth/login/verify", json={
+        "loginToken": r.json()["loginToken"], "otp": captured_otps[email.strip().lower()]})
     assert r.status_code == 200, r.text
     return r.json()
 
