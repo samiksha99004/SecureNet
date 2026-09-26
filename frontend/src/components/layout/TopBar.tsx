@@ -3,7 +3,7 @@
  *
  * Fixed top bar with:
  *  - Mobile menu toggle
- *  - Page title (passed as prop)
+ *  - Page title (passed as prop) and, on the dashboard, a time-of-day greeting
  *  - Connection status indicator (WebSocket)
  *  - Notification bell (alert feed)
  *  - User display name
@@ -16,15 +16,18 @@ import { Menu, LogOut } from 'lucide-react';
 import { useAuth } from '../../contexts/AuthContext';
 import { ConnectionIndicator } from './ConnectionIndicator';
 import { NotificationBell } from '../notifications/NotificationBell';
+import { useGreeting } from '../../utils/greeting';
 import styles from './TopBar.module.css';
 
 interface TopBarProps {
   title: string;
+  greet?: boolean;
   onMenuClick: () => void;
 }
 
-export function TopBar({ title, onMenuClick }: TopBarProps) {
+export function TopBar({ title, greet = false, onMenuClick }: TopBarProps) {
   const { user, logout } = useAuth();
+  const greeting = useGreeting();
   const navigate = useNavigate();
 
   const handleLogout = useCallback(async () => {
@@ -45,6 +48,11 @@ export function TopBar({ title, onMenuClick }: TopBarProps) {
           <Menu size={20} />
         </button>
         <h1 className={styles.pageTitle}>{title}</h1>
+        {greet && user?.fullName && (
+          <p className={styles.greeting} aria-live="polite">
+            {greeting}, <strong>{user.fullName}</strong>
+          </p>
+        )}
       </div>
 
       {/* Right: connection status + user + logout */}

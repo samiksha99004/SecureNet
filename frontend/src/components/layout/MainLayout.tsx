@@ -25,10 +25,12 @@ import styles from './MainLayout.module.css';
 
 interface MainLayoutProps {
   title: string;
+  /** show "Good morning / afternoon / evening, <name>" in the top bar */
+  greet?: boolean;
   children: ReactNode;
 }
 
-export function MainLayout({ title, children }: MainLayoutProps) {
+export function MainLayout({ title, greet = false, children }: MainLayoutProps) {
   // Persist collapse state across sessions
   const [sidebarCollapsed, setSidebarCollapsed] = useLocalStorage(
     'sn_sidebar_collapsed',
@@ -48,6 +50,7 @@ export function MainLayout({ title, children }: MainLayoutProps) {
       <div className={styles.body}>
         <TopBar
           title={title}
+          greet={greet}
           onMenuClick={() => setMobileOpen((v) => !v)}
         />
         <main className={styles.content} id="main-content">

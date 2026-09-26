@@ -17,7 +17,6 @@ import { FormField } from './FormField';
 import { AuthButton } from './AuthButton';
 import { PasswordStrengthBar } from './PasswordStrengthBar';
 import styles from './SignupForm.module.css';
-import { useCodeHandoff } from '../../utils/codeHandoff';
 import local from './ForgotPasswordForm.module.css';
 
 type Step = 'email' | 'code' | 'password';
@@ -39,9 +38,6 @@ export function ForgotPasswordForm() {
   const [info, setInfo] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [cooldown, setCooldown] = useState(0);
-
-  // "Copy code" in the email fills the code in here
-  useCodeHandoff((c) => { setCode(c); setFieldError(null); }, step === 'code');
 
   useEffect(() => {
     if (cooldown <= 0) return;

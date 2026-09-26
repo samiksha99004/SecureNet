@@ -4,6 +4,8 @@ SecureNet watches the network traffic of a Windows computer, spots behaviour tha
 warns you right away: a pop-up on the dashboard, a Windows notification, and an email with an incident
 report attached. Every day that had attacks gets its own downloadable report.
 
+**Website: [samiksha99004.github.io/securenet-site](https://samiksha99004.github.io/securenet-site/)**
+
 Detection uses a two-stage machine-learning design from our research paper: an **Isolation Forest** flags
 unusual traffic flows, then **XGBoost** names the attack type (categories from the CICIDS2018 dataset).
 
@@ -43,8 +45,9 @@ unusual traffic flows, then **XGBoost** names the attack type (categories from t
 - **Safe accounts**: every sign-up, **every sign-in**, every password change and every change to your
   personal details is confirmed with a **6-digit code sent to your email** (valid for 5 minutes).
   The email, *"[SecureNet] Sign-in verification code"*, shows the code in a **"Code requested"** panel
-  with one box per digit and a **Copy code** button: it opens a small SecureNet page that copies the code
-  and fills it into the SecureNet tab that is waiting for it (on another device just type the digits).
+  with one box per digit and the whole code once more as plain text — double-click (or long-press on a
+  phone) selects it. Email apps never run code, so no email can contain a working copy button; Gmail adds
+  its own *Copy code* chip to verification-code emails like these.
   Repeated wrong passwords or codes are blocked.
 - **Fast**: the dashboard answers from memory (about 0.1 s) and the cloud database is kept awake while
   SecureNet is in use, so pages don't wait for a far-away database.
@@ -251,9 +254,18 @@ SecureNet/
 │   └── .env.example                      template for your backend\.env
 ├── frontend/                             React + TypeScript dashboard (Vite)
 ├── desktop/                              optional Electron desktop shell
+├── website/                              the public SecureNet website (HTML/CSS/JS) + publish.ps1
 ├── docs/                                 QA report and archived notes
 └── CLAUDE.md                             full technical guide, issue register and change log
 ```
+
+## Website
+
+The public website lives in [`website/`](website/) — plain HTML, CSS and JavaScript with a sidebar like the
+app: Download, About SecureNet, the two models, the app, a technology timeline, About us and Contact us. It is
+served by GitHub Pages at **https://samiksha99004.github.io/securenet-site/** from the public repository
+`samiksha99004/securenet-site`. After changing it, publish with
+`powershell -ExecutionPolicy Bypass -File website\publish.ps1 "What changed"` (see `website/README.md`).
 
 ## For developers
 

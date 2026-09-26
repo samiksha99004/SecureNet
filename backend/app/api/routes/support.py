@@ -144,4 +144,4 @@ async def send_support_message(
     except EmailDeliveryError as exc:
         logger.warning(f"Support message copy to {current_user.email} failed: {exc}")
 
-    return MessageResponse(message=f"Your message has been sent. We will reply to {current_user.email}.")
+    return MessageResponse(message="Your message has been sent. We will reply to you by email.")

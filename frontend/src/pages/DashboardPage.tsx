@@ -127,7 +127,7 @@ export function DashboardPage() {
     ) ?? null;
 
   return (
-    <MainLayout title="Dashboard">
+    <MainLayout title="Dashboard" greet>
       <div className={styles.page}>
 
         {/* ── IDS Control Widget ──────────────────────────────────────────── */}

@@ -19,7 +19,6 @@ import { isValidOtp, isValidPassword } from '../../utils/validation';
 import styles from './ChangePasswordCard.module.css';
 import local from './EditProfileCard.module.css';
 import { errorMessage } from '../../utils/errors';
-import { useCodeHandoff } from '../../utils/codeHandoff';
 
 interface ChangePasswordCardProps {
   user: User;
@@ -39,9 +38,6 @@ export function ChangePasswordCard({ user }: ChangePasswordCardProps) {
   const [pending, setPending] = useState<{ token: string; message: string } | null>(null);
   const [code, setCode] = useState('');
   const [codeError, setCodeError] = useState<string | null>(null);
-
-  // "Copy code" in the email fills the code in here
-  useCodeHandoff((c) => { setCode(c); setCodeError(null); }, pending !== null);
 
   // Google OAuth users cannot change their password through SecureNet
   if (user.authProvider === 'google') {

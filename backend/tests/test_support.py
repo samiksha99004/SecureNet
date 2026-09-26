@@ -64,7 +64,7 @@ async def test_send_us_a_message(client, admin, captured_otps, monkeypatch):
     r = await client.post("/api/support/message", headers=headers, json={
         "subject": "Strange alert\nat night", "message": "I got an alert at 2 AM <script>x</script>, is this normal?"})
     assert r.status_code == 200, r.text
-    assert "We will reply to asha@example.com" in r.json()["message"]
+    assert r.json()["message"] == "Your message has been sent. We will reply to you by email."   # no address shown
 
     to_admin, copy = sent
     assert to_admin["to"] == ["boss@example.com"] and to_admin["reply_to"] == "asha@example.com"

@@ -14,7 +14,6 @@ import { useNavigate, useLocation, Link } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
 import { isValidEmail, isValidOtp, isNonEmpty } from '../../utils/validation';
 import * as authService from '../../services/authService';
-import { useCodeHandoff } from '../../utils/codeHandoff';
 import { FormField } from './FormField';
 import { AuthButton } from './AuthButton';
 import styles from './LoginForm.module.css';
@@ -47,9 +46,6 @@ export function LoginForm() {
   const [codeError, setCodeError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [cooldown, setCooldown] = useState(0);
-
-  // "Copy code" in the email fills the code in here
-  useCodeHandoff((c) => { setCode(c); setCodeError(null); }, challenge !== null);
 
   useEffect(() => {
     if (cooldown <= 0) return;

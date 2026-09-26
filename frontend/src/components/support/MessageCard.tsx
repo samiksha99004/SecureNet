@@ -68,7 +68,7 @@ export function MessageCard() {
           <div className={styles.from}>
             <span className={styles.fromLabel}>From</span>
             <span className={styles.fromValue}>
-              {user?.fullName} &lt;{user?.email}&gt;
+              {user?.fullName}
             </span>
           </div>
 

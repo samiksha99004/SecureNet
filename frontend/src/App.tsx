@@ -20,7 +20,6 @@ import { SettingsPage }        from './pages/SettingsPage';
 import { AccountPage }         from './pages/AccountPage';
 import { SupportPage }         from './pages/SupportPage';
 import { NotFoundPage }        from './pages/NotFoundPage';
-import { CopyCodePage }        from './pages/CopyCodePage';
 
 export default function App() {
   return (
@@ -35,7 +34,6 @@ export default function App() {
               <Route path="/otp-verify" element={<OtpVerificationPage />} />
               <Route path="/create-password" element={<CreatePasswordPage />} />
               <Route path="/forgot-password" element={<ForgotPasswordPage />} />
-              <Route path="/code" element={<CopyCodePage />} />
 
               {/* ── Protected ── */}
               <Route element={<ProtectedRoute />}>

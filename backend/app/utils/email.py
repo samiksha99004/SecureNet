@@ -114,19 +114,17 @@ def render_code_email(code: str, heading: str, next_step: str) -> tuple[str, str
     """(text, html) of a verification-code email.
 
     Layout like the big services' code emails: a grey "Code requested" panel
-    with every digit in its own box and a "Copy code" button. Emails cannot
-    run code, so the button is a link to SecureNet's /code page (the code is in
-    the #fragment, never sent to a server): that page copies the code to the
-    clipboard and fills it into the SecureNet tab that is waiting for it.
-    Table-based with inline styles only, so Gmail / Outlook / phone mail apps
-    show it the same way; the digits are also plain text that can be selected.
+    with every digit in its own box, then the whole code once as plain text
+    (double-click / long-press selects all six digits). Mail apps never run
+    code inside an email, so an email cannot contain a button that copies;
+    Gmail adds its own "Copy code" chip to verification-code emails like this
+    (subject "... verification code", code in the text). Table-based with
+    inline styles only, so Gmail / Outlook / phone mail apps show it the same way.
     """
     app = html_mod.escape(settings.APP_NAME)
     minutes = settings.OTP_EXPIRE_MINUTES
-    copy_url = f"{settings.DASHBOARD_URL.rstrip('/')}/code#{code}"
     text = (
-        f"Your {settings.APP_NAME} verification code is: {code}\n"
-        f"Copy code: {copy_url}\n\n"
+        f"Your {settings.APP_NAME} verification code is: {code}\n\n"
         f"{next_step}\n"
         f"This code expires in {minutes} minutes and works only once.\n"
         "If you didn't request this code, you can ignore this email."
@@ -149,13 +147,12 @@ def render_code_email(code: str, heading: str, next_step: str) -> tuple[str, str
       <tr><td style="background:#eef1f6;border-radius:12px;padding:20px 22px">
         <div style="font-size:15px;color:#3d444d;margin:0 0 12px">Code requested</div>
         <table role="presentation" cellpadding="0" cellspacing="0" style="margin:0 0 16px -3px"><tr>{digits}</tr></table>
-        <table role="presentation" cellpadding="0" cellspacing="0"><tr><td style="border-radius:22px;background:#0969da">
-          <a href="{html_mod.escape(copy_url)}" target="_blank"
-             style="display:inline-block;padding:11px 26px;border-radius:22px;background:#0969da;color:#ffffff;
-                    font-size:16px;font-weight:bold;text-decoration:none">Copy code</a>
-        </td></tr></table>
-        <div style="font-size:12px;color:#59636e;margin:10px 0 0">Copies the code and fills it into SecureNet on this
-          computer. On another device, type the digits above.</div>
+        <div style="font-size:13px;color:#59636e;margin:0 0 4px">Your code</div>
+        <div style="display:inline-block;background:#ffffff;border:1px solid #d9dee6;border-radius:8px;padding:8px 16px;
+                    font-family:Consolas,'Courier New',monospace;font-size:22px;font-weight:bold;letter-spacing:2px;
+                    color:#1f2328;user-select:all;-webkit-user-select:all">{code}</div>
+        <div style="font-size:12px;color:#59636e;margin:8px 0 0">Double-click (or long-press on a phone) the code to
+          select it, then copy.</div>
       </td></tr>
       <tr><td style="font-size:14px;line-height:1.5;padding:18px 2px 0">
         <p style="margin:0 0 10px">{html_mod.escape(next_step)}</p>

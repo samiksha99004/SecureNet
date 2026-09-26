@@ -15,7 +15,6 @@ import type { ProfileChangeRequest, User } from '../../types/auth.types';
 import { isValidEmail, isValidOtp, isValidPhone } from '../../utils/validation';
 import styles from './ChangePasswordCard.module.css';
 import local from './EditProfileCard.module.css';
-import { useCodeHandoff } from '../../utils/codeHandoff';
 
 export function EditProfileCard({ user }: { user: User }) {
   const { completeLogin } = useAuth();
@@ -28,9 +27,6 @@ export function EditProfileCard({ user }: { user: User }) {
   const [code, setCode] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-
-  // "Copy code" in the email fills the code in here
-  useCodeHandoff((c) => { setCode(c); setError(null); }, pending !== null);
 
   const changes: ProfileChangeRequest = {};
   if (fullName.trim() !== user.fullName) changes.fullName = fullName.trim();

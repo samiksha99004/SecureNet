@@ -93,6 +93,8 @@ SecureNet/                                   ← git root F:\SecureNet (github.c
 │   ├── data/ids-state.json                  ← saved IDS ON/OFF choice for this computer (gitignored)
 │   ├── requirements.txt / requirements-ml.txt
 │   └── .env (gitignored, Neon URL + JWT secret) / .env.example
+├── website/                                 ← public website (index.html, styles.css, script.js, favicon.svg) +
+│                                              publish.ps1 → public repo samiksha99004/securenet-site (GitHub Pages)
 ├── desktop/                                 ← optional Electron shell
 │   ├── package.json                         ← `npm start` / `npm run dev`; `build:frontend` builds ../frontend
 │   └── electron/main.js                     ← starts ../backend (venv), backend serves ../frontend/dist on :8000
@@ -172,11 +174,10 @@ session tokens**; `loginToken` = JWT type `login`, 15 min, bound to the password
 {loginToken} → new code (60 s cooldown). UI: `LoginForm` step 2 "Check your email" (`#login-code`, Verify and sign in,
 Resend code, Use a different account); `AuthContext.login` returns the challenge, `verifyLogin` signs in.
 **All emailed codes are valid 5 minutes** (`OTP_EXPIRE_MINUTES=5`, also in the owner's `.env`); max 5 tries per code.
-**Copy code (session 28)**: the email's *Copy code* button is a real link `DASHBOARD_URL/code#NNNNNN` (code in the
-#fragment, never sent to a server) → public `CopyCodePage` copies it (clipboard API, execCommand fallback) and
-`handOffCode()` (`utils/codeHandoff.ts`, BroadcastChannel + localStorage event, max 5 min old) fills it into every
-waiting code field via `useCodeHandoff` (LoginForm, OtpForm, ForgotPasswordForm, EditProfileCard,
-ChangePasswordCard). Same browser/PC only; on another device the digits are typed.
+**Copy code (session 29)**: owner wants NO page and NO auto-fill, just a copy button — impossible inside an email
+(mail apps never run scripts), so the session-28 link / `/code` page / `codeHandoff` were removed. The email shows
+the digit boxes plus the whole code once as plain text (`user-select:all`: one double-click / long-press selects
+it); Gmail adds its own *Copy code* chip to verification-code emails (subject "… verification code").
 **Code email design (session 27)**: `render_code_email()` in `utils/email.py` — subject `[SecureNet] <Sign-up | Sign-in |
 Password reset | Password change | Profile change> verification code` (like GitHub's), hidden preview line with the
 code, grey "Code requested" panel with one white box per digit, a "Copy code" pill holding the whole code (select +
@@ -204,6 +205,17 @@ password itself is never in the token) → `POST /auth/change-password/confirm` 
 **Attack emails**: every active non-admin user (+ Settings extra address) gets the normal alert; every admin gets
 `[SecureNet Admin] …` with *who turned the IDS on* (`IDSService.started_by`, set in `/ids/control`), the monitored
 computer, all registered users (name, email, phone, role) and full event details; both carry the incident report.
+
+**Website (session 29)**: `website/` (static, no build) — sidebar like the app (Home, Download, About SecureNet, The two
+models, The app, Technology timeline, About us, Contact us), dark/peach theme switch, mobile drawer. Owner's content
+rules: the four owners only — no guide, no college/education, no "final year project"; Download button disabled
+("installer coming soon"). The project repo `samiksha99004/SecureNet` is **private** and the free plan only serves
+Pages from public repos, and `samiksha99004.github.io` is the owner's personal portfolio (must not be touched), so the
+site is published to the new public repo `samiksha99004/securenet-site` (Pages from main /) by
+`website/publish.ps1` (clones into `.local/site-publish`, copies the files + `.nojekyll`, pushes). No links to the
+private repo on the site. `system_settings.contact_website` = the site URL (sign-in "Visit our website" + Contact us).
+**Greeting (session 29)**: `utils/greeting.ts` (`useGreeting`, re-checked every minute; 05–12 morning, 12–17
+afternoon, else evening) shown in the TopBar on the dashboard (`MainLayout greet`); hidden under 640 px.
 
 **Personal preferences (session 28)**: *Settings → Preferences* — desktop notifications is a real switch
 (`prefs.desktop` in `sn_notification_prefs`; turning it on asks the browser for permission; if the browser blocked
@@ -309,6 +321,13 @@ every time:          double-click START_SECURENET.bat  (right-click → Run as a
 - Electron: `npm run build:frontend` then `npm start` in `desktop\` (backend serves the SPA on :8000).
 
 ## 6. Verification status (2026-09-25)
+- **Session 29 — website live, plain code email, greeting, name only (2026-09-26):** website published to
+  https://samiksha99004.github.io/securenet-site/ (HTTP 200 for page, css, js, icon; owner's portfolio at
+  samiksha99004.github.io untouched); Chrome on the live site: sidebar highlight follows the section, both themes,
+  phone width 0 px overflow + menu drawer, 0 errors. Email rendered: no link, selectable code. Greeting checked in
+  Chrome with the clock set to 09:00 / 14:30 / 20:15 → Good morning / afternoon / evening, <name>; Send us a
+  message From shows the name only. Real backend: `/api/support/contact` returns the website. Backend 110/110,
+  tsc/oxlint (0 errors)/build clean.
 - **Session 28 — switches, Copy code, speed (2026-09-26):** backend **110/110** (new `tests/test_prefs_and_speed.py`:
   alert-email switch + notifier skips opted-out users, 7 dashboard GETs need 0 queries when repeated, summary = 3
   queries and refreshes after a new event / resolve, settings cache refreshed on change, expired user re-checked in
@@ -548,7 +567,9 @@ every time:          double-click START_SECURENET.bat  (right-click → Run as a
 | P28 | Code emails were a plain "Your verification code is" page | Session 27: GitHub-style "[SecureNet] … verification code" email with a Code requested panel, digit boxes and a copyable code |
 | P29 | Desktop notifications could not be switched off once the browser allowed them (greyed "Allowed" button) | Session 28: real on/off switch |
 | P30 | Alert emails could not be switched off per user | Session 28: `users.email_alerts` + Preferences switch |
-| P31 | The email's Copy code pill was not a button | Session 28: real link → /code page copies + fills the waiting tab |
+| P31 | The email's Copy code pill was not a button | Session 29 (final): no button possible in email; plain selectable code, Gmail's own Copy code chip (session-28 link/page removed at the owner's request) |
+| P32 | No public website (sign-in "Visit our website" / Contact us had no link) | Session 29: `website/` published to GitHub Pages; contact website set in Neon |
+| P33 | Dashboard had no personal greeting; message form showed the user's email | Session 29: "Good morning/afternoon/evening, <name>" (updates every minute); From = name only |
 | Q10 | Medium → fixed | App took ~5 s per page (8 queries × ~300 ms, user re-read every request, reconnect every 4 min, type lookups on new connections, Neon cold start) | Session 28: user + dashboard caches, 3-query summary, warm connections, idle-only replacement, keep-awake while in use → ~0.1 s |
 | P5 | First start on a fresh install could show the boot error while Vite prepared dependencies | `index.html` retries once automatically before reporting |
 | M14 | No alert notifications | Full notification system (pop-ups, bell feed, sound, desktop, batched emails to registered users, digest, test email) |
@@ -616,3 +637,4 @@ every time:          double-click START_SECURENET.bat  (right-click → Run as a
 | 2026-09-26 (26) | **"IDS IS OFF" instead of NORMAL** (owner: when detection is off it should not show normal). `IDSControlWidget.tsx`: status = IDS IS OFF while stopped (ShieldOff icon, hint "Your network is not being watched. Press ON to start monitoring."), NORMAL / latest unresolved attack only while running, CHECKING… / STATUS UNKNOWN before the status arrives; `.statusOff` + `.statusHint` in `IDSControlWidget.module.css` (theme tokens only). Chrome check on the harness in both themes. Committed and pushed to GitHub. |
 | 2026-09-26 (27) | **Dashboard empty while the IDS is OFF + GitHub-style code emails** (owner: when the IDS is off nothing on the dashboard should have values — only detection is off, History/Reports keep working; make the OTP email look like GitHub's "Code requested" email; update CLAUDE.md + README; push). Frontend: new `components/dashboard/IdsOffNote.tsx` (+ css), `idsOff` prop on HostStatusCard, SecuritySummaryCard, ProtocolDistributionCard, TopSourcesCard, DetectionReasonCard, RecentEventsTable, LiveAnomalyChart; IDSControlWidget hides counters/incident while off; DashboardPage `idsOff` / `idsPending`, polls only the IDS status while off and refetches when it turns on. Backend: `render_code_email()` + `_send_code(email, code, purpose, next_step)` with the new subjects; test added (105/105). README features/usage updated. Committed and pushed to GitHub. |
 | 2026-09-26 (28) | **Desktop + email alert switches, working Copy code button, speed** (owner: desktop notifications could not be turned off; email alerts on/off; the OTP copy button did not work; app took ~5 s, IDS must be fast; update CLAUDE.md + README and push every time). Backend: `users.email_alerts` + migration `e6b1c9d4a2f7` (applied to Neon), `PUT /auth/me/preferences`, notifier filter; `render_code_email` Copy code link; user cache (`remember_user`/`forget_user`, shared + background re-check), `services/cache.py` (events/settings caches, priming, stale-while-refresh), 3-query summary, loaders with own sessions, `db/base.py` warm-up with type priming, idle-only connection replacement, keep-awake. Frontend: `CopyCodePage` (/code), `utils/codeHandoff.ts` in all five code forms, desktop switch (`prefs.desktop`), alert-email switch, `User.emailAlerts`. Tests 110/110, Chrome 14/14, speed measured on Neon. Saved memory `push-after-every-change`. Committed and pushed. |
+| 2026-09-26 (29) | **Website live on GitHub Pages, plain code email, greeting, message "From" = name** (owner: make a website with a sidebar — download (no app yet), about us (4 owners, no guide/education/final-year), about SecureNet (2 models, the app, technologies as a timeline), contact — in a new `website` folder, host it live; the email copy button must just copy, no page/auto-fill; add the website to Contact us; greeting by time of day; only the name in Send us a message; update CLAUDE.md and push). New `website/` (index.html, styles.css, script.js, favicon.svg, README.md, publish.ps1); public repo `samiksha99004/securenet-site` created and Pages enabled via the GitHub API (project repo is private); live at https://samiksha99004.github.io/securenet-site/; Neon `contact_website` set. Email: Copy code link removed, plain selectable code; `CopyCodePage`, `utils/codeHandoff.ts` and the form hooks removed. `utils/greeting.ts` + TopBar greeting; MessageCard From = name; support success message without the address. Tests 110/110, Chrome checks. Committed and pushed. |
