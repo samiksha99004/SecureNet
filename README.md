@@ -45,9 +45,7 @@ unusual traffic flows, then **XGBoost** names the attack type (categories from t
 - **Safe accounts**: every sign-up, **every sign-in**, every password change and every change to your
   personal details is confirmed with a **6-digit code sent to your email** (valid for 5 minutes).
   The email, *"[SecureNet] Sign-in verification code"*, shows the code in a **"Code requested"** panel
-  with one box per digit and the whole code once more as plain text — double-click (or long-press on a
-  phone) selects it. Email apps never run code, so no email can contain a working copy button; Gmail adds
-  its own *Copy code* chip to verification-code emails like these.
+  with one box per digit.
   Repeated wrong passwords or codes are blocked.
 - **Fast**: the dashboard answers from memory (about 0.1 s) and the cloud database is kept awake while
   SecureNet is in use, so pages don't wait for a far-away database.

@@ -114,12 +114,10 @@ def render_code_email(code: str, heading: str, next_step: str) -> tuple[str, str
     """(text, html) of a verification-code email.
 
     Layout like the big services' code emails: a grey "Code requested" panel
-    with every digit in its own box, then the whole code once as plain text
-    (double-click / long-press selects all six digits). Mail apps never run
-    code inside an email, so an email cannot contain a button that copies;
-    Gmail adds its own "Copy code" chip to verification-code emails like this
-    (subject "... verification code", code in the text). Table-based with
-    inline styles only, so Gmail / Outlook / phone mail apps show it the same way.
+    with every digit in its own box - nothing else to click; the user copies
+    the digits by hand (Gmail may also add its own "Copy code" chip to
+    verification-code emails like this). Table-based with inline styles only,
+    so Gmail / Outlook / phone mail apps show it the same way.
     """
     app = html_mod.escape(settings.APP_NAME)
     minutes = settings.OTP_EXPIRE_MINUTES
@@ -146,13 +144,7 @@ def render_code_email(code: str, heading: str, next_step: str) -> tuple[str, str
       <tr><td style="font-size:22px;padding:4px 0 16px">{html_mod.escape(heading)} verification code</td></tr>
       <tr><td style="background:#eef1f6;border-radius:12px;padding:20px 22px">
         <div style="font-size:15px;color:#3d444d;margin:0 0 12px">Code requested</div>
-        <table role="presentation" cellpadding="0" cellspacing="0" style="margin:0 0 16px -3px"><tr>{digits}</tr></table>
-        <div style="font-size:13px;color:#59636e;margin:0 0 4px">Your code</div>
-        <div style="display:inline-block;background:#ffffff;border:1px solid #d9dee6;border-radius:8px;padding:8px 16px;
-                    font-family:Consolas,'Courier New',monospace;font-size:22px;font-weight:bold;letter-spacing:2px;
-                    color:#1f2328;user-select:all;-webkit-user-select:all">{code}</div>
-        <div style="font-size:12px;color:#59636e;margin:8px 0 0">Double-click (or long-press on a phone) the code to
-          select it, then copy.</div>
+        <table role="presentation" cellpadding="0" cellspacing="0" style="margin:0 0 0 -3px"><tr>{digits}</tr></table>
       </td></tr>
       <tr><td style="font-size:14px;line-height:1.5;padding:18px 2px 0">
         <p style="margin:0 0 10px">{html_mod.escape(next_step)}</p>

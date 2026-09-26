@@ -87,7 +87,7 @@ async def test_code_email_design_and_subjects(monkeypatch):
     assert "verification code is: 137296" in text and "5 minutes" in text
     assert "Code requested" in html and "5 minutes" in html
     assert "<a " not in html and "/code#" not in text          # no links: nothing to open, just the code
-    assert "user-select:all" in html                           # one tap / double-click selects the whole code
+    assert "Your code" not in html and "Double-click" not in html   # only the digit boxes
     for digit in "137296":
         assert f'color:#1f2328">{digit}</div>' in html          # one box per digit
-    assert html.count("137296") >= 2                           # preview line + selectable code
+    assert html.count("137296") == 1                           # only in the hidden inbox preview line
