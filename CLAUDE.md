@@ -48,7 +48,7 @@ anomaly score = 1 − P(benign).
 ## 2. Repository layout
 
 ```
-SecureNet/                                   ← git root F:\SecureNet (github.com/samiksha99004/SecureNet-3-)
+SecureNet/                                   ← git root F:\SecureNet (github.com/samiksha99004/SecureNet; renamed from SecureNet-3-)
 ├── CLAUDE.md                                ← this file
 ├── README.md                                ← GitHub front page: what it is, folder layout, getting started
 ├── START_SECURENET.bat                      ← double-click launcher: backend (:8000) + Vite (:5173), waits for /health, opens browser

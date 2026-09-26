@@ -87,7 +87,7 @@ You do **not** need to install Node.js: the setup downloads it into the project 
 **Option A — with Git**
 
 ```powershell
-git clone https://github.com/samiksha99004/SecureNet-3-.git SecureNet
+git clone https://github.com/samiksha99004/SecureNet.git
 cd SecureNet
 ```
 
