@@ -214,10 +214,11 @@ Pages from public repos, and `samiksha99004.github.io` is the owner's personal p
 site is published to the new public repo `samiksha99004/securenet-site` (Pages from main /) by
 `website/publish.ps1` (clones into `.local/site-publish`, copies the files + `.nojekyll`, pushes). No links to the
 private repo on the site. `system_settings.contact_website` = the site URL (sign-in "Visit our website" + Contact us).
-**Website address without a name (session 31, in progress)**: owner does not want their GitHub name in the URL and
+**Website address without a name (session 31, postponed by the owner — site stays on GitHub Pages for now)**: owner does not want their GitHub name in the URL and
 chose Cloudflare Pages. `securenet.pages.dev` is taken; `securenet-ids.pages.dev` is free. `website/publish-cloudflare.ps1`
 (wrangler@4 via npx, project `securenet-ids`, reads `.local/cloudflare.env` = CLOUDFLARE_API_TOKEN + CLOUDFLARE_ACCOUNT_ID,
-gitignored) is ready; waiting for the owner to create the Cloudflare account + token. After the first deploy: switch
+gitignored) is ready for later; nothing was published there. When the owner wants it: they create the Cloudflare
+account + token, fill `.local/cloudflare.env`, run the script, then switch
 the site's Website card + Neon `contact_website` to https://securenet-ids.pages.dev/ and offer to delete the old
 `samiksha99004/securenet-site` repository.
 **Greeting (session 29)**: `utils/greeting.ts` (`useGreeting`, re-checked every minute; 05–12 morning, 12–17
@@ -646,3 +647,4 @@ every time:          double-click START_SECURENET.bat  (right-click → Run as a
 | 2026-09-26 (29) | **Website live on GitHub Pages, plain code email, greeting, message "From" = name** (owner: make a website with a sidebar — download (no app yet), about us (4 owners, no guide/education/final-year), about SecureNet (2 models, the app, technologies as a timeline), contact — in a new `website` folder, host it live; the email copy button must just copy, no page/auto-fill; add the website to Contact us; greeting by time of day; only the name in Send us a message; update CLAUDE.md and push). New `website/` (index.html, styles.css, script.js, favicon.svg, README.md, publish.ps1); public repo `samiksha99004/securenet-site` created and Pages enabled via the GitHub API (project repo is private); live at https://samiksha99004.github.io/securenet-site/; Neon `contact_website` set. Email: Copy code link removed, plain selectable code; `CopyCodePage`, `utils/codeHandoff.ts` and the form hooks removed. `utils/greeting.ts` + TopBar greeting; MessageCard From = name; support success message without the address. Tests 110/110, Chrome checks. Committed and pushed. |
 | 2026-09-26 (30) | **Code email = digit boxes only** (owner: no copy button needed, just print the OTP in box format, we copy it manually). `render_code_email`: removed the "Your code" box and the select hint; test updated (110/110). Committed and pushed. |
 | 2026-09-26 (31) | **Website address without the owner's name — Cloudflare Pages prepared** (owner: no name in the website address; chose Cloudflare Pages). Checked names (securenet.pages.dev taken, securenet-ids.pages.dev free); new `website/publish-cloudflare.ps1`; `.local/cloudflare.env` template (gitignored); website README. Waiting for the owner's Cloudflare account + API token. Backend restarted with the digit-box email. Committed and pushed. |
+| 2026-09-26 (32) | Owner: keep the website on GitHub Pages for now (https://samiksha99004.github.io/securenet-site/), move to Cloudflare later. No code changes; CLAUDE.md status updated. Committed and pushed. |
