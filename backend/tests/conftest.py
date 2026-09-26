@@ -51,6 +51,18 @@ async def client():
 
 
 @pytest.fixture(autouse=True)
+def _reset_caches():
+    """Remembered users and cached dashboard answers belong to the previous test's database."""
+    from app.api.dependencies import clear_user_cache
+    from app.services.cache import invalidate
+    clear_user_cache()
+    invalidate()
+    yield
+    clear_user_cache()
+    invalidate()
+
+
+@pytest.fixture(autouse=True)
 def _reset_rate_limits():
     """Per-network-address limits are process-wide; start every test clean."""
     from app.utils.ratelimit import limiter

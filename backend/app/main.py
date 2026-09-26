@@ -19,7 +19,8 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app.api.routes import auth, dashboard, events, health, ids, model, notifications, reports, settings_routes, support
 from app.core.config import settings
-from app.db.base import AsyncSessionLocal
+from app.db.base import AsyncSessionLocal, keep_awake, mark_activity, warm_up
+from app.services import cache
 from app.ml.ids_service import get_ids_service
 from app.services.autostart import resume_after_restart
 from app.services.notifier import get_notifier
@@ -49,12 +50,28 @@ async def lifespan(app: FastAPI):
     await get_notifier().start()
     # IDS was ON when SecureNet last stopped (e.g. computer shut down)? Turn it back on.
     resume = asyncio.create_task(resume_after_restart(), name="ids-resume")
+    # open database connections now, prepare the dashboard answers before the first page,
+    # and keep the cloud database awake while SecureNet is in use
+    cache.set_primers([
+        dashboard.cached_summary, dashboard.cached_protocols, dashboard.cached_top_sources,
+        notifications.cached_feed, settings_routes.cached_detection_settings, support.cached_contact,
+    ])
+    prepare = asyncio.create_task(_prepare(), name="prepare-dashboard")
+    awake = asyncio.create_task(
+        keep_awake(lambda: ids_service.enabled or bool(manager.active_connections)), name="db-keep-awake")
     yield
     logger.info(f"{settings.APP_NAME} shutting down...")
-    resume.cancel()
-    await asyncio.gather(resume, return_exceptions=True)
+    cache.set_primers([])
+    for task in (resume, prepare, awake):
+        task.cancel()
+    await asyncio.gather(resume, prepare, awake, return_exceptions=True)
     await ids_service.stop()  # the saved ON/OFF choice is kept for the next start
     await get_notifier().stop()
+
+
+async def _prepare() -> None:
+    await warm_up()
+    await cache.prime()
 
 
 app = FastAPI(
@@ -133,6 +150,7 @@ async def websocket_live(websocket: WebSocket):
     from app.api.dependencies import user_from_token
 
     token = websocket.query_params.get("token")
+    mark_activity()
     async with AsyncSessionLocal() as db:
         user = await user_from_token(token, db)
     if user is None:

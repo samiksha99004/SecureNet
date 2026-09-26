@@ -3,7 +3,7 @@ SecureNet Backend — User Model
 """
 
 from app.utils.timeutil import utcnow
-from sqlalchemy import Column, String, DateTime, Enum as SQLEnum
+from sqlalchemy import Boolean, true, Column, String, DateTime, Enum as SQLEnum
 from sqlalchemy import Uuid as UUID
 from sqlalchemy.types import TypeDecorator
 import uuid
@@ -73,6 +73,9 @@ class User(Base):
     
     # Optional profile fields
     avatar_url = Column(String(512), nullable=True)
+
+    # Attack alert emails for this user (codes are always emailed)
+    email_alerts = Column(Boolean, nullable=False, default=True, server_default=true())
     
     # Security
     failed_login_attempts = Column(IntStoredAsString, nullable=False, default=0)

@@ -188,9 +188,14 @@ async def test_token_of_deleted_user_stops_working(client, captured_otps):
         user = (await db.execute(select(User).where(User.email == "gone@example.com"))).scalar_one()
         await db.delete(user)
         await db.commit()
-    assert (await client.get("/api/auth/me", headers=headers)).status_code == 401
+    # refreshing the session checks the database at once
     r = await client.post("/api/auth/refresh", json={"refreshToken": auth["tokens"]["refreshToken"]})
     assert r.status_code == 401
+    # an access token keeps working only until the remembered copy expires (USER_CACHE_SECONDS)
+    from app.api.dependencies import USER_CACHE_SECONDS, clear_user_cache
+    assert USER_CACHE_SECONDS <= 60
+    clear_user_cache()                                   # = those seconds have passed
+    assert (await client.get("/api/auth/me", headers=headers)).status_code == 401
 
 
 # ── Password change / reset ─────────────────────────────────────────────────

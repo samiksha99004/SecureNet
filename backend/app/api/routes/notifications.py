@@ -15,13 +15,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.dependencies import get_current_user
 from app.core.config import settings
-from app.db.base import get_db
+from app.db.base import AsyncSessionLocal, get_db
 from app.ml.ids_service import alert_payload
 from app.models.security_event import SecurityEvent
 from app.models.settings import NotificationSettings
 from app.models.user import User, UserRole
 from app.schemas.base import CamelModel
 from app.schemas.common import MessageResponse
+from app.services.cache import cached
 from app.services.notifier import AlertInfo, get_notifier, get_recipients, render_alert_email
 from app.utils.email import EmailDeliveryError, email_delivery_status, send_email
 from app.utils.timeutil import to_iso_z, utcnow
@@ -57,17 +58,25 @@ class NotificationStatus(CamelModel):
     last_error: Optional[str] = None
 
 
+async def _load_feed(limit: int) -> List[NotificationItem]:
+    async with AsyncSessionLocal() as db:
+        events = (await db.execute(
+            select(SecurityEvent).order_by(desc(SecurityEvent.timestamp)).limit(limit)
+        )).scalars().all()
+    return [NotificationItem.model_validate(alert_payload(e)) for e in events]
+
+
+async def cached_feed(limit: int = 30) -> List[NotificationItem]:
+    return await cached(f"events:feed:{limit}", lambda: _load_feed(limit), ttl=300)
+
+
 @router.get("", response_model=List[NotificationItem])
 async def list_notifications(
     limit: int = Query(30, ge=1, le=100),
     current_user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
 ):
-    """Most recent security alerts (newest first)."""
-    events = (await db.execute(
-        select(SecurityEvent).order_by(desc(SecurityEvent.timestamp)).limit(limit)
-    )).scalars().all()
-    return [NotificationItem.model_validate(alert_payload(e)) for e in events]
+    """Most recent security alerts (newest first; served from memory)."""
+    return await cached_feed(limit)
 
 
 @router.get("/status", response_model=NotificationStatus)

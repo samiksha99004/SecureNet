@@ -19,6 +19,7 @@ from app.models.user import User
 from app.schemas.common import MessageResponse, PaginatedResponse
 from app.schemas.security import SecurityEventResponse
 from app.services import exporters
+from app.services.cache import events_changed
 from app.services.event_query import EventFilters, combine, sort_clause
 from app.utils.logger import logger
 from app.utils.timeutil import utcnow
@@ -140,6 +141,7 @@ async def _set_state(db: AsyncSession, event_id: str, state: EventState, user: U
     event.resolved_by = user.id
     event.updated_at = now
     await db.commit()
+    events_changed()
     logger.info(f"Event {event_id} → {state.value} by {user.email}")
 
 

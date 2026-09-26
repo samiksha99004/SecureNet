@@ -48,6 +48,8 @@ const PREFS_KEY = 'sn_notification_prefs';
 interface NotificationPrefs {
   popups: boolean;
   sound: boolean;
+  /** desktop (OS) notifications while SecureNet is in the background — user's own switch */
+  desktop: boolean;
 }
 
 interface NotificationContextValue {
@@ -70,7 +72,7 @@ const NotificationContext = createContext<NotificationContextValue | null>(null)
 
 function loadPrefs(): NotificationPrefs {
   const stored = storageGetJson<Partial<NotificationPrefs> | null>(PREFS_KEY, null);
-  return { popups: true, sound: true, ...(stored && typeof stored === 'object' ? stored : {}) };
+  return { popups: true, sound: true, desktop: true, ...(stored && typeof stored === 'object' ? stored : {}) };
 }
 
 export function NotificationProvider({ children }: { children: ReactNode }) {
@@ -154,14 +156,14 @@ export function NotificationProvider({ children }: { children: ReactNode }) {
       const alert = message.payload;
       setItems((prev) => [alert, ...prev.filter((i) => i.eventId !== alert.eventId)].slice(0, MAX_ITEMS));
 
-      const { popups: popupsOn, sound } = prefsRef.current;
+      const { popups: popupsOn, sound, desktop } = prefsRef.current;
       if (popupsOn) {
         setPopups((prev) => [alert, ...prev].slice(0, MAX_POPUPS));
         const timer = setTimeout(() => dismissPopup(alert.eventId), POPUP_TIMEOUT_MS[alert.severity] ?? 10_000);
         timers.current.set(alert.eventId, timer);
       }
       if (sound && alert.severity !== 'low') playAlertSound(alert.severity);
-      if (popupsOn && !document.hasFocus()) {
+      if (popupsOn && desktop && !document.hasFocus()) {
         showDesktopNotification(
           `SecureNet — ${alert.severity.toUpperCase()}: ${titleOf(alert)}`,
           alert.message,
@@ -200,8 +202,10 @@ export function NotificationProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const enableDesktopNotifications = useCallback(async () => {
-    setPermission(await requestDesktopNotifications());
-  }, []);
+    const result = await requestDesktopNotifications();
+    setPermission(result);
+    setPrefs({ desktop: result === 'granted' });
+  }, [setPrefs]);
 
   // Signed-out users see nothing (stale state is replaced on the next sign-in)
   const value: NotificationContextValue = {

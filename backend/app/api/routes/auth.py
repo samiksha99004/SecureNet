@@ -15,7 +15,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.dependencies import get_current_user
+from app.api.dependencies import forget_user, get_current_user, remember_user
 from app.core.config import settings
 from app.core.security import (
     LOGIN_TOKEN_TYPE,
@@ -62,6 +62,7 @@ from app.schemas.auth import (
     RefreshRequest,
     ResetPasswordRequest,
     SignupRequest,
+    UserPreferencesUpdate,
     UserResponse,
 )
 from app.schemas.common import MessageResponse
@@ -99,6 +100,7 @@ def normalize_email(email: str) -> str:
 
 def create_auth_response(user: User) -> AuthResponse:
     """Create authentication response with a fresh token pair"""
+    remember_user(user)   # the dashboard that opens next needs no user lookup
     return AuthResponse(
         user=UserResponse.model_validate(user),
         tokens=AuthTokens(
@@ -483,6 +485,7 @@ async def reset_password(request: ResetPasswordRequest, db: AsyncSession = Depen
     user.failed_login_attempts = 0
     user.locked_until = None
     await db.commit()
+    forget_user(user.id)
     logger.info(f"Password reset completed: {email}")
     return MessageResponse(message="Your password has been changed. Sign in with your new password.")
 
@@ -516,6 +519,22 @@ async def logout(current_user: User = Depends(get_current_user)):
 async def get_me(current_user: User = Depends(get_current_user)):
     """Get current authenticated user's profile"""
     return UserResponse.model_validate(current_user)
+
+
+@router.put("/me/preferences", response_model=UserResponse)
+async def update_preferences(
+    request: UserPreferencesUpdate,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Personal settings: attack alert emails on/off (sign-in and confirmation codes are always sent)."""
+    user = (await db.execute(select(User).where(User.id == current_user.id))).scalar_one()
+    user.email_alerts = request.email_alerts
+    await db.commit()
+    await db.refresh(user)
+    forget_user(user.id)
+    logger.info(f"Alert emails {'on' if user.email_alerts else 'off'} for {user.email}")
+    return UserResponse.model_validate(user)
 
 
 # ── Change your own details (name / phone / email) — confirmed by an emailed code ──
@@ -604,6 +623,7 @@ async def confirm_profile_change(
             setattr(user, field, changes[field])
     await db.commit()
     await db.refresh(user)
+    forget_user(user.id)
     logger.info(f"Profile changed for {old_email}: {sorted(changes)}")
 
     if "email" in changes:  # tell the old address (best effort)
@@ -689,5 +709,6 @@ async def confirm_password_change(
     user.locked_until = None
     user.updated_at = utcnow()
     await db.commit()
+    forget_user(user.id)
     logger.info(f"Password changed (code confirmed) for: {user.email}")
     return MessageResponse(message="Your password has been changed.")

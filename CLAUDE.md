@@ -172,6 +172,11 @@ session tokens**; `loginToken` = JWT type `login`, 15 min, bound to the password
 {loginToken} → new code (60 s cooldown). UI: `LoginForm` step 2 "Check your email" (`#login-code`, Verify and sign in,
 Resend code, Use a different account); `AuthContext.login` returns the challenge, `verifyLogin` signs in.
 **All emailed codes are valid 5 minutes** (`OTP_EXPIRE_MINUTES=5`, also in the owner's `.env`); max 5 tries per code.
+**Copy code (session 28)**: the email's *Copy code* button is a real link `DASHBOARD_URL/code#NNNNNN` (code in the
+#fragment, never sent to a server) → public `CopyCodePage` copies it (clipboard API, execCommand fallback) and
+`handOffCode()` (`utils/codeHandoff.ts`, BroadcastChannel + localStorage event, max 5 min old) fills it into every
+waiting code field via `useCodeHandoff` (LoginForm, OtpForm, ForgotPasswordForm, EditProfileCard,
+ChangePasswordCard). Same browser/PC only; on another device the digits are typed.
 **Code email design (session 27)**: `render_code_email()` in `utils/email.py` — subject `[SecureNet] <Sign-up | Sign-in |
 Password reset | Password change | Profile change> verification code` (like GitHub's), hidden preview line with the
 code, grey "Code requested" panel with one white box per digit, a "Copy code" pill holding the whole code (select +
@@ -199,6 +204,26 @@ password itself is never in the token) → `POST /auth/change-password/confirm` 
 **Attack emails**: every active non-admin user (+ Settings extra address) gets the normal alert; every admin gets
 `[SecureNet Admin] …` with *who turned the IDS on* (`IDSService.started_by`, set in `/ids/control`), the monitored
 computer, all registered users (name, email, phone, role) and full event details; both carry the incident report.
+
+**Personal preferences (session 28)**: *Settings → Preferences* — desktop notifications is a real switch
+(`prefs.desktop` in `sn_notification_prefs`; turning it on asks the browser for permission; if the browser blocked
+notifications the switch is disabled with how to unblock them). Attack alert emails on/off per account:
+`users.email_alerts` (migration `e6b1c9d4a2f7`, default true, applied to Neon), `PUT /auth/me/preferences`
+{emailAlerts}, `UserResponse.emailAlerts`; the notifier skips users who switched them off (codes are always sent).
+
+**Speed (session 28)** — the database is ~300 ms per round trip away (Neon us-east-2 from India) and every request
+used to cost 3–10 trips (≈3–5 s). Now: `dependencies.user_from_token` remembers the signed-in user 60 s (shared
+lookup for parallel requests; after expiry answered once from memory while re-checked in the background;
+`remember_user()` at sign-in, `forget_user()` after every account change); `services/cache.py` keeps dashboard
+answers (summary in 3 queries instead of 8, protocols, top sources, bell feed, daily reports, detection settings,
+contact) — `events_changed()` (IDS stores an event / resolve / false positive) drops `events:*` and re-loads them
+in the background, `settings_changed()` drops `settings:*`, old entries are served while refreshing, parallel
+requests share one load; loaders use their own sessions. `db/base.py`: `warm_up()` opens 4 connections at startup
+and runs user/event/settings queries on each (the first custom-type query on a connection costs ~3 s of type
+lookups), connections are replaced only after 4 min idle (`checkout` event), `keep_awake()` re-warms every 2 min
+while the IDS is on, a dashboard is open or a request came in during the last 5 min (Neon never cold-starts while
+in use; it may sleep when nobody uses SecureNet). Measured on Neon: all 9 dashboard requests 3–5 s → **~0.1 s**
+(first load after a restart ≈1.4 s, after sign-in ≈0.1 s). Moving Neon to Singapore (Q4) would cut the rest ~4×.
 
 **Rate limits (issue #7)**: per account (login lockout, 5 tries per code, 60 s resend) **plus per network address**
 (`app/utils/ratelimit.py`, in memory): 20 failed sign-ins / 15 min, 30 wrong codes / 15 min, 15 code emails / 15 min,
@@ -284,6 +309,15 @@ every time:          double-click START_SECURENET.bat  (right-click → Run as a
 - Electron: `npm run build:frontend` then `npm start` in `desktop\` (backend serves the SPA on :8000).
 
 ## 6. Verification status (2026-09-25)
+- **Session 28 — switches, Copy code, speed (2026-09-26):** backend **110/110** (new `tests/test_prefs_and_speed.py`:
+  alert-email switch + notifier skips opted-out users, 7 dashboard GETs need 0 queries when repeated, summary = 3
+  queries and refreshes after a new event / resolve, settings cache refreshed on change, expired user re-checked in
+  the background then refused; deleted-user test adapted to the 60 s window; email test checks the Copy code link).
+  Chrome `qa3/prefs-copy.js` **14/14**: desktop switch enabled, OFF/ON saved + kept after reload, alert-email switch
+  OFF saved on the account + kept after reload + back ON, sign-in email has `/code#NNNNNN`, copy page says Copied,
+  code on the clipboard, waiting sign-in tab filled in, signs in; 0 page errors. Neon migrated to `e6b1c9d4a2f7`
+  (3 users, alert emails on). Speed on the real backend + Neon (`qa3/speed.py`): 9 parallel dashboard requests
+  ~100 ms (was 3–5 s), `/ids/status` and `/dashboard/summary` ~8 ms; cold first load ≈1.4 s.
 - **Session 27 — empty dashboard while OFF + new code email (2026-09-26):** Chrome on the harness (fake capture, one
   past attack): OFF → 12 "IDS is off" notes, KPI "—", no hostname/counters/attack names on the dashboard, History
   still lists the attack and Reports still offers the download; ON → values, host network rate and the attack back;
@@ -512,6 +546,10 @@ every time:          double-click START_SECURENET.bat  (right-click → Run as a
 | P26 | Dashboard *Current Status* showed a green NORMAL while the IDS was OFF (nothing was being watched) | Session 26: neutral grey card "IDS IS OFF" + hint to press ON; NORMAL / attack name only while running; "CHECKING…" before the status loads |
 | P27 | Dashboard kept showing values (host network/uptime/OS, KPIs, charts, recent events) while the IDS was OFF | Session 27: every dashboard card empty with "IDS is off" while stopped; History/Reports unchanged |
 | P28 | Code emails were a plain "Your verification code is" page | Session 27: GitHub-style "[SecureNet] … verification code" email with a Code requested panel, digit boxes and a copyable code |
+| P29 | Desktop notifications could not be switched off once the browser allowed them (greyed "Allowed" button) | Session 28: real on/off switch |
+| P30 | Alert emails could not be switched off per user | Session 28: `users.email_alerts` + Preferences switch |
+| P31 | The email's Copy code pill was not a button | Session 28: real link → /code page copies + fills the waiting tab |
+| Q10 | Medium → fixed | App took ~5 s per page (8 queries × ~300 ms, user re-read every request, reconnect every 4 min, type lookups on new connections, Neon cold start) | Session 28: user + dashboard caches, 3-query summary, warm connections, idle-only replacement, keep-awake while in use → ~0.1 s |
 | P5 | First start on a fresh install could show the boot error while Vite prepared dependencies | `index.html` retries once automatically before reporting |
 | M14 | No alert notifications | Full notification system (pop-ups, bell feed, sound, desktop, batched emails to registered users, digest, test email) |
 | L1–L4, L6, L7, L9 | Deprecations, no-op middleware, unused deps, stats, clutter, LIKE escaping, unverified build | Fixed / archived |
@@ -577,3 +615,4 @@ every time:          double-click START_SECURENET.bat  (right-click → Run as a
 | 2026-09-26 (25) | **Sign-in with an emailed code, 5-minute codes, portable download, GitHub README** (owner: OTP for login and for personal-detail changes, code expiry 5 minutes; proper README with download/run steps; must not clash when run locally by others; push to GitHub). Personal-detail changes already required a code (session 18) — re-verified. Backend: `LOGIN_TOKEN_TYPE` + `create_login_token`, `LoginChallenge`/`LoginVerifyRequest`/`LoginResendRequest`, `send_login_code_email`, `/auth/login` → challenge, new `/auth/login/verify` + `/auth/login/resend`; `OTP_EXPIRE_MINUTES` 10 → 5 (config default, owner `.env`, `.env.example`); JWT secret validator. Frontend: `LoginChallenge` type, `verifyLogin`/`resendLoginCode`, AuthContext `login` → challenge + `verifyLogin`, `LoginForm` code step; guide step "Sign in safely". Portability: `securenet-env.ps1` (F: only if the owner's folders exist; port helpers), `START_SECURENET.ps1` (free ports, env for both servers, `-NoBrowser`), `SETUP.ps1` (creates `.env` with random secret), `check_setup.py` (example-URL check, `alembic upgrade head`), `scripts/autostart.py` (saved ports). Docs: new root `README.md`, `backend/README.md` refreshed. Tests: 104/104 pytest, Chrome 10/10 + 42/43, API 84/84, fresh-download + port-clash runs. Committed and pushed to GitHub. |
 | 2026-09-26 (26) | **"IDS IS OFF" instead of NORMAL** (owner: when detection is off it should not show normal). `IDSControlWidget.tsx`: status = IDS IS OFF while stopped (ShieldOff icon, hint "Your network is not being watched. Press ON to start monitoring."), NORMAL / latest unresolved attack only while running, CHECKING… / STATUS UNKNOWN before the status arrives; `.statusOff` + `.statusHint` in `IDSControlWidget.module.css` (theme tokens only). Chrome check on the harness in both themes. Committed and pushed to GitHub. |
 | 2026-09-26 (27) | **Dashboard empty while the IDS is OFF + GitHub-style code emails** (owner: when the IDS is off nothing on the dashboard should have values — only detection is off, History/Reports keep working; make the OTP email look like GitHub's "Code requested" email; update CLAUDE.md + README; push). Frontend: new `components/dashboard/IdsOffNote.tsx` (+ css), `idsOff` prop on HostStatusCard, SecuritySummaryCard, ProtocolDistributionCard, TopSourcesCard, DetectionReasonCard, RecentEventsTable, LiveAnomalyChart; IDSControlWidget hides counters/incident while off; DashboardPage `idsOff` / `idsPending`, polls only the IDS status while off and refetches when it turns on. Backend: `render_code_email()` + `_send_code(email, code, purpose, next_step)` with the new subjects; test added (105/105). README features/usage updated. Committed and pushed to GitHub. |
+| 2026-09-26 (28) | **Desktop + email alert switches, working Copy code button, speed** (owner: desktop notifications could not be turned off; email alerts on/off; the OTP copy button did not work; app took ~5 s, IDS must be fast; update CLAUDE.md + README and push every time). Backend: `users.email_alerts` + migration `e6b1c9d4a2f7` (applied to Neon), `PUT /auth/me/preferences`, notifier filter; `render_code_email` Copy code link; user cache (`remember_user`/`forget_user`, shared + background re-check), `services/cache.py` (events/settings caches, priming, stale-while-refresh), 3-query summary, loaders with own sessions, `db/base.py` warm-up with type priming, idle-only connection replacement, keep-awake. Frontend: `CopyCodePage` (/code), `utils/codeHandoff.ts` in all five code forms, desktop switch (`prefs.desktop`), alert-email switch, `User.emailAlerts`. Tests 110/110, Chrome 14/14, speed measured on Neon. Saved memory `push-after-every-change`. Committed and pushed. |

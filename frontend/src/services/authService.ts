@@ -85,6 +85,7 @@ function normaliseUser(raw: Record<string, unknown>): User | null {
     lastLoginAt: str('lastLoginAt', 'last_login_at'),
     avatarUrl: str('avatarUrl', 'avatar_url'),
     phoneNumber: str('phoneNumber', 'phone_number'),
+    emailAlerts: (raw.emailAlerts ?? raw.email_alerts) !== false,
   };
 }
 
@@ -192,6 +193,13 @@ export async function requestProfileChange(request: ProfileChangeRequest): Promi
 /** POST /auth/profile/confirm — step 2: the code applies the change; returns the updated profile. */
 export async function confirmProfileChange(changeToken: string, otp: string): Promise<User> {
   const user = await apiClient.post<User>('/auth/profile/confirm', { changeToken, otp });
+  storeUser(user);
+  return user;
+}
+
+/** PUT /auth/me/preferences — attack alert emails on/off; returns the updated profile. */
+export async function updatePreferences(emailAlerts: boolean): Promise<User> {
+  const user = await apiClient.put<User>('/auth/me/preferences', { emailAlerts });
   storeUser(user);
   return user;
 }

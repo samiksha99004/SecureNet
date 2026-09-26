@@ -24,6 +24,8 @@ export interface User {
   lastLoginAt: string | null;
   avatarUrl: string | null;
   phoneNumber: string | null;
+  /** attack alert emails on/off for this account */
+  emailAlerts: boolean;
 }
 
 // ── Auth Requests ─────────────────────────────────────────────────────────────

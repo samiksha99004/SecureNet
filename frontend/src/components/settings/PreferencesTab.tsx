@@ -3,12 +3,17 @@
  *
  * Personal app settings, saved on this device immediately:
  *   theme (dark / light), notifications on/off, notification sound,
- *   desktop notifications. Attack emails go to every registered user.
+ *   desktop notifications on/off (asks the browser for permission when needed).
+ * Attack alert emails on/off is stored with the account (PUT /auth/me/preferences).
  */
 
+import { useState } from 'react';
 import { Moon, Sun } from 'lucide-react';
 import { useAuth } from '../../contexts/AuthContext';
 import { useNotifications } from '../../contexts/NotificationContext';
+import { updatePreferences } from '../../services/authService';
+import { useToast } from '../common/Toast';
+import { errorMessage } from '../../utils/errors';
 import { playAlertSound } from '../../utils/alertChannels';
 import { useTheme, type Theme } from '../../utils/theme';
 import { SettingsSection } from './SettingsSection';
@@ -22,9 +27,23 @@ const THEMES: { id: Theme; label: string; icon: typeof Moon }[] = [
 ];
 
 export function PreferencesTab() {
-  const { user } = useAuth();
+  const { user, completeLogin } = useAuth();
   const [theme, setTheme] = useTheme();
   const { prefs, setPrefs, desktopPermission, enableDesktopNotifications } = useNotifications();
+  const { showToast } = useToast();
+  const [savingEmail, setSavingEmail] = useState(false);
+
+  async function saveEmailAlerts(on: boolean) {
+    setSavingEmail(true);
+    try {
+      completeLogin(await updatePreferences(on));
+      showToast({ message: on ? 'Attack alert emails are on.' : 'Attack alert emails are off.', variant: 'success' });
+    } catch (err) {
+      showToast({ message: errorMessage(err, 'Could not save this setting.'), variant: 'error' });
+    } finally {
+      setSavingEmail(false);
+    }
+  }
 
   return (
     <div className={styles.tabContent}>
@@ -77,34 +96,37 @@ export function PreferencesTab() {
           id="pref-desktop"
           label="Desktop Notifications"
           hint={
-            desktopPermission === 'granted'
-              ? 'Allowed by the browser.'
-              : desktopPermission === 'denied'
-              ? 'Blocked by the browser — allow notifications for this site in the browser settings.'
+            desktopPermission === 'denied'
+              ? 'Blocked by the browser. Allow notifications for this site in the browser’s site settings (the icon left of the address), then switch this on.'
               : desktopPermission === 'unsupported'
               ? 'This browser does not support desktop notifications.'
-              : 'Allow the browser to show SecureNet alerts on your desktop.'
+              : 'Show attack alerts on your desktop while SecureNet is in the background.'
           }
-          type="custom"
-        >
-          <button
-            type="button"
-            className={local.button}
-            onClick={() => void enableDesktopNotifications()}
-            disabled={desktopPermission !== 'default'}
-          >
-            {desktopPermission === 'granted' ? 'Allowed' : 'Allow'}
-          </button>
-        </SettingsField>
+          type="toggle"
+          checked={prefs.desktop && desktopPermission === 'granted'}
+          disabled={desktopPermission === 'denied' || desktopPermission === 'unsupported'}
+          onChange={(on) => {
+            if (on && desktopPermission !== 'granted') void enableDesktopNotifications();
+            else setPrefs({ desktop: on });
+          }}
+        />
       </SettingsSection>
 
       <SettingsSection
         title="Email Alerts"
-        description="Every registered user is emailed when an attack is detected, with the incident report attached."
+        description="An email with the incident report when an attack is detected. Sign-in and confirmation codes are always emailed."
       >
-        <p className={local.note}>
-          Alerts are sent to <strong>{user?.email}</strong>.
-        </p>
+        <SettingsField
+          id="pref-email-alerts"
+          label="Attack Alert Emails"
+          hint={user?.emailAlerts === false
+            ? `Off — no attack emails are sent to ${user?.email ?? 'you'}.`
+            : `On — sent to ${user?.email ?? 'your email'}.`}
+          type="toggle"
+          checked={user?.emailAlerts !== false}
+          disabled={savingEmail}
+          onChange={(on) => void saveEmailAlerts(on)}
+        />
       </SettingsSection>
     </div>
   );

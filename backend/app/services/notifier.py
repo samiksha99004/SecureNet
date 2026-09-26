@@ -96,8 +96,9 @@ async def split_recipients(db, prefs: Optional[NotificationSettings]):
     users = (await db.execute(
         select(User).where(User.account_status == AccountStatus.ACTIVE).order_by(User.created_at)
     )).scalars().all()
-    admins = {u.email.strip().lower() for u in users if u.role == UserRole.ADMIN}
-    regular = {u.email.strip().lower() for u in users if u.role != UserRole.ADMIN}
+    wanting = [u for u in users if u.email_alerts]      # each user can switch alert emails off
+    admins = {u.email.strip().lower() for u in wanting if u.role == UserRole.ADMIN}
+    regular = {u.email.strip().lower() for u in wanting if u.role != UserRole.ADMIN}
     if prefs is not None and prefs.email_address:
         extra = prefs.email_address.strip().lower()
         if extra not in admins:
@@ -107,7 +108,8 @@ async def split_recipients(db, prefs: Optional[NotificationSettings]):
 
 async def get_recipients(db, prefs: Optional[NotificationSettings]) -> List[str]:
     """All active registered users + the optional extra address from Settings."""
-    rows = await db.execute(select(User.email).where(User.account_status == AccountStatus.ACTIVE))
+    rows = await db.execute(select(User.email).where(User.account_status == AccountStatus.ACTIVE,
+                                                     User.email_alerts.is_(True)))
     recipients = {email.strip().lower() for (email,) in rows if email}
     if prefs is not None and prefs.email_address:
         recipients.add(prefs.email_address.strip().lower())

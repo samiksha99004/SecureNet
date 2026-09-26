@@ -13,6 +13,7 @@ import { useState } from 'react';
 import { Power, Shield, ShieldOff, AlertTriangle, Info } from 'lucide-react';
 import { useToast } from '../common/Toast';
 import { useAuth } from '../../contexts/AuthContext';
+import { useNotifications } from '../../contexts/NotificationContext';
 import {
   DETECTOR_LABELS,
   startIDS,
@@ -39,6 +40,7 @@ export function IDSControlWidget({
 }: IDSControlWidgetProps) {
   const { showToast } = useToast();
   const { isAdmin } = useAuth();
+  const { prefs } = useNotifications();
   const [isBusy, setIsBusy] = useState(false);
 
   const isEnabled = idsStatus?.enabled ?? false;
@@ -64,7 +66,7 @@ export function IDSControlWidget({
     if (isEnabled) {
       void run(stopIDS, 'IDS stopped');
     } else {
-      void requestDesktopNotifications();
+      if (prefs.desktop) void requestDesktopNotifications();   // only asks the browser once
       void run(() => startIDS('monitor'), 'IDS started');
     }
   }

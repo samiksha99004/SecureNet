@@ -28,6 +28,12 @@ class UserResponse(CamelModel):
     last_login_at: Optional[UtcDatetime] = None
     avatar_url: Optional[str] = None
     phone_number: Optional[str] = None
+    email_alerts: bool = True
+
+
+class UserPreferencesUpdate(CamelModel):
+    """Personal settings stored with the account."""
+    email_alerts: bool
 
 
 # ── Auth Requests ─────────────────────────────────────────────────────────────

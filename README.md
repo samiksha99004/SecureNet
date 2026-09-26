@@ -32,16 +32,22 @@ unusual traffic flows, then **XGBoost** names the attack type (categories from t
 - **Live monitoring**: turn the IDS **ON / OFF** from the dashboard; live score graph, traffic counters and
   a status card. While the IDS is **OFF** the dashboard shows no values at all (every card says
   *"IDS is off"*); past events stay available in History and Reports.
-- **Instant alerts**: on-screen pop-ups, a notification bell, an alert sound and Windows desktop notifications.
+- **Instant alerts**: on-screen pop-ups, a notification bell, an alert sound and Windows desktop notifications
+  — each can be switched on or off in *Settings → Preferences* (desktop notifications ask the browser for
+  permission the first time).
 - **Email alerts**: every registered user gets an email for each attack (grouped into one email when there
-  are many), with the incident report attached. The admin gets a detailed copy.
+  are many), with the incident report attached. The admin gets a detailed copy. Each user can switch their
+  own alert emails off and on again (*Settings → Preferences → Attack Alert Emails*).
 - **Daily reports**: one box per day with attacks, downloadable as `.txt`, `.csv` or `.pdf`.
 - **Incident history**: search, filter, sort and export every detected event.
 - **Safe accounts**: every sign-up, **every sign-in**, every password change and every change to your
   personal details is confirmed with a **6-digit code sent to your email** (valid for 5 minutes).
   The email, *"[SecureNet] Sign-in verification code"*, shows the code in a **"Code requested"** panel
-  with one box per digit plus the whole code ready to select and copy; Gmail also adds its own
-  *Copy code* button to such emails. Repeated wrong passwords or codes are blocked.
+  with one box per digit and a **Copy code** button: it opens a small SecureNet page that copies the code
+  and fills it into the SecureNet tab that is waiting for it (on another device just type the digits).
+  Repeated wrong passwords or codes are blocked.
+- **Fast**: the dashboard answers from memory (about 0.1 s) and the cloud database is kept awake while
+  SecureNet is in use, so pages don't wait for a far-away database.
 - **Stays on**: if you shut down the computer while the IDS is ON, it turns itself back on when you
   start the computer again and shows *"SecureNet is on and is monitoring."*
 - **Two roles**: the **Admin** configures detection, email alerts and the whitelist; every other account is a
@@ -190,7 +196,8 @@ right-click → **Run as administrator**.
 4. **Look back** (works whether the IDS is on or off): *History* lists every incident; *Reports* has one
    downloadable report per day with attacks.
 5. **Your account**: *Account* → change your name, phone, email or password (each confirmed with an
-   emailed code).
+   emailed code). *Settings → Preferences*: theme, pop-ups, sound, desktop notifications on/off and
+   attack alert emails on/off.
 6. **Admin only**: *Settings* → Detection (sensitivity), Email Alerts (who gets what, test email),
    Whitelist (trusted addresses), Model, System (contact details shown on the Support page).
 7. **Shutting down**: if the IDS is ON when you shut down, it turns itself back on after the next start

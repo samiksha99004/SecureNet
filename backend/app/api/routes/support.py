@@ -21,12 +21,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.dependencies import get_current_user
 from app.api.routes.settings_routes import get_or_create
 from app.core.config import settings
-from app.db.base import get_db
+from app.db.base import AsyncSessionLocal, get_db
 from app.models.settings import SystemSettings
 from app.models.support import SupportMessage
 from app.models.user import User
 from app.schemas.common import MessageResponse
 from app.schemas.settings import ContactInfo, SupportMessageRequest
+from app.services.cache import cached
 from app.utils import ratelimit
 from app.utils.email import EmailDeliveryError, send_email
 from app.utils.logger import logger
@@ -45,14 +46,23 @@ def _admin_email() -> Optional[str]:
 
 
 @router.get("/contact", response_model=ContactInfo)
-async def get_contact(db: AsyncSession = Depends(get_db)):
-    row = await get_or_create(db, SystemSettings)
+async def get_contact():
+    return await cached_contact()
+
+
+async def _load_contact() -> ContactInfo:
+    async with AsyncSessionLocal() as db:
+        row = await get_or_create(db, SystemSettings)
     return ContactInfo(
         website=row.contact_website,
         phone=row.contact_phone,
         email=row.contact_email or _admin_email(),
         address=row.contact_address,
     )
+
+
+async def cached_contact() -> ContactInfo:
+    return await cached("settings:contact", _load_contact, ttl=300)
 
 
 async def _check_rate(db: AsyncSession, user: User) -> None:

@@ -23,6 +23,7 @@ import { isValidOtp } from '../../utils/validation';
 import { AuthButton } from './AuthButton';
 import { Spinner } from '../common/LoadingState';
 import styles from './OtpForm.module.css';
+import { useCodeHandoff } from '../../utils/codeHandoff';
 
 const OTP_LENGTH = 6;
 const RESEND_COOLDOWN_SECONDS = 60;
@@ -45,6 +46,9 @@ export function OtpForm() {
   const inputRefs = useRef<Array<HTMLInputElement | null>>(
     Array(OTP_LENGTH).fill(null)
   );
+
+  // "Copy code" in the email fills the six boxes
+  useCodeHandoff((c) => { setDigits(c.split('')); setError(null); });
 
   // Countdown timer for resend cooldown
   useEffect(() => {

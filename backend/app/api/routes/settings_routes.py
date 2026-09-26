@@ -14,7 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 import uuid
 
 from app.api.dependencies import get_current_user, require_admin
-from app.db.base import get_db
+from app.db.base import AsyncSessionLocal, get_db
 from app.ml.ids_service import get_ids_service
 from app.models.settings import (
     DetectionSettings,
@@ -38,6 +38,7 @@ from app.schemas.settings import (
     SystemSettingsUpdate,
     WhitelistEntryResponse,
 )
+from app.services.cache import cached, settings_changed
 from app.utils.logger import logger
 from app.utils.timeutil import utcnow
 
@@ -67,6 +68,7 @@ async def _apply_update(db: AsyncSession, model, updates, user: User):
     row.updated_by = user.id
     await db.commit()
     await db.refresh(row)
+    settings_changed()
     await get_ids_service().reload_config()
     logger.info(f"{model.__tablename__} updated by {user.email}")
     return row
@@ -84,7 +86,16 @@ async def get_all_settings(current_user: User = Depends(get_current_user), db: A
 
 @router.get("/detection", response_model=DetectionSettingsResponse)
 async def get_detection_settings(current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
-    return DetectionSettingsResponse.model_validate(await get_or_create(db, DetectionSettings))
+    return await cached_detection_settings()
+
+
+async def _load_detection_settings() -> DetectionSettingsResponse:
+    async with AsyncSessionLocal() as db:
+        return DetectionSettingsResponse.model_validate(await get_or_create(db, DetectionSettings))
+
+
+async def cached_detection_settings() -> DetectionSettingsResponse:
+    return await cached("settings:detection", _load_detection_settings, ttl=300)
 
 
 @router.put("/detection", response_model=DetectionSettingsResponse)

@@ -16,11 +16,12 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.dependencies import get_current_user
-from app.db.base import get_db
+from app.db.base import AsyncSessionLocal, get_db
 from app.models.security_event import SecurityEvent
 from app.models.user import User
 from app.schemas.report import DailyReport
 from app.services import exporters, incident_report
+from app.services.cache import cached
 
 router = APIRouter(prefix="/reports", tags=["Reports"])
 
@@ -40,11 +41,16 @@ async def list_daily_reports(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Days with detected attacks, newest first (empty when nothing has happened)."""
-    rows = (await db.execute(
-        select(SecurityEvent.timestamp, SecurityEvent.severity, SecurityEvent.attack_type, SecurityEvent.source_ip)
-        .order_by(SecurityEvent.timestamp)
-    )).all()
+    """Days with detected attacks, newest first (empty when nothing has happened; cached until events change)."""
+    return await cached(f"events:daily:{tz_offset}", lambda: _daily_reports(tz_offset), ttl=300)
+
+
+async def _daily_reports(tz_offset: int) -> list[DailyReport]:
+    async with AsyncSessionLocal() as db:
+        rows = (await db.execute(
+            select(SecurityEvent.timestamp, SecurityEvent.severity, SecurityEvent.attack_type, SecurityEvent.source_ip)
+            .order_by(SecurityEvent.timestamp)
+        )).all()
     days: dict[date, list] = defaultdict(list)
     for row in rows:
         days[incident_report.to_local(row.timestamp, tz_offset).date()].append(row)

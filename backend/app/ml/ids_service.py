@@ -41,6 +41,7 @@ from app.models.settings import (
 )
 from app.utils.logger import logger
 from app.utils.timeutil import to_iso_z, utcnow
+from app.services.cache import events_changed
 from app.services.notifier import get_notifier
 from app.websocket.manager import manager
 
@@ -368,6 +369,7 @@ class IDSService:
             db.add(event)
             await db.commit()
             await db.refresh(event)
+        events_changed()   # dashboard / reports / bell show it straight away
 
         await self._broadcast_score(flow, detection, severity, throttle=False)
         await manager.send_alert(alert_payload(event))
