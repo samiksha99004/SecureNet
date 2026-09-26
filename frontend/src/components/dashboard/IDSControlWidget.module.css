@@ -157,6 +157,18 @@
   border: 1px solid var(--tint-high-border);
 }
 
+/* IDS stopped: neutral — nothing is being watched, so nothing is "normal" */
+.statusOff {
+  color: var(--color-text-muted);
+  background: var(--color-bg-tertiary);
+  border: 1px solid var(--color-border);
+}
+
+.statusHint {
+  font-size: var(--text-sm);
+  color: var(--color-text-secondary);
+}
+
 .statusIcon {
   color: inherit;
 }

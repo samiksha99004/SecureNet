@@ -4,12 +4,13 @@
  * ON / OFF control plus live IDS status:
  *  - power toggle (every signed-in user). ON = capture, detect, alert + email.
  *  - capture + detector state (clearly says when no model is loaded)
- *  - current status: NORMAL or the latest incident's attack category
+ *  - current status: IDS IS OFF while stopped; when running NORMAL or the latest
+ *    unresolved incident's attack category
  *  - live counters from the backend
  */
 
 import { useState } from 'react';
-import { Power, Shield, AlertTriangle, Info } from 'lucide-react';
+import { Power, Shield, ShieldOff, AlertTriangle, Info } from 'lucide-react';
 import { useToast } from '../common/Toast';
 import { useAuth } from '../../contexts/AuthContext';
 import {
@@ -68,9 +69,16 @@ export function IDSControlWidget({
     }
   }
 
-  const statusLabel = hasAbnormalEvent
-    ? (latestEvent.attackType ?? 'UNCLASSIFIED ANOMALY').toUpperCase()
-    : 'NORMAL';
+  // "Normal" is only claimed while the IDS is actually watching
+  const isOff = !isEnabled;
+  const statusLabel = !idsStatus
+    ? (isLoading ? 'CHECKING…' : 'STATUS UNKNOWN')
+    : isOff
+      ? 'IDS IS OFF'
+      : hasAbnormalEvent
+        ? (latestEvent.attackType ?? 'UNCLASSIFIED ANOMALY').toUpperCase()
+        : 'NORMAL';
+  const cardStyle = isOff ? styles.statusOff : hasAbnormalEvent ? styles.statusAbnormal : styles.statusNormal;
 
   return (
     <div className={styles.widget}>
@@ -117,13 +125,16 @@ export function IDSControlWidget({
 
       {/* ── Current status ────────────────────────────────────────────────── */}
       <div className={styles.statusSection}>
-        <div className={`${styles.statusCard} ${hasAbnormalEvent ? styles.statusAbnormal : styles.statusNormal}`}>
+        <div className={`${styles.statusCard} ${cardStyle}`}>
           <div className={styles.statusIcon}>
-            {hasAbnormalEvent ? <AlertTriangle size={22} /> : <Shield size={22} />}
+            {isOff ? <ShieldOff size={22} /> : hasAbnormalEvent ? <AlertTriangle size={22} /> : <Shield size={22} />}
           </div>
           <div className={styles.statusContent}>
             <span className={styles.statusLabel}>Current Status</span>
             <span className={styles.statusValue}>{statusLabel}</span>
+            {idsStatus && isOff && (
+              <span className={styles.statusHint}>Your network is not being watched. Press ON to start monitoring.</span>
+            )}
           </div>
           <div className={styles.detectorInfo}>
             <span className={styles.statusLabel}>{isAdmin ? 'Detector' : 'Detection'}</span>
