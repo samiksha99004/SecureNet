@@ -16,6 +16,7 @@ import { ErrorState } from '../common/ErrorState';
 import { formatTimestamp, formatScore } from '../../utils/format';
 import type { SortOrder } from '../../hooks/useEventFilters';
 import styles from './EventsTable.module.css';
+import { possibleAttack } from '../../utils/verdict';
 
 interface Column {
   key: string;
@@ -29,7 +30,7 @@ const COLUMNS: Column[] = [
   { key: 'destinationIp',   label: 'Destination',   sortable: false },
   { key: 'anomalyScore',    label: 'Score',         sortable: true  },
   { key: 'severity',        label: 'Severity',      sortable: true  },
-  { key: 'attackType',      label: 'Attack Type',   sortable: true  },
+  { key: 'attackType',      label: 'Possible Attack', sortable: true  },
   { key: 'state',           label: 'State',         sortable: true  },
   { key: 'actionTaken',     label: 'Action',        sortable: false },
 ];
@@ -166,8 +167,8 @@ export function EventsTable({
                 <SeverityBadge severity={event.severity} />
               </td>
               <td className={styles.td}>
-                {event.attackType ?? (
-                  <span className={styles.normal}>Unclassified</span>
+                {event.attackType || event.attackGuesses?.length ? possibleAttack(event) : (
+                  <span className={styles.normal}>Unknown</span>
                 )}
               </td>
               <td className={styles.td}>

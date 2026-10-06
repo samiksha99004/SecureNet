@@ -9,7 +9,7 @@ import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Bell, BellRing, CheckCheck, Monitor, Volume2, VolumeX, MessageSquareWarning } from 'lucide-react';
 import { useNotifications } from '../../contexts/NotificationContext';
-import { titleOf } from '../../utils/notifications';
+import { guessOf, titleOf } from '../../utils/notifications';
 import { formatTimestamp } from '../../utils/format';
 import styles from './NotificationBell.module.css';
 import { storageSet } from '../../utils/storage';
@@ -145,7 +145,7 @@ export function NotificationBell() {
                         {item.actionTaken === 'blocked' && <span className={styles.blockedTag}>blocked</span>}
                       </span>
                       <span className={styles.itemMeta}>
-                        {item.severity.toUpperCase()} · {item.sourceIp} → {item.destinationIp}:{item.destinationPort}
+                        Possible attack: {guessOf(item)} · {item.severity.toUpperCase()} · {item.sourceIp} → {item.destinationIp}:{item.destinationPort}
                       </span>
                       <span className={styles.itemTime}>{formatTimestamp(item.timestamp)}</span>
                     </span>

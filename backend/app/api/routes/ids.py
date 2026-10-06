@@ -5,7 +5,7 @@ Turn the IDS OFF / ON and choose Detection ("monitor") or Protection
 ("protect") mode.
 """
 
-from typing import Literal, Optional
+from typing import List, Literal, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, status
 
@@ -36,6 +36,28 @@ class IDSStatusResponse(CamelModel):
     attacks_detected: int
     blocked_ips: int
     uptime_seconds: int
+    alerts_not_stored: int = 0           # attack-storm incidents counted but not stored
+    verdicts: Optional["VerdictSummary"] = None
+
+
+class GuessRow(CamelModel):
+    """Table 2 row: how many flagged flows stage 2 thought were this class."""
+    label: str
+    flows: int
+    cancelled: bool = False              # "Benign": stage 2 cancelled the alarm
+
+
+class VerdictSummary(CamelModel):
+    """Table 1 / Table 2 / final verdict since the IDS was turned on."""
+    scored: int
+    normal: int
+    abnormal: int
+    guesses: List[GuessRow] = []
+    final_normal: int
+    final_abnormal: int
+
+
+IDSStatusResponse.model_rebuild()
 
 
 class IDSControlRequest(CamelModel):

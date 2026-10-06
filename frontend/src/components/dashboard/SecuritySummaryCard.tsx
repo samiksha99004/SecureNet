@@ -123,9 +123,9 @@ export function SecuritySummaryCard({
 
           {/* Attack type distribution */}
           <section aria-label="Attack type distribution">
-            <p className={styles.sectionLabel}>Attack Classification</p>
+            <p className={styles.sectionLabel}>Possible Attacks (model’s guess)</p>
             {data.attackTypeDistribution.length === 0 ? (
-              <p className={styles.noData}>No attack classifications yet.</p>
+              <p className={styles.noData}>No abnormal traffic yet.</p>
             ) : (
               <ul className={styles.attackList} role="list">
                 {data.attackTypeDistribution.slice(0, 6).map((item) => (

@@ -44,7 +44,7 @@ export function DetectionReasonCard({
       {!idsOff && attackType && (
         <div className={styles.meta}>
           <span className={styles.attackLabel}>
-            {attackType}
+            Possible attack: {attackType}
             {confidence !== null && (
               <span className={styles.confidence}>
                 {(confidence * 100).toFixed(0)}% confidence

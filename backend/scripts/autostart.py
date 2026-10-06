@@ -55,4 +55,5 @@ if port_in_use(PORT):
 import uvicorn  # noqa: E402
 
 print("Starting SecureNet backend at Windows sign-in (the IDS was on).")
-uvicorn.run("app.main:app", host="127.0.0.1", port=PORT, log_level="warning")
+uvicorn.run("app.main:app", host="127.0.0.1", port=PORT, log_level="warning",
+            ws_max_size=65536, server_header=False)

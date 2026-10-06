@@ -36,6 +36,7 @@ from app.models.user import AccountStatus, User, UserRole
 from app.services.incident_report import render_text, report_filename, server_offset_minutes, to_local, tz_label
 from app.utils.email import Attachment, EmailDeliveryError, send_email
 from app.utils.logger import logger
+from app.services.verdict import ABNORMAL, guesses_text, possible_attack
 from app.utils.timeutil import parse_iso_utc, to_iso_z, utcnow
 
 SEVERITY_COLORS = {"high": "#dc2626", "medium": "#d97706", "low": "#059669"}
@@ -56,6 +57,8 @@ class AlertInfo:
     anomaly_score: float
     action: str
     reason: Optional[str]
+    confidence: Optional[float] = None
+    guesses: Optional[list] = None
 
     @classmethod
     def from_event(cls, e: SecurityEvent) -> "AlertInfo":
@@ -72,11 +75,18 @@ class AlertInfo:
             anomaly_score=float(e.anomaly_score),
             action=e.action_taken.value,
             reason=e.detection_reason,
+            confidence=e.confidence,
+            guesses=e.attack_guesses,
         )
 
     @property
     def title(self) -> str:
-        return self.attack_type or "Unclassified anomaly"
+        return ABNORMAL
+
+    @property
+    def guess(self) -> str:
+        """The model's best guess of which attack it might be."""
+        return possible_attack(self.attack_type, self.confidence, self.guesses)
 
 
 def wanted(alert: AlertInfo, prefs: NotificationSettings) -> bool:
@@ -143,7 +153,7 @@ def render_alert_email(alerts: Sequence[AlertInfo], heading: str) -> tuple[str, 
     text_lines = [heading, ""]
     for a in shown:
         text_lines.append(
-            f"[{a.severity.upper()}] {a.title} — {a.source_ip}:{a.source_port} → "
+            f"[{a.severity.upper()}] {a.title} (possible attack: {a.guess}) — {a.source_ip}:{a.source_port} → "
             f"{a.destination_ip}:{a.destination_port} ({a.protocol}) score {a.anomaly_score:.3f}, "
             f"at {local_time(a.timestamp)}"
         )
@@ -158,6 +168,7 @@ def render_alert_email(alerts: Sequence[AlertInfo], heading: str) -> tuple[str, 
             <span style="background:{SEVERITY_COLORS.get(a.severity, '#64748b')};color:#fff;border-radius:4px;
                          padding:2px 6px;font-size:11px;font-weight:bold">{_esc(a.severity.upper())}</span></td>
           <td style="padding:8px;border-bottom:1px solid #e2e8f0"><b>{_esc(a.title)}</b><br>
+            Possible attack: {_esc(a.guess)}<br>
             <span style="color:#64748b;font-size:12px">{_esc(a.reason or '')}</span></td>
           <td style="padding:8px;border-bottom:1px solid #e2e8f0;font-family:monospace">
             {_esc(a.source_ip)}:{a.source_port}<br>→ {_esc(a.destination_ip)}:{a.destination_port} {_esc(a.protocol)}</td>
@@ -175,7 +186,7 @@ def render_alert_email(alerts: Sequence[AlertInfo], heading: str) -> tuple[str, 
       <h2 style="margin:0 0 12px;color:#0f172a">{_esc(heading)}</h2>
       <table style="width:100%;border-collapse:collapse;font-size:13px;color:#0f172a">
         <tr style="text-align:left;color:#64748b;font-size:11px;text-transform:uppercase">
-          <th style="padding:8px">Severity</th><th style="padding:8px">Attack</th><th style="padding:8px">Flow</th>
+          <th style="padding:8px">Severity</th><th style="padding:8px">Verdict</th><th style="padding:8px">Flow</th>
           <th style="padding:8px">Score</th><th style="padding:8px">Action</th><th style="padding:8px">Time</th></tr>
         {rows}
       </table>
@@ -194,9 +205,11 @@ def alert_subject(alerts: Sequence[AlertInfo]) -> str:
     high = sum(1 for a in alerts if a.severity == "high")
     worst = most_severe(alerts)
     if len(alerts) == 1:
-        return f"[{settings.APP_NAME}] Attack detected ({worst.severity.upper()}): {worst.title} from {worst.source_ip}"
+        return (f"[{settings.APP_NAME}] {ABNORMAL} ({worst.severity.upper()}) from {worst.source_ip}"
+                f" — possible attack: {worst.guess}")
     extra = f" ({high} HIGH)" if high else ""
-    return f"[{settings.APP_NAME}] {len(alerts)} attacks detected{extra} — most severe: {worst.title}"
+    return (f"[{settings.APP_NAME}] {ABNORMAL}: {len(alerts)} alerts{extra}"
+            f" — most severe possible attack: {worst.guess}")
 
 
 # ── Notifier service ─────────────────────────────────────────────────────────
@@ -256,7 +269,9 @@ def render_admin_email(events: Sequence[SecurityEvent], heading: str, registered
         fields = [
             ("Event ID", str(e.id)),
             ("Time", when(e.timestamp)),
-            ("Attack", e.attack_type or "Unclassified anomaly"),
+            ("Verdict", ABNORMAL),
+            ("Possible attack", possible_attack(e.attack_type, e.confidence, e.attack_guesses)),
+            ("Model's guesses", guesses_text(e.attack_guesses)),
             ("Severity", e.severity.value.upper()),
             ("Confidence", f"{e.confidence * 100:.0f}%" if e.confidence is not None else "-"),
             ("Anomaly score", f"{e.anomaly_score:.3f}"),

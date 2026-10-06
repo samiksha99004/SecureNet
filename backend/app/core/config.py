@@ -57,10 +57,17 @@ class Settings(BaseSettings):
 
     # CORS
     CORS_ORIGINS: str = "http://localhost:5173"
+    # Host names this backend answers to (anything else is refused: DNS-rebinding protection).
+    # "*" turns the check off. SecureNet only listens on this computer (127.0.0.1).
+    ALLOWED_HOSTS: str = "localhost,127.0.0.1,::1"
 
     @property
     def admin_emails(self) -> set[str]:
         return {e.strip().lower() for e in self.ADMIN_EMAILS.split(",") if e.strip()}
+
+    @property
+    def allowed_hosts_list(self) -> List[str]:
+        return [h.strip() for h in self.ALLOWED_HOSTS.split(",") if h.strip()]
 
     @property
     def cors_origins_list(self) -> List[str]:
@@ -124,7 +131,11 @@ class Settings(BaseSettings):
     # computer restarts it turns itself back on and shows a desktop notice.
     # Turning it OFF removes both. (The test-suite switches all of this off.)
     IDS_AUTOSTART: bool = True
-    IDS_ON_AT_STARTUP: bool = True       # live monitoring as soon as the backend starts
+    IDS_ON_AT_STARTUP: bool = True
+    # An attack storm must not flood the database, emails and dashboards: at most this many
+    # incidents are stored per minute (and per source address); the rest are counted only.
+    ALERT_STORE_MAX_PER_MINUTE: int = 120
+    ALERT_STORE_MAX_PER_SOURCE_PER_MINUTE: int = 30       # live monitoring as soon as the backend starts
     IDS_STATE_FILE: str = "./data/ids-state.json"
     IDS_STARTUP_DIR: str = ""            # empty = the Windows Startup folder of this user
     DESKTOP_NOTIFICATIONS: bool = True

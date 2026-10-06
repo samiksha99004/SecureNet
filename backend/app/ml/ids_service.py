@@ -22,6 +22,7 @@ from __future__ import annotations
 import asyncio
 import ipaddress
 import time
+from collections import Counter, deque
 from dataclasses import dataclass, field
 from typing import List, Optional
 
@@ -43,6 +44,7 @@ from app.utils.logger import logger
 from app.utils.timeutil import to_iso_z, utcnow
 from app.services.cache import events_changed
 from app.services.notifier import get_notifier
+from app.services.verdict import ABNORMAL, BENIGN_NAMES, possible_attack
 from app.websocket.manager import manager
 
 QUEUE_SIZE = 10_000
@@ -59,14 +61,21 @@ PRESET_OFFSETS = {
 }
 
 
+BENIGN_GUESS = "Benign"            # Table 2 row: stage 2 cancelled the alarm
+UNCLASSIFIED_GUESS = "Unclassified"
+
+
 def alert_payload(event: SecurityEvent) -> dict:
     """WebSocket `alert` payload (same shape as GET /api/notifications items)."""
-    title = event.attack_type or "Unclassified anomaly"
+    guess = possible_attack(event.attack_type, event.confidence, event.attack_guesses)
     return {
         "eventId": str(event.id),
         "timestamp": to_iso_z(event.timestamp),
         "severity": event.severity.value,
+        "verdict": "abnormal",
         "attackType": event.attack_type,
+        "confidence": event.confidence,
+        "possibleAttack": guess,
         "sourceIp": event.source_ip,
         "sourcePort": event.source_port,
         "destinationIp": event.destination_ip,
@@ -74,8 +83,8 @@ def alert_payload(event: SecurityEvent) -> dict:
         "protocol": event.protocol.value,
         "anomalyScore": round(float(event.anomaly_score), 4),
         "actionTaken": event.action_taken.value,
-        "message": f"{title} from {event.source_ip} → {event.destination_ip}:{event.destination_port} "
-                   f"(score {event.anomaly_score:.2f}, {event.action_taken.value})",
+        "message": f"{ABNORMAL} from {event.source_ip} → {event.destination_ip}:{event.destination_port} "
+                   f"— possible attack: {guess} (score {event.anomaly_score:.2f})",
     }
 
 
@@ -120,6 +129,18 @@ class IDSService:
         self.flows_dropped = 0
         self.anomalies_detected = 0
         self.attacks_detected = 0
+        self.reset_verdicts()
+        # storm limit: times of recently stored incidents (all / per source address)
+        self._stored_times: deque = deque()
+        self._stored_by_source: dict = {}
+        self.alerts_not_stored = 0
+
+    def reset_verdicts(self) -> None:
+        """Counters behind the dashboard's verdict tables (since the IDS was turned on)."""
+        self.flows_scored = 0
+        self.flows_normal = 0          # stage 1: not unusual
+        self.flows_flagged = 0         # stage 1: abnormal
+        self.guess_counts: Counter = Counter()   # stage 2's best guess for each flagged flow
 
     # ── lifecycle ────────────────────────────────────────────────────────────
 
@@ -175,6 +196,7 @@ class IDSService:
             self.capture_error = None
             self.enabled = True
             self.started_at = time.time()
+            self.reset_verdicts()
             self._tasks = [
                 asyncio.create_task(self._worker(), name="ids-worker"),
                 asyncio.create_task(self._maintenance(), name="ids-maintenance"),
@@ -288,6 +310,25 @@ class IDSService:
             "attacks_detected": self.attacks_detected,
             "blocked_ips": len(self.blocker.blocked),
             "uptime_seconds": int(time.time() - self.started_at) if self.started_at else 0,
+            "alerts_not_stored": self.alerts_not_stored,
+            "verdicts": self.verdict_summary(),
+        }
+
+    def verdict_summary(self) -> dict:
+        """Table 1 (stage 1: normal vs abnormal), Table 2 (stage 2's guess for every
+        flagged flow) and the final verdict, counted since the IDS was turned on."""
+        cancelled = self.guess_counts.get(BENIGN_GUESS, 0)
+        guesses = [
+            {"label": label, "flows": n, "cancelled": label == BENIGN_GUESS}
+            for label, n in sorted(self.guess_counts.items(), key=lambda t: (-t[1], t[0]))
+        ]
+        return {
+            "scored": self.flows_scored,
+            "normal": self.flows_normal,
+            "abnormal": self.flows_flagged,
+            "guesses": guesses,
+            "final_normal": self.flows_normal + cancelled,
+            "final_abnormal": self.flows_flagged - cancelled,
         }
 
     async def broadcast_status(self) -> None:
@@ -367,8 +408,44 @@ class IDSService:
                                                   cfg.stage2_enabled, cfg.stage2_confidence) for i in todo]
         for i, detection in zip(todo, detections):
             if detection is not None:
+                self._count_verdict(detection)
                 results[i] = await self._handle(flows[i], detection)
         return results
+
+    def _count_verdict(self, detection: Detection) -> None:
+        self.flows_scored += 1
+        flagged = detection.flagged or detection.is_alert
+        if not flagged:
+            self.flows_normal += 1
+            return
+        self.flows_flagged += 1
+        if not detection.is_alert:
+            self.guess_counts[BENIGN_GUESS] += 1          # stage 2 cancelled the alarm
+            return
+        top = detection.guesses[0]["label"] if detection.guesses else None
+        if top is None or top.lower() in BENIGN_NAMES:
+            top = UNCLASSIFIED_GUESS
+        self.guess_counts[top] += 1
+
+    def _storm_allows(self, source_ip: str) -> bool:
+        """Store at most N incidents a minute (and M per source): an attacker flooding the
+        network must not be able to flood the database, the emails and every dashboard."""
+        now = time.monotonic()
+        while self._stored_times and now - self._stored_times[0] > 60:
+            self._stored_times.popleft()
+        per_source = self._stored_by_source.get(source_ip)
+        if per_source is not None:
+            while per_source and now - per_source[0] > 60:
+                per_source.popleft()
+        if len(self._stored_times) >= settings.ALERT_STORE_MAX_PER_MINUTE:
+            return False
+        if per_source is not None and len(per_source) >= settings.ALERT_STORE_MAX_PER_SOURCE_PER_MINUTE:
+            return False
+        if len(self._stored_by_source) > 10_000:       # forget quiet sources (memory stays bounded)
+            self._stored_by_source = {ip: q for ip, q in self._stored_by_source.items() if q}
+        self._stored_times.append(now)
+        self._stored_by_source.setdefault(source_ip, deque()).append(now)
+        return True
 
     async def _handle(self, flow: FlowRecord, detection: Detection) -> Optional[SecurityEvent]:
         """Live score for every scored flow; store + alert + email for alerts."""
@@ -381,6 +458,13 @@ class IDSService:
         self.anomalies_detected += 1
         if detection.attack_type:
             self.attacks_detected += 1
+        if not self._storm_allows(flow.src_ip):
+            self.alerts_not_stored += 1
+            if self.alerts_not_stored % 100 == 1:
+                logger.warning(f"Alert storm: {self.alerts_not_stored} incidents counted but not stored "
+                               f"(limit {settings.ALERT_STORE_MAX_PER_MINUTE}/min)")
+            await self._broadcast_score(flow, detection, severity, throttle=True)
+            return None
 
         action = ActionTaken.ALERTED
         reason = detection.reason
@@ -409,6 +493,7 @@ class IDSService:
             action_taken=action,
             detection_reason=reason,
             contributing_features=detection.top_features or None,
+            attack_guesses=detection.guesses or None,
             flow_duration_ms=flow.duration_ms,
             bytes_sent=flow.fwd_bytes,
             bytes_received=flow.bwd_bytes,
@@ -424,7 +509,7 @@ class IDSService:
         await self._broadcast_score(flow, detection, severity, throttle=False)
         await manager.send_alert(alert_payload(event))
         get_notifier().enqueue(event)
-        logger.info(f"Alert: {event.attack_type or 'anomaly'} from {flow.src_ip} "
+        logger.info(f"Alert: abnormal traffic (possible {event.attack_type or 'unknown'}) from {flow.src_ip} "
                     f"score={detection.anomaly_score:.3f} severity={severity.value} action={action.value}")
         return event
 
@@ -469,6 +554,8 @@ class IDSService:
             "anomalyScore": round(detection.anomaly_score, 4),
             "severity": severity.value if detection.is_alert else "low",
             "isAlert": detection.is_alert,
+            "verdict": "abnormal" if detection.is_alert else "normal",
+            "flagged": bool(detection.flagged or detection.is_alert),
             "sourceIp": flow.src_ip,
             "destinationIp": flow.dst_ip,
             "protocol": flow.protocol_name,

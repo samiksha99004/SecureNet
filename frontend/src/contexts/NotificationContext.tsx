@@ -37,7 +37,7 @@ import {
   type DesktopPermission,
 } from '../utils/alertChannels';
 import type { NotificationItem } from '../types/notifications.types';
-import { titleOf } from '../utils/notifications';
+import { guessOf, titleOf } from '../utils/notifications';
 import type { WebSocketMessage } from '../types/websocket.types';
 
 const MAX_ITEMS = 50;
@@ -165,7 +165,7 @@ export function NotificationProvider({ children }: { children: ReactNode }) {
       if (sound && alert.severity !== 'low') playAlertSound(alert.severity);
       if (popupsOn && desktop && !document.hasFocus()) {
         showDesktopNotification(
-          `SecureNet — ${alert.severity.toUpperCase()}: ${titleOf(alert)}`,
+          `SecureNet — ${alert.severity.toUpperCase()}: ${titleOf(alert)} (possible attack: ${guessOf(alert)})`,
           alert.message,
           alert.eventId,
           () => openEvent(alert.eventId)

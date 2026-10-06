@@ -11,7 +11,12 @@ export interface NotificationItem {
   eventId: string;
   timestamp: string;          // ISO 8601 (UTC, "Z")
   severity: SeverityLevel;
-  attackType: string | null;  // null = unclassified anomaly
+  /** always "abnormal": only abnormal traffic becomes an alert */
+  verdict?: 'abnormal';
+  attackType: string | null;  // null = the model could not name it
+  confidence?: number | null;
+  /** the model's best guess, e.g. "DDoS (97%)" */
+  possibleAttack?: string;
   sourceIp: string;
   sourcePort: number;
   destinationIp: string;

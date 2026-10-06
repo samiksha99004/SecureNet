@@ -19,6 +19,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app.api.routes import auth, dashboard, events, health, ids, model, notifications, reports, settings_routes, support
 from app.core.config import settings
+from app.core.hardening import HardeningMiddleware, spa_csp
 from app.db.base import AsyncSessionLocal, keep_awake, mark_activity, warm_up
 from app.services import cache
 from app.ml.ids_service import get_ids_service
@@ -27,6 +28,8 @@ from app.services.notifier import get_notifier
 from app.utils.logger import logger
 from app.websocket.manager import manager
 
+MAX_LIVE_CONNECTIONS = 100     # dashboards open at once (one browser tab = one connection)
+
 ERROR_CODES = {
     400: "BAD_REQUEST",
     401: "UNAUTHORIZED",
@@ -34,6 +37,7 @@ ERROR_CODES = {
     404: "NOT_FOUND",
     405: "METHOD_NOT_ALLOWED",
     409: "CONFLICT",
+    413: "PAYLOAD_TOO_LARGE",
     422: "VALIDATION_ERROR",
     429: "TOO_MANY_REQUESTS",
     500: "INTERNAL_ERROR",
@@ -93,6 +97,16 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
     expose_headers=["Content-Disposition"],
+)
+
+# Added last = runs first: unknown hosts, foreign WebSocket origins and oversized bodies are
+# refused before anything else runs; every answer gets the security headers.
+_spa_dir = settings.resolve_path(settings.FRONTEND_DIST) if settings.FRONTEND_DIST else None
+app.add_middleware(
+    HardeningMiddleware,
+    allowed_hosts=settings.allowed_hosts_list,
+    allowed_origins=settings.cors_origins_list,
+    spa_policy=spa_csp(_spa_dir / "index.html") if _spa_dir else None,
 )
 
 
@@ -163,6 +177,10 @@ async def websocket_live(websocket: WebSocket):
         await websocket.close(code=status.WS_1008_POLICY_VIOLATION, reason="Invalid or expired session")
         return
 
+    if len(manager.active_connections) >= MAX_LIVE_CONNECTIONS:
+        await websocket.accept()
+        await websocket.close(code=status.WS_1013_TRY_AGAIN_LATER, reason="Too many live connections")
+        return
     await manager.connect(websocket)
     try:
         await get_ids_service().broadcast_status()

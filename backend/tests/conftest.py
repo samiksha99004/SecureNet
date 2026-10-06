@@ -26,6 +26,7 @@ os.environ["IDS_STATE_FILE"] = str(_TMP / "ids-state.json")
 os.environ["IDS_STARTUP_DIR"] = str(_TMP / "startup")
 os.environ["DESKTOP_NOTIFICATIONS"] = "false"
 os.environ["IDS_ON_AT_STARTUP"] = "false"   # tests start the IDS themselves
+os.environ["ALLOWED_HOSTS"] = "localhost,127.0.0.1,::1,test,testserver"
 
 import pytest  # noqa: E402
 from httpx import ASGITransport, AsyncClient  # noqa: E402

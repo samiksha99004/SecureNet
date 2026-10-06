@@ -55,6 +55,37 @@ compares with the tested pipeline (20,000 rows: 100 % identical verdicts, score 
 Live-traffic caveat (from `F:\all_10_csv_manual\documents\CLAUDE.md`): real LAN flows differ from the 2018 testbed, so
 live accuracy can be lower than the offline 92.2 %; the app shows the model's real output either way.
 
+### Verdict wording + guess tables (session 35)
+Owner: show **normal / abnormal traffic**, not the attack name; the attack is a *guess* in a table (like the
+report: Table 1 stage 1 Attack vs Not attack, Table 2 stage 2 "which attack" for all flagged flows incl. "Benign
+(stage 2 cancelled the alarm)", final verdict %). `Detection.flagged` (stage 1 ≥ θ) + `Detection.guesses`
+([{label, probability}] ≥ 0.5 %, best first). `IDSService` counts since the IDS was turned on (reset in `start()`):
+`flows_scored/normal/flagged` + `guess_counts` (top class per flagged flow; Benign = cancelled; no stage 2 =
+"Unclassified") → `/api/ids/status` `verdicts` {scored, normal, abnormal, guesses[{label, flows, cancelled}],
+finalNormal, finalAbnormal}; the dashboard refetches it on every 5 s `system_status`. Events keep
+`security_events.attack_guesses` (JSON, migration `f7c2a8e5b3d1`, applied to Neon). Wording lives in
+`services/verdict.py` / `utils/verdict.ts` (`ABNORMAL`, `possible_attack` → "DDoS (97%)" or "Bot (45%, unsure)"
+or "Unknown"). UI: status card NORMAL TRAFFIC / ABNORMAL TRAFFIC DETECTED + "Possible attack: …"; new
+`TrafficVerdictCard` under the IDS widget (admin captions name the models, users see "step 1/2"); counters Normal /
+Abnormal Traffic; pop-ups/bell/desktop "Abnormal traffic detected" + possible attack; History/Recent column
+"Possible Attack"; incident drawer "Which attack might it be?" table. Emails: subject `[SecureNet] Abnormal traffic
+detected (HIGH) from <ip> — possible attack: X`; reports/CSV/PDF: Verdict + Possible Attack + Model Guesses columns.
+Alerts are still only stored for flows stage 2 confirms (Benign cancels), so normal LAN flows above θ don't flood.
+
+### Self-protection (session 35) — `app/core/hardening.py`
+`HardeningMiddleware` (added last ⇒ runs first): **Host check** (`ALLOWED_HOSTS`, default `localhost,127.0.0.1,::1`,
+"*" disables; tests add `test,testserver`) → 400 "Unknown host" / WS close (DNS rebinding); **WebSocket Origin** must
+be a `CORS_ORIGINS` entry or the serving host (no Origin = non-browser, allowed); **body limit** 1 MB (413
+`PAYLOAD_TOO_LARGE`, chunked bodies buffered up to the limit then replayed); **headers** nosniff, X-Frame-Options
+DENY, Referrer-Policy no-referrer, COOP, Permissions-Policy, API CSP `default-src 'none'; frame-ancestors 'none'`,
+`Cache-Control: no-store` on /api + /health; built SPA (FRONTEND_DIST) gets `spa_csp()` = self + inline scripts and
+the fonts' onload handler **by sha256 hash** ('unsafe-hashes'), Google Fonts, localhost connect. WebSocket: max 100
+live connections (1013), uvicorn `--ws-max-size 65536 --no-server-header` (START, Electron, autostart). Capture:
+`MAX_ACTIVE_FLOWS = 50,000` (oldest open flow finished early), `MAX_PACKETS_PER_FLOW = 20,000`. Storm limit:
+`ALERT_STORE_MAX_PER_MINUTE=120`, `ALERT_STORE_MAX_PER_SOURCE_PER_MINUTE=30` (rest counted in
+`alerts_not_stored` + verdict tables). CSV export prefixes `= + - @ \t \r` cells with `'`. Vite dev server:
+`host: 'localhost'` + the same framing/sniffing headers (Vite itself checks Host and CORS).
+
 ### Algorithm 1 (paper) — implemented in `IDSService.process_flow` + `Detector.analyze`
 ```
 features ← feature_source(F)                # FlowRecord.features (71 CICIDS2018 columns, µs units)
@@ -355,6 +386,19 @@ every time:          double-click START_SECURENET.bat  (right-click → Run as a
 - Electron: `npm run build:frontend` then `npm start` in `desktop\` (backend serves the SPA on :8000).
 
 ## 6. Verification status (2026-09-25)
+- **Session 35 — normal/abnormal verdict, guess tables, self-protection (2026-10-06):** backend **129/129** (new
+  `tests/test_verdict_and_hardening.py`, 10 tests: Table 1/2/final counts + API + stored guesses + feed wording,
+  counters reset, wording helpers, storm limit (40 alerts → 5 stored, 35 counted), bounded flow table + flow cut,
+  foreign Host 400 / own hosts OK, security headers on API + 404, 413 for big + chunked bodies (small chunked OK),
+  WS foreign Origin 1008 / own Origin OK, CSV formulas neutralised). Real model on 3,000 test rows: Table 1 1,277
+  normal / 1,723 abnormal, Table 2 DDoS 918, DoS 254, Bot 186, Benign 180, Brute Force 131, Infilteration 54.
+  Chrome `qa3/verdict.js` **20/21** + email subject checked by hand (script fixed to pick the alert email) on the
+  harness (real model, 300 real test flows): NORMAL TRAFFIC → ABNORMAL TRAFFIC DETECTED + "Possible attack: DoS
+  (100%)", Table 1 136/164, Table 2 DDoS 85 / Benign 22 / Brute Force 18 / DoS 18 / Bot 13 / Infilteration 8, final
+  52.67 % / 47.33 %, 142 alerts = 142 final abnormal, pop-ups/bell/History/drawer wording, foreign Host 400, headers,
+  413, WS foreign origin refused, Vite framing headers, 0 page errors. `qa3/spa-csp.js` **5/5**: built dashboard served
+  by the backend under the strict CSP renders, fonts load, signs in, live feed, 0 CSP violations. tsc/oxlint (0
+  errors)/build clean. Neon migrated to `f7c2a8e5b3d1`; real app restarted: IDS on by itself, foreign Host → 400.
 - **Session 33 — hybrid model loaded, live detection, speed (2026-10-06):** venv got scikit-learn 1.9.1 + XGBoost 3.4.1
   (training versions); test split re-scored in the app venv = 0.9224 (identical). `verify_model.py`: 20,000 test
   rows through `Detector.analyze` → 100 % same verdicts as the tested pipeline, score diff 0. Batch = single verdicts;
@@ -633,6 +677,9 @@ every time:          double-click START_SECURENET.bat  (right-click → Run as a
 | new | Detection/Protection settings tabs were hidden; unused fields shown | Tabs restored; sensitivity preset sets θ; unused fields removed |
 | new | Null attack type shown as green "Normal"; History severity cards always "—" | "Unclassified"; real counts |
 
+| P36 | Dashboard/alerts stated the attack class as fact | Session 35: NORMAL TRAFFIC / ABNORMAL TRAFFIC DETECTED; attack shown as the model's guess; Table 1 / Table 2 / final verdict card; guesses stored per event |
+| S2 | **High (session 35)** The app itself could be attacked: any Host accepted (DNS rebinding let a hostile web page read the local API from the owner's browser), no security headers (framing/sniffing), unlimited request bodies, WebSocket open to any origin, open-flow table and per-flow packet lists unbounded (random-port flood ⇒ memory exhaustion), every alert written to Neon + emailed (attack storm floods DB/email/dashboards), CSV export could carry spreadsheet formulas | `app/core/hardening.py` (host check, origin check, 1 MB limit, headers + CSP), WS connection cap + 64 KB messages, flow caps, alert storm limit, CSV escaping, Vite headers |
+
 ### Still open
 | ID | Severity | Issue | Notes / next step |
 |---|---|---|---|
@@ -696,3 +743,4 @@ every time:          double-click START_SECURENET.bat  (right-click → Run as a
 | 2026-09-26 (32) | Owner: keep the website on GitHub Pages for now (https://samiksha99004.github.io/securenet-site/), move to Cloudflare later. No code changes; CLAUDE.md status updated. Committed and pushed. |
 | 2026-10-06 (33) | **Retrained hybrid model loaded, live monitoring at startup, faster pages** (owner: load the hybrid Isolation Forest + XGBoost from F:\retraining_hybrid, fix API/connection errors, live monitoring when the app starts, no fake values — real results from the model's testing). venv: scikit-learn 1.9.1, XGBoost 3.4.1 (pinned in requirements-ml.txt). Model files copied to backend/models (old Aug .pkl → archive_2026-08; .gitignore models/*.json, archive*/; models/README.md). `detector.py` rewritten: hybrid loader + tested pipeline + `analyze_batch`, legacy kept; `features.py`: Protocol, Fwd URG Flags; `ids_service.py`: effective threshold (presets follow the tested threshold), reload_config after model load, batch worker, confidence-based severity, status `threshold`; `/api/model/info` real metrics (schemas: tested_threshold, evaluation, test_rows); `autostart.py` + `IDS_ON_AT_STARTUP` (default true), `ML_AUTOLOAD` default true; caches for settings/whitelist/recipients/history + more startup priming; `scripts/verify_model.py`. Frontend: Model tab (threshold in use / tested, evaluation note, only real metric rows), Detection tab preset text, live chart uses the IDS threshold. Tests 119/119, Chrome 13/13, real backend smoke OK. Live capture still needs Npcap (O1). Committed and pushed. |
 | 2026-10-06 (34) | **Npcap installed + live capture bug fixed** (part of the model request: live monitoring when the app starts). With the owner's approval opened the signed Npcap 1.89 installer (owner clicked through: WinPcap-compatible, AdminOnly=0). Found R6: `network_monitor.check_capture_available` checked `scapy.config.conf.use_pcap` without loading `scapy.arch.windows`, so it was always False and the IDS could never start on Windows — now imports `scapy.all` first. Real app (no admin) now starts monitoring by itself and scores real traffic with the hybrid model. 119/119 tests. Committed and pushed. |
+| 2026-10-06 (35) | **Normal / abnormal verdict + guess tables, app protected against attacks on itself** (owner: instead of the attack name show normal traffic / abnormal traffic detected, with a guess table below of what attack it might be like the report photos (Table 1 stage 1, Table 2 stage 2, final verdict); make SecureNet itself hard to attack). Backend: `Detection.flagged/guesses`, IDS verdict counters + `/ids/status.verdicts`, `security_events.attack_guesses` (migration `f7c2a8e5b3d1`, applied to Neon), `services/verdict.py`, wording in alert payload / notifications / emails / incident report / exports; `core/hardening.py` + `ALLOWED_HOSTS`, WS connection cap, flow caps in `network_monitor.py`, alert storm limit, CSV formula escaping, uvicorn flags in the launchers. Frontend: `TrafficVerdictCard`, `utils/verdict.ts`, status card/counters/pop-ups/bell/History/drawer/reports wording, Vite security headers. Tests 129/129, Chrome 20/21 (+1 test-script fix) and 5/5 (SPA CSP). Real app restarted. Committed and pushed. |

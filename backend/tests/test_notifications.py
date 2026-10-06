@@ -73,7 +73,7 @@ async def test_alerts_are_batched_to_all_registered_users(client, captured_otps,
 
     # normal alert: every non-admin registered user + the extra address
     assert user_mail["to"] == ["analyst@example.com", "soc@example.com"]
-    assert "2 attacks detected (1 HIGH)" in user_mail["subject"] and "most severe: DDoS" in user_mail["subject"]
+    assert "Abnormal traffic detected: 2 alerts (1 HIGH)" in user_mail["subject"] and "most severe possible attack: DDoS" in user_mail["subject"]
     assert "DDoS" in user_mail["html"] and "SSH-Bruteforce" in user_mail["html"] and "Bot" not in user_mail["text"]
     assert "report is attached" in user_mail["text"]
     assert "+919000000001" not in user_mail["text"]          # users don't see other users' details
@@ -93,7 +93,7 @@ async def test_alerts_are_batched_to_all_registered_users(client, captured_otps,
         [report] = mail["attachments"]
         assert report.filename.startswith("SecureNet-incident-report-") and report.filename.endswith(".txt")
         body = report.content.decode("utf-8")
-        assert "Attacks detected : 2" in body and "DDoS" in body and "SSH-Bruteforce" in body and "Bot" not in body
+        assert "Abnormal traffic : 2 incident(s)" in body and "DDoS" in body and "SSH-Bruteforce" in body and "Bot" not in body
 
 
 async def test_every_attack_is_emailed_by_default(client, captured_otps, sent):
@@ -103,7 +103,7 @@ async def test_every_attack_is_emailed_by_default(client, captured_otps, sent):
     for severity in (SeverityLevel.HIGH, SeverityLevel.MEDIUM, SeverityLevel.LOW):
         notifier.enqueue(await make_event(severity, attack=f"Attack-{severity.value}"))
     assert await notifier.flush() == 3
-    assert "Attacks detected : 3" in sent[0]["attachments"][0].content.decode("utf-8")
+    assert "Abnormal traffic : 3 incident(s)" in sent[0]["attachments"][0].content.decode("utf-8")
 
 
 async def test_no_email_when_alerts_disabled(client, captured_otps, sent):

@@ -32,7 +32,11 @@ unusual traffic flows, then **XGBoost** names the attack type (categories from t
 ## Features
 
 - **Live monitoring**: turn the IDS **ON / OFF** from the dashboard; live score graph, traffic counters and
-  a status card. While the IDS is **OFF** the dashboard shows no values at all (every card says
+  a status card that says **NORMAL TRAFFIC** or **ABNORMAL TRAFFIC DETECTED**. Which attack it might be is
+  shown only as the model's guess ("Possible attack: DDoS (97%)"), and the **Traffic Verdict** card shows
+  two tables like a test report: *Table 1 — normal vs abnormal* (stage 1) and *Table 2 — which attack might
+  it be* for every flagged flow (stage 2, including "Benign — stage 2 cancelled the alarm"), plus the final
+  verdict in %. While the IDS is **OFF** the dashboard shows no values at all (every card says
   *"IDS is off"*); past events stay available in History and Reports.
 - **Instant alerts**: on-screen pop-ups, a notification bell, an alert sound and Windows desktop notifications
   — each can be switched on or off in *Settings → Preferences* (desktop notifications ask the browser for
@@ -42,6 +46,12 @@ unusual traffic flows, then **XGBoost** names the attack type (categories from t
   own alert emails off and on again (*Settings → Preferences → Attack Alert Emails*).
 - **Daily reports**: one box per day with attacks, downloadable as `.txt`, `.csv` or `.pdf`.
 - **Incident history**: search, filter, sort and export every detected event.
+- **Protected against attacks on itself**: SecureNet only listens on this computer and refuses requests
+  addressed to any other host name (DNS rebinding), refuses the live feed to other web pages, rejects
+  oversized requests, sends security headers (no framing, strict Content-Security-Policy, no caching of
+  account data), keeps CSV exports safe to open in Excel, caps open flows and per-flow packets so a packet
+  flood cannot exhaust memory, and stores at most 120 incidents a minute (30 per source) during an attack
+  storm — the rest are still counted in the verdict tables.
 - **Safe accounts**: every sign-up, **every sign-in**, every password change and every change to your
   personal details is confirmed with a **6-digit code sent to your email** (valid for 5 minutes).
   The email, *"[SecureNet] Sign-in verification code"*, shows the code in a **"Code requested"** panel
@@ -210,8 +220,8 @@ SecureNet uses a **hybrid model**: an Isolation Forest (stage 1, "is this flow u
 classifier (stage 2, "which attack is it?") trained on CICIDS2018. Tested on 465,837 flows neither
 model had seen, the whole pipeline is **92.2 % accurate** (Benign 98.7 %, DDoS 90.7 %, DoS 95.5 %, Bot
 99.2 %, Brute Force 99.6 % recall; Infilteration 27.5 % is its weak spot). *Settings → Model* shows these
-real test results, and every alert shows the model's real score, attack class, confidence and the
-features that weighed most.
+real test results. Every alert is worded as **abnormal traffic**, with the model's real score, its
+guesses of which attack it might be (with likelihoods) and the features that weighed most.
 
 The model files (about 60 MB) are not in git. To use them:
 

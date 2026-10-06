@@ -55,7 +55,7 @@ async def test_daily_report_downloads(client, admin):
     assert 'filename="SecureNet-daily-report-2026-09-25.txt"' in r.headers["content-disposition"]
     text = r.text
     assert "Daily report - 25 Sep 2026" in text and "UTC+05:30" in text
-    assert "Attacks detected : 1" in text and "DDoS-LOIC-HTTP" in text
+    assert "Abnormal traffic : 1 incident(s)" in text and "DDoS-LOIC-HTTP" in text
     assert "25 Sep 2026, 13:30:00" in text                    # 08:00 UTC shown in local time
     assert "Unusual features: Flow Bytes/s" in text
 

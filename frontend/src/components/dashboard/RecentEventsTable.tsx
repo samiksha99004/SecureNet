@@ -4,7 +4,8 @@
  * Shows the most recent security events on the Dashboard.
  * Empty state until backend provides data. No invented values.
  *
- * Columns: Time | Source | Destination | Score | Severity | Attack Type | State | Action
+ * Columns: Time | Source | Destination | Score | Severity | Possible Attack | State | Action
+ * (every event is abnormal traffic; the attack is the model's guess)
  */
 
 import { Link } from 'react-router-dom';
@@ -17,6 +18,7 @@ import { IdsOffNote } from './IdsOffNote';
 import { LoadingState } from '../common/LoadingState';
 import { formatTimestamp, formatScore } from '../../utils/format';
 import styles from './RecentEventsTable.module.css';
+import { possibleAttack } from '../../utils/verdict';
 
 interface RecentEventsTableProps {
   events: SecurityEvent[];
@@ -56,7 +58,7 @@ export function RecentEventsTable({ events, isLoading, idsOff = false }: RecentE
                 <th scope="col" className={styles.th}>Destination</th>
                 <th scope="col" className={styles.th}>Score</th>
                 <th scope="col" className={styles.th}>Severity</th>
-                <th scope="col" className={styles.th}>Attack Type</th>
+                <th scope="col" className={styles.th}>Possible Attack</th>
                 <th scope="col" className={styles.th}>State</th>
                 <th scope="col" className={styles.th}>Action</th>
               </tr>
@@ -84,8 +86,8 @@ export function RecentEventsTable({ events, isLoading, idsOff = false }: RecentE
                     <SeverityBadge severity={event.severity} />
                   </td>
                   <td className={styles.td}>
-                    {event.attackType ?? (
-                      <span className={styles.normal}>Unclassified</span>
+                    {event.attackType || event.attackGuesses?.length ? possibleAttack(event) : (
+                      <span className={styles.normal}>Unknown</span>
                     )}
                   </td>
                   <td className={styles.td}>

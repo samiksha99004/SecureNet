@@ -37,7 +37,10 @@ class NotificationItem(CamelModel):
     event_id: str
     timestamp: str
     severity: str
+    verdict: str = "abnormal"
     attack_type: Optional[str] = None
+    confidence: Optional[float] = None
+    possible_attack: str = "Unknown"     # the model's best guess, e.g. "DDoS (97%)"
     source_ip: str
     source_port: int
     destination_ip: str

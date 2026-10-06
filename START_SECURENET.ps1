@@ -53,7 +53,7 @@ if ($be.Running) {
 } else {
     Write-Host "Starting backend on $apiUrl ..." -ForegroundColor Cyan
     Start-Process cmd.exe -WorkingDirectory $BackendDir -ArgumentList '/k', `
-        "title SecureNet Backend & venv\Scripts\python.exe -m uvicorn app.main:app --host 127.0.0.1 --port $($be.Port)"
+        "title SecureNet Backend & venv\Scripts\python.exe -m uvicorn app.main:app --host 127.0.0.1 --port $($be.Port) --ws-max-size 65536 --no-server-header"
 }
 if ($fe.Running) {
     Write-Host "Dashboard already running on port $($fe.Port)."

@@ -4,8 +4,8 @@
  * ON / OFF control plus live IDS status:
  *  - power toggle (every signed-in user). ON = capture, detect, alert + email.
  *  - capture + detector state (clearly says when no model is loaded)
- *  - current status: IDS IS OFF while stopped; when running NORMAL or the latest
- *    unresolved incident's attack category
+ *  - current status: IDS IS OFF while stopped; when running NORMAL TRAFFIC or
+ *    ABNORMAL TRAFFIC DETECTED (the attack is only shown as the model's guess)
  *  - live counters from the backend
  */
 
@@ -23,6 +23,7 @@ import {
 import { requestDesktopNotifications } from '../../utils/alertChannels';
 import { formatTimestamp, formatDuration } from '../../utils/format';
 import type { SecurityEvent } from '../../types/security.types';
+import { possibleAttack } from '../../utils/verdict';
 import styles from './IDSControlWidget.module.css';
 
 interface IDSControlWidgetProps {
@@ -44,7 +45,7 @@ export function IDSControlWidget({
   const [isBusy, setIsBusy] = useState(false);
 
   const isEnabled = idsStatus?.enabled ?? false;
-  const hasAbnormalEvent = !!latestEvent && latestEvent.state === 'active' && latestEvent.severity !== 'low';
+  const hasAbnormalEvent = !!latestEvent && latestEvent.state === 'active';
 
   async function run(action: () => Promise<unknown>, success: string) {
     setIsBusy(true);
@@ -78,8 +79,8 @@ export function IDSControlWidget({
     : isOff
       ? 'IDS IS OFF'
       : hasAbnormalEvent
-        ? (latestEvent.attackType ?? 'UNCLASSIFIED ANOMALY').toUpperCase()
-        : 'NORMAL';
+        ? 'ABNORMAL TRAFFIC DETECTED'
+        : 'NORMAL TRAFFIC';
   const cardStyle = isOff ? styles.statusOff : hasAbnormalEvent ? styles.statusAbnormal : styles.statusNormal;
 
   return (
@@ -137,6 +138,11 @@ export function IDSControlWidget({
             {idsStatus && isOff && (
               <span className={styles.statusHint}>Your network is not being watched. Press ON to start monitoring.</span>
             )}
+            {!isOff && hasAbnormalEvent && latestEvent && (
+              <span className={styles.statusHint}>
+                Possible attack: {possibleAttack(latestEvent)} — the model’s best guess, see the tables below.
+              </span>
+            )}
           </div>
           <div className={styles.detectorInfo}>
             <span className={styles.statusLabel}>{isAdmin ? 'Detector' : 'Detection'}</span>
@@ -152,11 +158,10 @@ export function IDSControlWidget({
           <div className={styles.incidentDetails}>
             <h3 className={styles.incidentTitle}>Latest Unresolved Incident</h3>
             <div className={styles.incidentGrid}>
+              <DetailRow label="Verdict" value="Abnormal traffic" highlight />
+              <DetailRow label="Possible attack" value={possibleAttack(latestEvent)} />
               <DetailRow label="Severity" value={latestEvent.severity.toUpperCase()} />
               <DetailRow label="Anomaly Score" value={latestEvent.anomalyScore.toFixed(4)} />
-              {latestEvent.confidence !== null && (
-                <DetailRow label="Confidence" value={`${(latestEvent.confidence * 100).toFixed(1)}%`} />
-              )}
               <DetailRow label="Source" value={`${latestEvent.sourceIp}:${latestEvent.sourcePort}`} />
               <DetailRow label="Destination" value={`${latestEvent.destinationIp}:${latestEvent.destinationPort}`} />
               <DetailRow label="Protocol" value={latestEvent.protocol} />
@@ -183,8 +188,8 @@ export function IDSControlWidget({
           <Stat label="Packets" value={idsStatus.packetsProcessed} />
           <Stat label="Flows Analyzed" value={idsStatus.flowsAnalyzed} />
           <Stat label="Active Flows" value={idsStatus.activeFlows} />
-          <Stat label="Anomalies" value={idsStatus.anomaliesDetected} />
-          <Stat label="Classified Attacks" value={idsStatus.attacksDetected} />
+          <Stat label="Normal Traffic" value={idsStatus.verdicts?.finalNormal ?? 0} />
+          <Stat label="Abnormal Traffic" value={idsStatus.verdicts?.finalAbnormal ?? idsStatus.anomaliesDetected} />
         </div>
       )}
     </div>

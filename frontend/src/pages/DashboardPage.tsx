@@ -35,6 +35,7 @@ import { LoadingState } from '../components/common/LoadingState';
 import { DetectionReasonCard } from '../components/dashboard/DetectionReasonCard';
 import { ProtocolDistributionCard } from '../components/dashboard/ProtocolDistributionCard';
 import { TopSourcesCard } from '../components/dashboard/TopSourcesCard';
+import { TrafficVerdictCard } from '../components/dashboard/TrafficVerdictCard';
 import { RecentEventsTable } from '../components/dashboard/RecentEventsTable';
 import { useAsyncData } from '../hooks/useAsyncData';
 import { useWebSocketMessage } from '../hooks/useLiveMonitoring';
@@ -122,9 +123,7 @@ export function DashboardPage() {
 
   // Latest unresolved medium/high event for the IDS widget
   const latestAbnormalEvent =
-    s?.recentEvents.find(
-      (e) => e.state === 'active' && (e.severity === 'high' || e.severity === 'medium')
-    ) ?? null;
+    s?.recentEvents.find((e) => e.state === 'active') ?? null;
 
   return (
     <MainLayout title="Dashboard" greet>
@@ -137,6 +136,15 @@ export function DashboardPage() {
           isLoading={idsStatus.isLoading}
           onStatusChange={() => refetchAll.current()}
         />
+
+        {/* ── Verdict tables: normal vs abnormal + the model's attack guesses ── */}
+        <section aria-label="Traffic verdict">
+          <TrafficVerdictCard
+            verdicts={idsStatus.data?.verdicts}
+            mlLoaded={idsStatus.data?.mlLoaded ?? false}
+            idsOff={idsOff}
+          />
+        </section>
 
         {/* ── Row 1: KPI Cards ─────────────────────────────────────────────── */}
         <section

@@ -44,6 +44,10 @@ export interface LiveScorePayload {
   severity: string;
   /** true when the flow crossed the threshold and was stored as an event */
   isAlert: boolean;
+  /** final verdict for this flow */
+  verdict?: 'normal' | 'abnormal';
+  /** stage 1 found it unusual (stage 2 may still have cancelled it) */
+  flagged?: boolean;
   sourceIp: string;
   destinationIp: string;
   protocol: string;

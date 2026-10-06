@@ -81,6 +81,8 @@ class SecurityEvent(Base):
     # Additional context
     detection_reason = Column(Text, nullable=True)
     contributing_features = Column(JSON, nullable=True)  # Use JSON instead of JSONB for SQLite compatibility
+    # the model's guesses of which attack it might be: [{"label", "probability"}], best first
+    attack_guesses = Column(JSON, nullable=True)
     
     # Flow statistics (optional)
     flow_duration_ms = Column(Integer, nullable=True)

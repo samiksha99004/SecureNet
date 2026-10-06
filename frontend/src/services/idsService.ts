@@ -10,6 +10,27 @@ import { apiClient } from './apiClient';
 
 export type IDSMode = 'monitor' | 'protect';
 
+/** Table 2 row: how many abnormal flows stage 2 thought were this class. */
+export interface GuessRow {
+  label: string;
+  flows: number;
+  /** "Benign": stage 2 cancelled the alarm */
+  cancelled: boolean;
+}
+
+/** Verdict tables since the IDS was turned on. */
+export interface VerdictSummary {
+  scored: number;
+  /** Table 1 — stage 1 */
+  normal: number;
+  abnormal: number;
+  /** Table 2 — stage 2's guess for every abnormal flow */
+  guesses: GuessRow[];
+  /** final verdict (stage 2 can cancel a stage-1 alarm) */
+  finalNormal: number;
+  finalAbnormal: number;
+}
+
 export interface IDSStatus {
   enabled: boolean;
   mode: IDSMode;
@@ -27,6 +48,9 @@ export interface IDSStatus {
   attacksDetected: number;
   blockedIps: number;
   uptimeSeconds: number;
+  /** incidents counted but not stored during an attack storm */
+  alertsNotStored?: number;
+  verdicts?: VerdictSummary | null;
 }
 
 export interface IDSControlRequest {

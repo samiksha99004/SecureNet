@@ -31,6 +31,12 @@ export interface ContributingFeature {
   contribution: number; // e.g. SHAP value or importance score
 }
 
+/** One of the model's guesses of which attack the abnormal traffic might be. */
+export interface AttackGuess {
+  label: string;
+  probability: number;         // 0–1
+}
+
 // ── Security Event ────────────────────────────────────────────────────────────
 
 export interface SecurityEvent {
@@ -50,6 +56,8 @@ export interface SecurityEvent {
   actionTaken: ActionTaken;
   detectionReason: string | null;
   contributingFeatures: ContributingFeature[];
+  /** stage 2's guesses, most likely first (empty for older events) */
+  attackGuesses?: AttackGuess[];
   flowDurationMs: number | null;
   bytesSent: number | null;
   bytesReceived: number | null;

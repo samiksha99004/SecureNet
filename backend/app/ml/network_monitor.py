@@ -21,6 +21,11 @@ from app.utils.logger import logger
 
 FlowKey = Tuple[str, str, int, int, int]
 
+# Limits that keep a packet flood from exhausting memory (an attacker spraying random
+# ports would otherwise create millions of open flows, or one endless flow):
+MAX_ACTIVE_FLOWS = 50_000        # oldest open flow is finished early when full
+MAX_PACKETS_PER_FLOW = 20_000    # a flow this long is finished and scored (a new one starts)
+
 
 class CaptureUnavailable(RuntimeError):
     """Raised when live packet capture cannot run on this machine."""
@@ -105,6 +110,7 @@ class NetworkMonitor:
 
         self.packet_count = 0
         self.flow_count = 0
+        self.flows_evicted = 0
         self.last_error: Optional[str] = None
 
     # ── lifecycle ────────────────────────────────────────────────────────────
@@ -173,6 +179,7 @@ class NetworkMonitor:
             if info is None:
                 return
             finished: Optional[Flow] = None
+            evicted: Optional[Flow] = None
             fwd_key: FlowKey = (info.src_ip, info.dst_ip, info.src_port, info.dst_port, info.protocol)
             bwd_key: FlowKey = (info.dst_ip, info.src_ip, info.dst_port, info.src_port, info.protocol)
             with self._lock:
@@ -182,13 +189,19 @@ class NetworkMonitor:
                 elif bwd_key in self._flows:
                     flow, forward, key = self._flows[bwd_key], False, bwd_key
                 else:
+                    if len(self._flows) >= MAX_ACTIVE_FLOWS:
+                        # dicts keep insertion order: the first one is the oldest open flow
+                        evicted = self._flows.pop(next(iter(self._flows)))
+                        self.flows_evicted += 1
                     flow = Flow(info.src_ip, info.dst_ip, info.src_port, info.dst_port, info.protocol,
                                 start=info.timestamp)
                     self._flows[fwd_key] = flow
                     forward, key = True, fwd_key
                 flow.add(info, forward)
-                if flow.is_finished:
+                if flow.is_finished or flow.packet_count >= MAX_PACKETS_PER_FLOW:
                     finished = self._flows.pop(key)
+            if evicted is not None:
+                self._emit(evicted)
             if finished is not None:
                 self._emit(finished)
         except Exception as exc:

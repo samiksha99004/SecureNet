@@ -77,7 +77,7 @@ async function startBackend() {
   console.log('[Electron] Starting backend in', BACKEND_DIR);
   backendProcess = spawn(
     pythonExecutable(),
-    ['-m', 'uvicorn', 'app.main:app', '--host', '127.0.0.1', '--port', String(BACKEND_PORT)],
+    ['-m', 'uvicorn', 'app.main:app', '--host', '127.0.0.1', '--port', String(BACKEND_PORT), '--ws-max-size', '65536', '--no-server-header'],
     { cwd: BACKEND_DIR, env, stdio: 'pipe', windowsHide: true }
   );
   backendProcess.stdout.on('data', (d) => console.log(`[Backend] ${d.toString().trim()}`));

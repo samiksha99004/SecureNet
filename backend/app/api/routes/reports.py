@@ -54,7 +54,8 @@ async def cached_daily_local() -> list[DailyReport]:
 async def _daily_reports(tz_offset: int) -> list[DailyReport]:
     async with AsyncSessionLocal() as db:
         rows = (await db.execute(
-            select(SecurityEvent.timestamp, SecurityEvent.severity, SecurityEvent.attack_type, SecurityEvent.source_ip)
+            select(SecurityEvent.timestamp, SecurityEvent.severity, SecurityEvent.attack_type, SecurityEvent.source_ip,
+                   SecurityEvent.attack_guesses)
             .order_by(SecurityEvent.timestamp)
         )).all()
     days: dict[date, list] = defaultdict(list)
@@ -64,7 +65,7 @@ async def _daily_reports(tz_offset: int) -> list[DailyReport]:
     reports = []
     for day, items in sorted(days.items(), reverse=True):
         severities = [r.severity.value for r in items]
-        attacks = [r.attack_type or "Unclassified anomaly" for r in items]
+        attacks = [incident_report._guess_name(r) for r in items]   # the model's best guess
         reports.append(DailyReport(
             date=day.isoformat(),
             total=len(items),

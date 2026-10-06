@@ -55,7 +55,7 @@ export function DailyReportCard({ report }: { report: DailyReport }) {
         <div>
           <h3 className={styles.day}>{formatDay(report.date)}</h3>
           <p className={styles.range}>
-            {report.total} attack{report.total === 1 ? '' : 's'} · {formatTime(report.firstSeen)}
+            {report.total} abnormal traffic alert{report.total === 1 ? '' : 's'} · {formatTime(report.firstSeen)}
             {report.total > 1 && <> – {formatTime(report.lastSeen)}</>}
           </p>
         </div>
@@ -69,11 +69,11 @@ export function DailyReportCard({ report }: { report: DailyReport }) {
 
       <dl className={styles.facts}>
         <div>
-          <dt>Most common attack</dt>
-          <dd>{report.topAttack ?? 'Unclassified anomaly'}</dd>
+          <dt>Most likely attack (model’s guess)</dt>
+          <dd>{report.topAttack ?? 'Unknown'}</dd>
         </div>
         <div>
-          <dt>Attacking sources</dt>
+          <dt>Sources</dt>
           <dd>{report.sources}</dd>
         </div>
       </dl>

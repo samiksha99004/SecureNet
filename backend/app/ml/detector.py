@@ -52,6 +52,7 @@ HYBRID_XGB = "xgboost_stage2.json"
 HYBRID_METRICS = "hybrid_metrics.json"
 
 BENIGN_LABELS = {"benign", "normal", "0"}
+MIN_GUESS = 0.005        # guesses below 0.5 % are not worth showing
 
 
 @dataclass
@@ -63,6 +64,15 @@ class Detection:
     confidence: Optional[float] = None   # stage-2 probability of attack_type
     reason: str = ""
     top_features: List[Dict] = field(default_factory=list)
+    flagged: bool = False                # stage 1 said "abnormal" (score at/above θ)
+    guesses: List[Dict] = field(default_factory=list)   # stage 2: [{label, probability}], best first
+
+
+def _guesses(classes: List[str], proba) -> List[Dict]:
+    """Every class the model thinks is possible, most likely first."""
+    pairs = [(classes[i] if i < len(classes) else str(i), float(p)) for i, p in enumerate(proba)]
+    pairs.sort(key=lambda t: t[1], reverse=True)
+    return [{"label": label, "probability": round(p, 4)} for label, p in pairs if p >= MIN_GUESS]
 
 
 def _first_existing(directory: Path, names) -> Optional[Path]:
@@ -400,20 +410,25 @@ class Detector:
             stage1 = (f"Isolation Forest score {score:.3f} is at or above the threshold {threshold:.3f}"
                       if score is not None else "Stage 1 not loaded")
             if proba is None:
-                results[i] = Detection(score, True, None, None, stage1, top)   # anomaly without a category
+                # anomaly without a category
+                results[i] = Detection(score, True, None, None, stage1, top, flagged=True)
                 continue
             p = proba[k]
             idx = int(np.argmax(p))
             label = self.classes[idx] if idx < len(self.classes) else str(idx)
             confidence = float(p[idx])
             anomaly = score if score is not None else 1.0 - float(p[self.benign_index or 0])
+            guesses = _guesses(self.classes, p)
             if idx == self.benign_index:
                 # tested behaviour: stage 2 answering Benign cancels the stage-1 flag
                 results[i] = Detection(anomaly_score=anomaly, is_alert=False,
-                                       reason=f"{stage1}; XGBoost: Benign ({confidence:.0%}) - not an attack")
+                                       reason=f"{stage1}; XGBoost: Benign ({confidence:.0%}) - not an attack",
+                                       flagged=scores is not None, guesses=guesses)
                 continue
             attack_type = label if confidence >= stage2_confidence else None
-            results[i] = Detection(anomaly, True, attack_type, confidence, f"{stage1}; XGBoost: {label} ({confidence:.0%})", top)
+            results[i] = Detection(anomaly, True, attack_type, confidence,
+                                   f"{stage1}; XGBoost: {label} ({confidence:.0%})", top,
+                                   flagged=True, guesses=guesses)
         return results
 
     def _analyze_legacy(self, features: Dict[str, float], threshold: float,
@@ -434,7 +449,7 @@ class Detector:
                 return Detection(anomaly_score=if_score, is_alert=False)
 
         # Stage 2 — XGBoost
-        label, confidence, benign_p = None, None, None
+        label, confidence, benign_p, guesses = None, None, None, []
         if self.xgboost is not None and (stage2_enabled or self.isolation_forest is None):
             x2 = scaled
             if self.xgb_appends_if_score:
@@ -447,6 +462,7 @@ class Detector:
             confidence = float(proba[idx])
             benign_idx = next((i for i, c in enumerate(classes) if c.lower() in BENIGN_LABELS), None)
             benign_p = float(proba[benign_idx]) if benign_idx is not None else None
+            guesses = _guesses(classes, proba)
 
         top = self._top_features(scaled[0])
 
@@ -457,7 +473,8 @@ class Detector:
             reason = f"Isolation Forest anomaly score {if_score:.3f} exceeded threshold {threshold:.2f}"
             if label is not None:
                 reason += f"; XGBoost: {label} ({confidence:.0%})"
-            return Detection(if_score, True, attack_type, confidence if attack_type else None, reason, top)
+            return Detection(if_score, True, attack_type, confidence if attack_type else None, reason, top,
+                             flagged=True, guesses=guesses)
 
         # XGBoost only
         anomaly = 1.0 - benign_p if benign_p is not None else confidence or 0.0
@@ -469,6 +486,8 @@ class Detector:
             confidence=confidence if is_attack else None,
             reason=f"XGBoost classified flow as {label} ({confidence:.0%})",
             top_features=top if is_attack else [],
+            flagged=is_attack,
+            guesses=guesses if is_attack else [],
         )
 
     def _top_features(self, row, k: int = 5) -> List[Dict]:

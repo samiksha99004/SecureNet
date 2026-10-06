@@ -16,6 +16,8 @@ from datetime import date, datetime, timedelta
 from typing import Dict, List, Optional, Sequence
 
 from app.models.security_event import SecurityEvent
+from app.services.verdict import (ABNORMAL, BENIGN_NAMES, UNKNOWN_GUESS, clean_guesses, guesses_text,
+                                  possible_attack)
 from app.utils.timeutil import utcnow
 
 RULE = "=" * 72
@@ -54,6 +56,16 @@ def _counts(values: Sequence[str], limit: int = 5) -> str:
     return ", ".join(f"{name} ({count})" for name, count in common) if common else "-"
 
 
+def _guess_name(event: SecurityEvent) -> str:
+    """The class the model guessed (without the percentage), for counting."""
+    if event.attack_type:
+        return event.attack_type
+    for g in clean_guesses(event.attack_guesses):
+        if g["label"].lower() not in BENIGN_NAMES:
+            return g["label"]
+    return UNKNOWN_GUESS
+
+
 def summarize(events: Sequence[SecurityEvent]) -> Dict[str, object]:
     severities = Counter(e.severity.value for e in events)
     return {
@@ -61,7 +73,7 @@ def summarize(events: Sequence[SecurityEvent]) -> Dict[str, object]:
         "high": severities.get("high", 0),
         "medium": severities.get("medium", 0),
         "low": severities.get("low", 0),
-        "top_attack": Counter(e.attack_type or "Unclassified anomaly" for e in events).most_common(1)[0][0]
+        "top_attack": Counter(_guess_name(e) for e in events).most_common(1)[0][0]
         if events else None,
         "sources": len({e.source_ip for e in events}),
     }
@@ -88,9 +100,9 @@ def render_text(events: Sequence[SecurityEvent], title: str, offset_minutes: int
         "",
         "SUMMARY",
         LINE,
-        f"Attacks detected : {info['total']}",
+        f"Abnormal traffic : {info['total']} incident(s)",
         f"By severity      : High {info['high']} | Medium {info['medium']} | Low {info['low']}",
-        f"Attack types     : {_counts([e.attack_type or 'Unclassified anomaly' for e in ordered])}",
+        f"Possible attacks : {_counts([_guess_name(e) for e in ordered])} (the model's best guess)",
         f"Top sources      : {_counts([e.source_ip for e in ordered])}",
         f"Targeted hosts   : {_counts([e.destination_ip for e in ordered])}",
         "",
@@ -98,14 +110,14 @@ def render_text(events: Sequence[SecurityEvent], title: str, offset_minutes: int
         LINE,
     ]
     if not ordered:
-        lines.append("No attacks were detected in this period.")
+        lines.append("No abnormal traffic was detected in this period.")
 
     for number, event in enumerate(ordered, start=1):
-        attack = event.attack_type or "Unclassified anomaly"
-        confidence = f", confidence {event.confidence * 100:.0f}%" if event.confidence is not None else ""
         lines += [
             f"#{number}  {_fmt_time(event.timestamp, offset_minutes)}",
-            f"    Attack        : {attack} (severity {event.severity.value.upper()}{confidence})",
+            f"    Verdict       : {ABNORMAL} (severity {event.severity.value.upper()})",
+            f"    Possible attack: {possible_attack(event.attack_type, event.confidence, event.attack_guesses)}",
+            f"    Model guesses : {guesses_text(event.attack_guesses)}",
             f"    Source        : {event.source_ip}:{event.source_port}",
             f"    Destination   : {event.destination_ip}:{event.destination_port} ({event.protocol.value})",
             f"    Anomaly score : {event.anomaly_score:.3f}",

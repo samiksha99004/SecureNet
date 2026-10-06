@@ -19,6 +19,12 @@ class ContributingFeature(CamelModel):
     contribution: float
 
 
+class AttackGuess(CamelModel):
+    """One of the model's guesses of which attack the abnormal traffic might be"""
+    label: str
+    probability: float
+
+
 # ── Security Event ────────────────────────────────────────────────────────────
 
 class SecurityEventResponse(CamelModel):
@@ -39,6 +45,7 @@ class SecurityEventResponse(CamelModel):
     action_taken: ActionTaken
     detection_reason: Optional[str] = None
     contributing_features: List[ContributingFeature] = []
+    attack_guesses: List[AttackGuess] = []
     flow_duration_ms: Optional[int] = None
     bytes_sent: Optional[int] = None
     bytes_received: Optional[int] = None
@@ -49,6 +56,12 @@ class SecurityEventResponse(CamelModel):
     @classmethod
     def _none_to_list(cls, value):
         return value or []
+
+    @field_validator("attack_guesses", mode="before")
+    @classmethod
+    def _clean_guesses(cls, value):
+        from app.services.verdict import clean_guesses
+        return clean_guesses(value)
 
 
 # ── Dashboard Summary ─────────────────────────────────────────────────────────

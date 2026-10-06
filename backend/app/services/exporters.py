@@ -11,7 +11,14 @@ from datetime import datetime
 from typing import Dict, List, Optional, Sequence
 
 from app.models.security_event import SecurityEvent
+from app.services.verdict import ABNORMAL, guesses_text
 from app.utils.timeutil import to_iso_z
+
+COMPUTED = {
+    "verdict": lambda e: ABNORMAL,
+    "attack_guesses": lambda e: guesses_text(e.attack_guesses) if e.attack_guesses else None,
+}
+FORMULA_START = ("=", "+", "-", "@", "\t", "\r")
 
 COLUMNS = [
     ("timestamp", "Timestamp (UTC)"),
@@ -22,8 +29,10 @@ COLUMNS = [
     ("protocol", "Protocol"),
     ("anomaly_score", "Score"),
     ("severity", "Severity"),
-    ("attack_type", "Attack Type"),
+    ("verdict", "Verdict"),
+    ("attack_type", "Possible Attack"),
     ("confidence", "Confidence"),
+    ("attack_guesses", "Model Guesses"),
     ("mode", "Mode"),
     ("state", "State"),
     ("action_taken", "Action"),
@@ -33,6 +42,8 @@ COLUMNS = [
 
 def event_row(event: SecurityEvent) -> Dict[str, object]:
     def val(attr: str):
+        if attr in COMPUTED:
+            return COMPUTED[attr](event)
         value = getattr(event, attr)
         if isinstance(value, datetime):
             return to_iso_z(value)
@@ -41,13 +52,23 @@ def event_row(event: SecurityEvent) -> Dict[str, object]:
     return {attr: val(attr) for attr, _ in COLUMNS} | {"id": str(event.id)}
 
 
+def _cell(value) -> object:
+    """CSV cell; text that a spreadsheet would run as a formula (=, +, -, @) is quoted with '
+    so a crafted value can never execute when the export is opened in Excel."""
+    if value is None:
+        return ""
+    if isinstance(value, str) and value.startswith(FORMULA_START):
+        return "'" + value
+    return value
+
+
 def to_csv(events: Sequence[SecurityEvent]) -> bytes:
     buffer = io.StringIO()
     writer = csv.writer(buffer)
     writer.writerow(["ID"] + [label for _, label in COLUMNS])
     for event in events:
         row = event_row(event)
-        writer.writerow([row["id"]] + ["" if row[a] is None else row[a] for a, _ in COLUMNS])
+        writer.writerow([row["id"]] + [_cell(row[a]) for a, _ in COLUMNS])
     return buffer.getvalue().encode("utf-8-sig")  # BOM so Excel opens UTF-8 correctly
 
 
@@ -55,7 +76,7 @@ def breakdown(events: Sequence[SecurityEvent]) -> Dict[str, Dict[str, int]]:
     return {
         "severity": dict(Counter(e.severity.value for e in events)),
         "state": dict(Counter(e.state.value for e in events)),
-        "attackType": dict(Counter(e.attack_type or "Unclassified" for e in events)),
+        "possible attack": dict(Counter(e.attack_type or "Unknown" for e in events)),
         "action": dict(Counter(e.action_taken.value for e in events)),
     }
 
@@ -103,7 +124,7 @@ def to_pdf(events: Sequence[SecurityEvent], title: str, subtitle: str = "",
             story += [table, Spacer(1, 4 * mm)]
 
     cols = ["timestamp", "source_ip", "destination_ip", "destination_port", "protocol",
-            "anomaly_score", "severity", "attack_type", "state", "action_taken"]
+            "anomaly_score", "severity", "verdict", "attack_type", "state", "action_taken"]
     labels = dict(COLUMNS)
     rows = [[labels[c] for c in cols]]
     for event in events:

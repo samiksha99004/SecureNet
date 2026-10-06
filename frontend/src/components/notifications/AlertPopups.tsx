@@ -7,7 +7,7 @@
 
 import { AlertTriangle, ShieldAlert, ShieldX, X } from 'lucide-react';
 import { useNotifications } from '../../contexts/NotificationContext';
-import { titleOf } from '../../utils/notifications';
+import { guessOf, titleOf } from '../../utils/notifications';
 import { formatTime } from '../../utils/format';
 import styles from './AlertPopups.module.css';
 
@@ -28,10 +28,11 @@ export function AlertPopups() {
             <div className={styles.body}>
               <div className={styles.header}>
                 <span className={styles.badge}>{alert.severity}</span>
-                <span className={styles.heading}>Attack detected</span>
+                <span className={styles.heading}>Abnormal traffic</span>
                 <span className={styles.time}>{formatTime(alert.timestamp)}</span>
               </div>
               <p className={styles.title}>{titleOf(alert)}</p>
+              <p className={styles.flow}>Possible attack: {guessOf(alert)}</p>
               <p className={styles.flow}>
                 {alert.sourceIp}:{alert.sourcePort} → {alert.destinationIp}:{alert.destinationPort}{' '}
                 <span className={styles.proto}>{alert.protocol}</span>
