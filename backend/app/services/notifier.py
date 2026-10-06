@@ -6,8 +6,9 @@ The notifier:
   * collects alerts for ALERT_EMAIL_BATCH_SECONDS and then sends ONE email per
     recipient listing them (an attack burst never floods inboxes);
   * filters by Settings → Notifications (high / medium / blocked);
-  * sends to every registered, active user's email address plus the optional
-    extra recipient configured in Settings;
+  * sends FROM the admin's Gmail (SMTP_USER) TO every active SecureNet user (and the
+    optional extra address from Settings). The admin is the sender, not a user, and
+    never receives attack emails;
   * sends a periodic digest when "digest" is enabled.
 
 In-app / desktop pop-ups are handled by the frontend from the WebSocket
@@ -18,8 +19,6 @@ from __future__ import annotations
 
 import asyncio
 import html
-import platform
-import socket
 import time
 import uuid
 from dataclasses import dataclass
@@ -99,31 +98,22 @@ def wanted(alert: AlertInfo, prefs: NotificationSettings) -> bool:
     )
 
 
-async def split_recipients(db, prefs: Optional[NotificationSettings]):
-    """(user emails, admin emails, registered users). Every active user gets the
-    normal alert; admins get the detailed admin version instead. The optional
-    extra address from Settings gets the normal alert."""
+async def get_recipients(db, prefs: Optional[NotificationSettings]) -> List[str]:
+    """Who gets attack emails: every active SecureNet user who has them switched on, plus
+    the optional extra address from Settings. Admins never do — the admin sends the alerts
+    (from SMTP_USER); an extra address that belongs to an admin is ignored too."""
     users = (await db.execute(
-        select(User).where(User.account_status == AccountStatus.ACTIVE).order_by(User.created_at)
-    )).scalars().all()
-    wanting = [u for u in users if u.email_alerts]      # each user can switch alert emails off
-    admins = {u.email.strip().lower() for u in wanting if u.role == UserRole.ADMIN}
-    regular = {u.email.strip().lower() for u in wanting if u.role != UserRole.ADMIN}
+        select(User.email, User.role, User.email_alerts).where(User.account_status == AccountStatus.ACTIVE)
+    )).all()
+    admins = {email.strip().lower() for email, role, _ in users if email and role == UserRole.ADMIN}
+    admins |= settings.admin_emails
+    recipients = {email.strip().lower() for email, role, wants in users
+                  if email and wants and role != UserRole.ADMIN}
     if prefs is not None and prefs.email_address:
         extra = prefs.email_address.strip().lower()
         if extra not in admins:
-            regular.add(extra)
-    return sorted(regular), sorted(admins), list(users)
-
-
-async def get_recipients(db, prefs: Optional[NotificationSettings]) -> List[str]:
-    """All active registered users + the optional extra address from Settings."""
-    rows = await db.execute(select(User.email).where(User.account_status == AccountStatus.ACTIVE,
-                                                     User.email_alerts.is_(True)))
-    recipients = {email.strip().lower() for (email,) in rows if email}
-    if prefs is not None and prefs.email_address:
-        recipients.add(prefs.email_address.strip().lower())
-    return sorted(recipients)
+            recipients.add(extra)
+    return sorted(recipients - admins)
 
 
 # ── Email rendering ──────────────────────────────────────────────────────────
@@ -220,102 +210,6 @@ async def fetch_events(db, alerts: Sequence[AlertInfo]) -> List[SecurityEvent]:
     return sorted(events, key=lambda e: e.timestamp)
 
 
-def host_details() -> str:
-    try:
-        name = socket.gethostname()
-    except OSError:
-        name = "unknown"
-    return f"{name} ({platform.system()} {platform.release()})"
-
-
-def _role_label(user: User) -> str:
-    return "Admin" if user.role == UserRole.ADMIN else "SecureNet User"
-
-
-def render_admin_email(events: Sequence[SecurityEvent], heading: str, registered: Sequence[User],
-                       operator: Optional[dict], host: str) -> tuple[str, str]:
-    """The admin's copy: who was using SecureNet, the monitored computer, every
-    registered user notified, and full details of each event."""
-    offset = server_offset_minutes()
-
-    def when(dt):
-        return f"{to_local(dt, offset):%d %b %Y, %H:%M:%S} ({tz_label(offset)})"
-
-    if operator:
-        op = (f"{operator.get('name')} <{operator.get('email')}>, phone {operator.get('phone') or '-'} "
-              f"({'Admin' if operator.get('role') == 'admin' else 'SecureNet User'})")
-    else:
-        op = "SecureNet itself (switched on automatically when SecureNet started)"
-
-    text = [heading, "ADMIN COPY - includes user and event details.", "",
-            f"IDS turned on by  : {op}", f"Monitored computer: {host}", "",
-            f"Registered users notified ({len(registered)}):"]
-    text += [f"  - {u.full_name} <{u.email}>, phone {u.phone_number or '-'}, {_role_label(u)}" for u in registered]
-    text += ["", f"Event details ({len(events)}):"]
-
-    blocks = []
-    for e in events:
-        names = [f.get("name") for f in (e.contributing_features or []) if isinstance(f, dict) and f.get("name")]
-        def count(n, word):
-            return f"{n} {word}{'' if n == 1 else 's'}"
-
-        traffic = [x for x in (
-            f"{count(e.packets_sent, 'packet')} out" if e.packets_sent is not None else "",
-            f"{count(e.packets_received, 'packet')} in" if e.packets_received is not None else "",
-            f"{count(e.bytes_sent, 'byte')} out" if e.bytes_sent is not None else "",
-            f"{count(e.bytes_received, 'byte')} in" if e.bytes_received is not None else "",
-            f"{e.flow_duration_ms} ms long" if e.flow_duration_ms is not None else "",
-        ) if x]
-        fields = [
-            ("Event ID", str(e.id)),
-            ("Time", when(e.timestamp)),
-            ("Verdict", ABNORMAL),
-            ("Possible attack", possible_attack(e.attack_type, e.confidence, e.attack_guesses)),
-            ("Model's guesses", guesses_text(e.attack_guesses)),
-            ("Severity", e.severity.value.upper()),
-            ("Confidence", f"{e.confidence * 100:.0f}%" if e.confidence is not None else "-"),
-            ("Anomaly score", f"{e.anomaly_score:.3f}"),
-            ("Source", f"{e.source_ip}:{e.source_port}"),
-            ("Destination", f"{e.destination_ip}:{e.destination_port} ({e.protocol.value})"),
-            ("Action / status", f"{e.action_taken.value} / {e.state.value.replace('_', ' ')}"),
-            ("Reason", e.detection_reason or "-"),
-            ("Unusual features", ", ".join(names) or "-"),
-            ("Traffic", ", ".join(traffic) or "-"),
-        ]
-        text.append("")
-        text += [f"  {k:16}: {v}" for k, v in fields]
-        cells = "".join(
-            f"<tr><td style='color:#7d6154;padding:3px 12px 3px 0;white-space:nowrap;vertical-align:top'>{_esc(k)}</td>"
-            f"<td style='padding:3px 0'>{_esc(v)}</td></tr>" for k, v in fields)
-        blocks.append(f"<table style='width:100%;font-size:13px;border-top:1px solid #efd6c6;margin-top:10px;"
-                      f"padding-top:8px'>{cells}</table>")
-    text += ["", "The full incident report is attached to this email."]
-
-    users_html = "".join(
-        f"<tr><td style='padding:3px 12px 3px 0'>{_esc(u.full_name)}</td>"
-        f"<td style='padding:3px 12px 3px 0'>{_esc(u.email)}</td>"
-        f"<td style='padding:3px 12px 3px 0'>{_esc(u.phone_number or '-')}</td>"
-        f"<td style='padding:3px 0'>{_role_label(u)}</td></tr>" for u in registered)
-    body = f"""<html><body style="margin:0;background:#fbeee4;font-family:Arial,Helvetica,sans-serif">
-  <div style="max-width:760px;margin:0 auto;padding:24px;color:#3d2b22">
-    <div style="color:#c2562f;font-size:20px;font-weight:bold;margin-bottom:4px">{_esc(settings.APP_NAME)} - admin alert</div>
-    <div style="background:#fffaf6;border:1px solid #efd6c6;border-radius:8px;padding:20px">
-      <h2 style="margin:0 0 6px">{_esc(heading)}</h2>
-      <p style="margin:0 0 16px;color:#7d6154">Admin copy - includes user and event details.</p>
-      <table style="font-size:13px;margin-bottom:12px">
-        <tr><td style="color:#7d6154;padding:3px 12px 3px 0">IDS turned on by</td><td>{_esc(op)}</td></tr>
-        <tr><td style="color:#7d6154;padding:3px 12px 3px 0">Monitored computer</td><td>{_esc(host)}</td></tr>
-      </table>
-      <h3 style="margin:16px 0 6px;font-size:14px">Registered users notified ({len(registered)})</h3>
-      <table style="font-size:13px">{users_html}</table>
-      <h3 style="margin:18px 0 0;font-size:14px">Event details ({len(events)})</h3>
-      {''.join(blocks)}
-      <p style="margin-top:16px;color:#5a4035">The full incident report is attached to this email.</p>
-    </div>
-  </div></body></html>"""
-    return "\n".join(text), body
-
-
 def report_attachment(events: Sequence[SecurityEvent]) -> Attachment:
     """Incident report (.txt) for the attacks in one alert email."""
     offset = server_offset_minutes()
@@ -381,28 +275,20 @@ class AlertNotifier:
             alerts = [a for a in pending if wanted(a, prefs)]
             if not alerts:
                 return 0
-            user_rcpts, admin_rcpts, registered = await split_recipients(db, prefs)
-            if not user_rcpts and not admin_rcpts:
+            recipients = await get_recipients(db, prefs)
+            if not recipients:
                 return 0
             events = await fetch_events(db, alerts)
 
         alerts.sort(key=lambda a: a.timestamp, reverse=True)
         heading = (
-            f"Attack detected: {alerts[0].title}" if len(alerts) == 1
-            else f"{len(alerts)} attacks detected"
+            f"{ABNORMAL} — possible attack: {alerts[0].guess}" if len(alerts) == 1
+            else f"{ABNORMAL}: {len(alerts)} alerts"
         )
         report = await asyncio.to_thread(report_attachment, events)
         subject = alert_subject(alerts)
-        mails = []
-        if user_rcpts:
-            text, body = render_alert_email(alerts, heading)
-            mails.append((user_rcpts, subject, text, body))
-        if admin_rcpts:
-            from app.ml.ids_service import get_ids_service  # late import: ids_service imports this module
-            operator = get_ids_service().started_by
-            text, body = render_admin_email(events, heading, registered, operator, host_details())
-            admin_subject = subject.replace(f"[{settings.APP_NAME}]", f"[{settings.APP_NAME} Admin]", 1)
-            mails.append((admin_rcpts, admin_subject, text, body))
+        text, body = render_alert_email(alerts, heading)
+        mails = [(recipients, subject, text, body)]
         for rcpts, subj, text, body in mails:
             try:
                 await send_email(rcpts, subj, text, body, attachments=[report])

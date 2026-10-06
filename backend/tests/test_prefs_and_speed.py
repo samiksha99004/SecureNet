@@ -8,7 +8,7 @@ from sqlalchemy import event
 from app.db.base import AsyncSessionLocal, engine
 from app.ml.detector import Detection
 from app.ml.ids_service import IDSService
-from app.services.notifier import get_recipients, split_recipients
+from app.services.notifier import get_recipients
 from tests.conftest import register
 from tests.test_ids import FakeDetector, make_flow
 
@@ -37,15 +37,13 @@ async def test_each_user_can_switch_alert_emails_off_and_on(client, captured_otp
     assert r.status_code == 200 and r.json()["emailAlerts"] is False
     assert (await client.get("/api/auth/me", headers=h)).json()["emailAlerts"] is False   # not a stale cached copy
     async with AsyncSessionLocal() as db:
-        users, admins, _ = await split_recipients(db, None)
         everyone = await get_recipients(db, None)
-    assert "worker@example.com" not in users and "worker@example.com" not in everyone
-    assert admins == ["boss@example.com"]
+    assert everyone == []                                           # admin never gets attack emails
 
     r = await client.put("/api/auth/me/preferences", headers=h, json={"emailAlerts": True})
     assert r.json()["emailAlerts"] is True
     async with AsyncSessionLocal() as db:
-        users, _, _ = await split_recipients(db, None)
+        users = await get_recipients(db, None)
     assert users == ["worker@example.com"]
 
     assert (await client.put("/api/auth/me/preferences", json={"emailAlerts": False})).status_code == 401
@@ -119,7 +117,7 @@ async def test_history_and_recipients_are_never_stale(client, captured_otps):
     ha = {"Authorization": f"Bearer {admin['tokens']['accessToken']}"}
     hu = {"Authorization": f"Bearer {user['tokens']['accessToken']}"}
     assert (await client.get("/api/events", headers=ha)).json()["total"] == 0
-    assert (await client.get("/api/notifications/status", headers=ha)).json()["recipientCount"] == 2
+    assert (await client.get("/api/notifications/status", headers=ha)).json()["recipientCount"] == 1   # the user, not the admin
     await client.get("/api/settings", headers=ha)      # first load (creates the settings rows here)
     with count_queries() as q:
         await client.get("/api/events", headers=ha)
@@ -135,4 +133,4 @@ async def test_history_and_recipients_are_never_stale(client, captured_otps):
     assert (await client.get("/api/events", headers=ha)).json()["total"] == 1      # new event shows at once
 
     await client.put("/api/auth/me/preferences", headers=hu, json={"emailAlerts": False})
-    assert (await client.get("/api/notifications/status", headers=ha)).json()["recipientCount"] == 1
+    assert (await client.get("/api/notifications/status", headers=ha)).json()["recipientCount"] == 0

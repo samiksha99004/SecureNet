@@ -48,55 +48,48 @@ def sent(monkeypatch):
 
 
 async def test_alerts_are_batched_to_all_registered_users(client, captured_otps, sent):
-    """Users get the normal alert; the admin gets a detailed copy (users + full event)."""
-    from app.ml.ids_service import get_ids_service
-
+    """Alerts go from the admin's Gmail to every SecureNet user; the admin gets none."""
     await register(client, captured_otps, email="admin@example.com", name="Owner Admin")       # first = admin
     await register(client, captured_otps, email="analyst@example.com", name="Asha Rao", phone="+919000000001")
     await set_prefs(email_enabled=True, email_address="soc@example.com",
                     alert_on_high=True, alert_on_medium=False, alert_on_low=False, alert_on_block=True)
-    get_ids_service().started_by = {"name": "Asha Rao", "email": "analyst@example.com",
-                                    "phone": "+919000000001", "role": "viewer"}
 
     notifier = AlertNotifier()
     notifier.enqueue(await make_event(SeverityLevel.HIGH, attack="DDoS"))
     notifier.enqueue(await make_event(SeverityLevel.MEDIUM, attack="Bot"))          # filtered out
     notifier.enqueue(await make_event(SeverityLevel.LOW, ActionTaken.BLOCKED, "SSH-Bruteforce"))  # blocked -> kept
-    try:
-        assert await notifier.flush() == 2
-    finally:
-        get_ids_service().started_by = None
+    assert await notifier.flush() == 2
 
-    assert len(sent) == 2
-    user_mail = next(m for m in sent if "admin@example.com" not in m["to"])
-    admin_mail = next(m for m in sent if m["to"] == ["admin@example.com"])
+    # one email: every non-admin registered user + the extra address — never the admin
+    assert len(sent) == 1
+    [mail] = sent
+    assert mail["to"] == ["analyst@example.com", "soc@example.com"]
+    assert all("admin@example.com" not in m["to"] for m in sent)
+    assert "Abnormal traffic detected: 2 alerts (1 HIGH)" in mail["subject"] and "most severe possible attack: DDoS" in mail["subject"]
+    assert not mail["subject"].startswith("[SecureNet Admin]")
+    assert "DDoS" in mail["html"] and "SSH-Bruteforce" in mail["html"] and "Bot" not in mail["text"]
+    assert "report is attached" in mail["text"]
+    assert "+919000000001" not in mail["text"]          # users don't see other users' details
 
-    # normal alert: every non-admin registered user + the extra address
-    assert user_mail["to"] == ["analyst@example.com", "soc@example.com"]
-    assert "Abnormal traffic detected: 2 alerts (1 HIGH)" in user_mail["subject"] and "most severe possible attack: DDoS" in user_mail["subject"]
-    assert "DDoS" in user_mail["html"] and "SSH-Bruteforce" in user_mail["html"] and "Bot" not in user_mail["text"]
-    assert "report is attached" in user_mail["text"]
-    assert "+919000000001" not in user_mail["text"]          # users don't see other users' details
+    [report] = mail["attachments"]
+    assert report.filename.startswith("SecureNet-incident-report-") and report.filename.endswith(".txt")
+    body = report.content.decode("utf-8")
+    assert "Abnormal traffic : 2 incident(s)" in body and "DDoS" in body and "SSH-Bruteforce" in body and "Bot" not in body
 
-    # admin copy: who turned the IDS on, the computer, registered users, full event details
-    assert admin_mail["subject"].startswith("[SecureNet Admin]")
-    text = admin_mail["text"]
-    assert "ADMIN COPY" in text
-    assert "IDS turned on by  : Asha Rao <analyst@example.com>, phone +919000000001 (SecureNet User)" in text
-    assert "Monitored computer:" in text
-    assert "Owner Admin <admin@example.com>" in text and "Asha Rao <analyst@example.com>, phone +919000000001" in text
-    assert "Event ID" in text and "203.0.113.7:50000" in text and "192.168.1.5:80 (TCP)" in text
-    assert "Anomaly score   : 0.900" in text and "Confidence      : 95%" in text
 
-    # the incident report travels with both emails
-    for mail in (user_mail, admin_mail):
-        [report] = mail["attachments"]
-        assert report.filename.startswith("SecureNet-incident-report-") and report.filename.endswith(".txt")
-        body = report.content.decode("utf-8")
-        assert "Abnormal traffic : 2 incident(s)" in body and "DDoS" in body and "SSH-Bruteforce" in body and "Bot" not in body
+async def test_admin_never_gets_attack_emails(client, captured_otps, sent):
+    """Only an admin registered (or the extra address is the admin's): nobody to email."""
+    await register(client, captured_otps, email="admin@example.com")
+    await set_prefs(email_enabled=True, email_address="ADMIN@example.com",
+                    alert_on_high=True, alert_on_medium=True, alert_on_low=True)
+    notifier = AlertNotifier()
+    notifier.enqueue(await make_event(SeverityLevel.HIGH, attack="DDoS"))
+    assert await notifier.flush() == 0
+    assert sent == []
 
 
 async def test_every_attack_is_emailed_by_default(client, captured_otps, sent):
+    await register(client, captured_otps, email="admin@example.com")       # first = admin (no attack mails)
     await register(client, captured_otps, email="user@example.com")
     await set_prefs()  # defaults: email on, high + medium + low
     notifier = AlertNotifier()
@@ -116,7 +109,8 @@ async def test_no_email_when_alerts_disabled(client, captured_otps, sent):
 
 
 async def test_html_is_escaped(client, captured_otps, sent):
-    await register(client, captured_otps)
+    await register(client, captured_otps)                                   # admin
+    await register(client, captured_otps, email="user@example.com")
     await set_prefs(email_enabled=True, alert_on_high=True)
     notifier = AlertNotifier()
     notifier.enqueue(await make_event(attack="<script>x</script>"))
@@ -151,7 +145,7 @@ async def test_notification_feed_and_status(client, admin):
     status = r.json()
     assert status["emailDelivery"] == "disabled"          # EMAIL_ENABLED=false in tests
     assert status["emailAlertsEnabled"] is True
-    assert status["recipients"] == ["admin@example.com", "extra@example.com"]
+    assert status["recipients"] == ["extra@example.com"]          # never the admin
 
 
 async def test_test_email_endpoint(client, admin, monkeypatch):

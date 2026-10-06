@@ -258,9 +258,14 @@ password itself is never in the token) → `POST /auth/change-password/confirm` 
 (same new password required) sets it. Nothing changes before the code. UI: Account → *Change Password* → code step
 (Confirm new password / Resend code / Cancel).
 
-**Attack emails**: every active non-admin user (+ Settings extra address) gets the normal alert; every admin gets
-`[SecureNet Admin] …` with *who turned the IDS on* (`IDSService.started_by`, set in `/ids/control`), the monitored
-computer, all registered users (name, email, phone, role) and full event details; both carry the incident report.
+**Attack emails (session 37, owner: "admin is not a user — admin sends mails to users, admin should not receive any
+mail regarding attacks")**: sent FROM the admin Gmail (`SMTP_USER`) TO every active non-admin user with alert emails on
+(+ the Settings extra address unless it belongs to an admin / `ADMIN_EMAILS`), one batched email with the incident
+report. `notifier.get_recipients()` is the single rule (alerts, digest, `/notifications/status`); the old
+`[SecureNet Admin]` detailed copy (`render_admin_email`, `split_recipients`, `host_details`) was removed. Admins
+still get their own sign-in/confirmation codes and the explicit *Send test email* they click. UI: Preferences shows
+admins a note instead of the alert-email switch; Notifications tab says alerts go to users, never the admin, and
+"No SecureNet users to email yet" when there are none.
 
 **Website (session 29)**: `website/` (static, no build) — sidebar like the app (Home, Download, About SecureNet, The two
 models, The app, Technology timeline, About us, Contact us), dark/peach theme switch, mobile drawer. Owner's content
@@ -680,6 +685,8 @@ every time:          double-click START_SECURENET.bat  (right-click → Run as a
 | P36 | Dashboard/alerts stated the attack class as fact | Session 35: NORMAL TRAFFIC / ABNORMAL TRAFFIC DETECTED; attack shown as the model's guess; Table 1 / Table 2 / final verdict card; guesses stored per event |
 | S2 | **High (session 35)** The app itself could be attacked: any Host accepted (DNS rebinding let a hostile web page read the local API from the owner's browser), no security headers (framing/sniffing), unlimited request bodies, WebSocket open to any origin, open-flow table and per-flow packet lists unbounded (random-port flood ⇒ memory exhaustion), every alert written to Neon + emailed (attack storm floods DB/email/dashboards), CSV export could carry spreadsheet formulas | `app/core/hardening.py` (host check, origin check, 1 MB limit, headers + CSP), WS connection cap + 64 KB messages, flow caps, alert storm limit, CSV escaping, Vite headers |
 
+| P37 | The admin received attack emails (a detailed admin copy) although the admin is the sender, not a user | Session 37: alerts/digest only to non-admin users (+ non-admin extra address); admin copy removed |
+
 ### Still open
 | ID | Severity | Issue | Notes / next step |
 |---|---|---|---|
@@ -745,3 +752,4 @@ every time:          double-click START_SECURENET.bat  (right-click → Run as a
 | 2026-10-06 (34) | **Npcap installed + live capture bug fixed** (part of the model request: live monitoring when the app starts). With the owner's approval opened the signed Npcap 1.89 installer (owner clicked through: WinPcap-compatible, AdminOnly=0). Found R6: `network_monitor.check_capture_available` checked `scapy.config.conf.use_pcap` without loading `scapy.arch.windows`, so it was always False and the IDS could never start on Windows — now imports `scapy.all` first. Real app (no admin) now starts monitoring by itself and scores real traffic with the hybrid model. 119/119 tests. Committed and pushed. |
 | 2026-10-06 (35) | **Normal / abnormal verdict + guess tables, app protected against attacks on itself** (owner: instead of the attack name show normal traffic / abnormal traffic detected, with a guess table below of what attack it might be like the report photos (Table 1 stage 1, Table 2 stage 2, final verdict); make SecureNet itself hard to attack). Backend: `Detection.flagged/guesses`, IDS verdict counters + `/ids/status.verdicts`, `security_events.attack_guesses` (migration `f7c2a8e5b3d1`, applied to Neon), `services/verdict.py`, wording in alert payload / notifications / emails / incident report / exports; `core/hardening.py` + `ALLOWED_HOSTS`, WS connection cap, flow caps in `network_monitor.py`, alert storm limit, CSV formula escaping, uvicorn flags in the launchers. Frontend: `TrafficVerdictCard`, `utils/verdict.ts`, status card/counters/pop-ups/bell/History/drawer/reports wording, Vite security headers. Tests 129/129, Chrome 20/21 (+1 test-script fix) and 5/5 (SPA CSP). Real app restarted. Committed and pushed. |
 | 2026-10-06 (36) | **Only the admin account kept** (owner: delete both SecureNet users, keep only admin). Deleted Samarth Jain (samiksha94820@gmail.com) and Anivrath (4mt23ic012@mite.ac.in) from Neon after a JSON backup (`F:\SecureNet-backup\securenet-users-deleted-20261006-234937.json`: users, their 8 OTP rows, 1 support message); their references cleared (support message kept with user_id = null; no events/settings/reports pointed to them). Neon now has 1 account: Samiksha Jain (admin, active). No code changes. Committed and pushed. |
+| 2026-10-06 (37) | **Admin sends attack emails, never receives them** (owner: admin is not a user; admin should send mails to users when there are attacks/alerts and should not receive any attack mail). `notifier.py`: `get_recipients()` = active non-admin users with alert emails on + extra address unless it is an admin's; admin copy + `split_recipients`/`render_admin_email`/`host_details` removed; email heading reworded (abnormal traffic). Tests updated + `test_admin_never_gets_attack_emails` (130/130). Frontend: Preferences note for admins instead of the alert-email switch; Notifications tab wording + "No SecureNet users to email yet". Harness check: admin + 2 users, admin also set as extra address, one alert → mails only to the 2 users. Neon currently has only the admin, so no attack emails are sent until users register. Real backend restarted. Committed and pushed. |

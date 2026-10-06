@@ -27,7 +27,7 @@ const THEMES: { id: Theme; label: string; icon: typeof Moon }[] = [
 ];
 
 export function PreferencesTab() {
-  const { user, completeLogin } = useAuth();
+  const { user, completeLogin, isAdmin } = useAuth();
   const [theme, setTheme] = useTheme();
   const { prefs, setPrefs, desktopPermission, enableDesktopNotifications } = useNotifications();
   const { showToast } = useToast();
@@ -112,6 +112,14 @@ export function PreferencesTab() {
         />
       </SettingsSection>
 
+      {isAdmin ? (
+        <SettingsSection
+          title="Email Alerts"
+          description="As the admin you send the attack alert emails (from the SecureNet Gmail) to every SecureNet user — you don't receive them yourself. Sign-in and confirmation codes are still emailed to you."
+        >
+          <></>
+        </SettingsSection>
+      ) : (
       <SettingsSection
         title="Email Alerts"
         description="An email with the incident report when an attack is detected. Sign-in and confirmation codes are always emailed."
@@ -128,6 +136,7 @@ export function PreferencesTab() {
           onChange={(on) => void saveEmailAlerts(on)}
         />
       </SettingsSection>
+      )}
     </div>
   );
 }

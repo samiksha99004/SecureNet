@@ -2,7 +2,7 @@
  * SecureNet — NotificationsTab
  *
  * Alert delivery settings:
- *  - Email alerts to every registered user's email (+ optional extra address),
+ *  - Email alerts from the admin's Gmail to every SecureNet user (+ optional extra address; never the admin),
  *    filtered by severity / block action, batched by the backend, optional digest
  *  - Email delivery status from the server and a "send test email" button
  *  (pop-ups, sound and theme are per-user in the Preferences tab)
@@ -113,8 +113,9 @@ export function NotificationsTab() {
             <>
               <strong>Email delivery is configured on the server.</strong>
               <span>
-                Alerts go to {s.recipientCount} registered address{s.recipientCount === 1 ? '' : 'es'}; bursts are
-                grouped into one email every {s.batchSeconds}s.
+                Alerts are sent from the admin email to {s.recipientCount} SecureNet user
+                address{s.recipientCount === 1 ? '' : 'es'} (never to the admin); bursts are grouped into one email
+                every {s.batchSeconds}s.
                 {s.lastError && <> Last error: {s.lastError}</>}
               </span>
             </>
@@ -147,12 +148,12 @@ export function NotificationsTab() {
       {/* ── Email alerts ────────────────────────────────────────────────── */}
       <SettingsSection
         title="Email Alerts"
-        description="When an attack is detected, an alert email is sent to the registered email address of every active SecureNet user."
+        description="When abnormal traffic is detected, the admin email sends an alert to every active SecureNet user. The admin does not receive attack emails."
       >
         <SettingsField
           id="notif-email-enabled"
           label="Send Email Alerts"
-          hint="Email all registered users when the IDS detects an attack."
+          hint="Email all SecureNet users when the IDS detects abnormal traffic."
           type="toggle"
           checked={form.emailEnabled}
           onChange={(v) => update('emailEnabled', v)}
@@ -160,7 +161,7 @@ export function NotificationsTab() {
         <SettingsField
           id="notif-email-address"
           label="Additional Recipient (optional)"
-          hint="An extra address (e.g. a SOC mailbox) that also receives every alert."
+          hint="An extra address (e.g. a SOC mailbox) that also receives every alert (an admin address is ignored)."
           type="email"
           value={form.emailAddress ?? ''}
           onChange={(v) => update('emailAddress', v || null)}
@@ -171,6 +172,12 @@ export function NotificationsTab() {
           <div className={local.recipients}>
             <Mail size={14} aria-hidden="true" />
             <span>Recipients: {s.recipients.join(', ')}</span>
+          </div>
+        )}
+        {s && s.recipients.length === 0 && (
+          <div className={local.recipients}>
+            <Mail size={14} aria-hidden="true" />
+            <span>No SecureNet users to email yet — alerts are sent once users register.</span>
           </div>
         )}
       </SettingsSection>
