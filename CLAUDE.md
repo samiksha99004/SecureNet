@@ -344,8 +344,9 @@ every time:          double-click START_SECURENET.bat  (right-click → Run as a
   *Settings → Notifications*: turn on "Send Email Alerts" and click **Send test email**.
   Recipients = every active registered user (+ optional extra address). **Configured 2026-09-25**: Gmail
   `samiksha99004@gmail.com` with an App Password (in `.env` only); a real test email was sent successfully.
-- **Live capture on Windows requires [Npcap](https://npcap.com)** (system driver, installs to C: by design) and an
-  Administrator backend. Without it, turning the IDS on returns a clear 503 message. Npcap is **not installed** yet.
+- **Live capture on Windows requires [Npcap](https://npcap.com)** (system driver, installs to C: by design). Without it,
+  turning the IDS on returns a clear 503 message. **Installed on this PC 2026-10-06** (1.89, WinPcap-compatible, non-admin
+  capture allowed) — live capture works without running SecureNet as Administrator.
   The start-up entry (IDS left ON at shutdown) starts the backend **without** admin rights; capture then works as long
   as Npcap is installed with its default setting ("Restrict Npcap driver's access to Administrators only" **unticked**).
 - Models: copy the hybrid files into `backend/models/` (see `backend/models/README.md`), `.\SETUP.ps1 -WithML`;
@@ -366,6 +367,10 @@ every time:          double-click START_SECURENET.bat  (right-click → Run as a
   capture, 300 real test-split flows replayed through the IDS): 165 alerts for 183 true attacks (DDoS 91/98, Bot 32/32,
   Brute Force 15/15, DoS 21/22, Infilteration 4/16), pop-ups with real classes, live chart with real scores, events
   with score/class/confidence/reason, Model tab 0.4602 + 92.2 % + 465,837 + 7 classes, Detection tab preset text.
+  **Real live monitoring** after Npcap was installed (owner approved) and the capture-check bug (R6) was fixed: the
+  real app started by `START_SECURENET.bat` (no admin) turned the IDS on by itself, captured 1,034 packets / 43 flows
+  in ~75 s, every flow scored by the hybrid model (e.g. 0.583, 0.606, 0.435 — normal flows above θ cancelled by stage
+  2 as Benign, 0 false alerts), one "SecureNet is on and is monitoring." toast, Startup entry created.
 - **Session 29 — website live, plain code email, greeting, name only (2026-09-26):** website published to
   https://samiksha99004.github.io/securenet-site/ (HTTP 200 for page, css, js, icon; owner's portfolio at
   samiksha99004.github.io untouched); Chrome on the live site: sidebar highlight follows the section, both themes,
@@ -619,6 +624,8 @@ every time:          double-click START_SECURENET.bat  (right-click → Run as a
 | O2 | Medium → fixed (session 33) | Models not loaded; compatibility unverified | Hybrid model loaded with the training library versions; verified identical to the tested results |
 | P34 | Live detection had no model (no real scores) and did not start with the app | Session 33: hybrid model auto-loaded, IDS on at startup, real scores/classes/metrics |
 | P35 | Settings / History / notification status took 1–4 s per visit | Session 33: cached until changed + prepared at startup → ~5 ms |
+| O1 | High → fixed (session 33) | Npcap not installed → no live capture | Owner installed Npcap 1.89 (WinPcap-compatible, AdminOnly=0); service running |
+| R6 | **High (session 33)** The IDS could never start on Windows, even with Npcap installed: `check_capture_available` imported only `scapy.config`, and `conf.use_pcap` becomes True only when `scapy.arch.windows` loads | Check imports `scapy.all` first; live capture verified on the real app without admin rights |
 | P5 | First start on a fresh install could show the boot error while Vite prepared dependencies | `index.html` retries once automatically before reporting |
 | M14 | No alert notifications | Full notification system (pop-ups, bell feed, sound, desktop, batched emails to registered users, digest, test email) |
 | L1–L4, L6, L7, L9 | Deprecations, no-op middleware, unused deps, stats, clutter, LIKE escaping, unverified build | Fixed / archived |
@@ -629,7 +636,6 @@ every time:          double-click START_SECURENET.bat  (right-click → Run as a
 ### Still open
 | ID | Severity | Issue | Notes / next step |
 |---|---|---|---|
-| O1 | High | **Npcap not installed** → live capture unavailable on this PC. Installer **downloaded to `F:\tools\installers\npcap-1.89.exe`** (signature valid, Nmap Software LLC; SHA-256 8AED85E9…05CC) | Owner runs it (admin prompt; tick *WinPcap API-compatible Mode*; the driver itself goes into Windows by design), then starts SecureNet as Administrator |
 | O3 | Low | Protection (auto-block) mode is disabled by the owner (IDS is ON/OFF only); firewall code untested with admin rights | Re-enable only if the owner asks |
 | O4 | Medium | Paper's reported metrics (78.58% → 99.98%) not reproducible from the repo (notebook/dataset in `F:\all_10_csv_manual`) | Add training notebook + evaluation script to repo |
 | O5 | Low | Tokens in localStorage; logout doesn't revoke refresh tokens server-side | Consider httpOnly cookies / token denylist |
@@ -646,8 +652,8 @@ every time:          double-click START_SECURENET.bat  (right-click → Run as a
 | O10 | Low | 8 advisory oxlint `set-state-in-effect` warnings | Refactor tabs to keyed form components if desired |
 
 ## 9. Suggested next steps
-1. Install Npcap, run `START_SECURENET.bat` as Administrator, switch IDS on, confirm packets/flows counters move.
-2. Load models (§5), confirm `detector` shows `isolation_forest+xgboost`, watch live scores; tune θ in Settings.
+1. Done (session 33): Npcap installed, hybrid model loaded, live capture + scoring verified.
+2. Watch how the model behaves on this network (live flows differ from CICIDS2018); tune the sensitivity if needed.
 3. **Change the Neon database password** (Neon console → Roles → neondb_owner → Reset password) and put the new
    connection string in `backend/.env` — the old one was public on GitHub until 2026-09-25 (see S1).
 
@@ -689,3 +695,4 @@ every time:          double-click START_SECURENET.bat  (right-click → Run as a
 | 2026-09-26 (31) | **Website address without the owner's name — Cloudflare Pages prepared** (owner: no name in the website address; chose Cloudflare Pages). Checked names (securenet.pages.dev taken, securenet-ids.pages.dev free); new `website/publish-cloudflare.ps1`; `.local/cloudflare.env` template (gitignored); website README. Waiting for the owner's Cloudflare account + API token. Backend restarted with the digit-box email. Committed and pushed. |
 | 2026-09-26 (32) | Owner: keep the website on GitHub Pages for now (https://samiksha99004.github.io/securenet-site/), move to Cloudflare later. No code changes; CLAUDE.md status updated. Committed and pushed. |
 | 2026-10-06 (33) | **Retrained hybrid model loaded, live monitoring at startup, faster pages** (owner: load the hybrid Isolation Forest + XGBoost from F:\retraining_hybrid, fix API/connection errors, live monitoring when the app starts, no fake values — real results from the model's testing). venv: scikit-learn 1.9.1, XGBoost 3.4.1 (pinned in requirements-ml.txt). Model files copied to backend/models (old Aug .pkl → archive_2026-08; .gitignore models/*.json, archive*/; models/README.md). `detector.py` rewritten: hybrid loader + tested pipeline + `analyze_batch`, legacy kept; `features.py`: Protocol, Fwd URG Flags; `ids_service.py`: effective threshold (presets follow the tested threshold), reload_config after model load, batch worker, confidence-based severity, status `threshold`; `/api/model/info` real metrics (schemas: tested_threshold, evaluation, test_rows); `autostart.py` + `IDS_ON_AT_STARTUP` (default true), `ML_AUTOLOAD` default true; caches for settings/whitelist/recipients/history + more startup priming; `scripts/verify_model.py`. Frontend: Model tab (threshold in use / tested, evaluation note, only real metric rows), Detection tab preset text, live chart uses the IDS threshold. Tests 119/119, Chrome 13/13, real backend smoke OK. Live capture still needs Npcap (O1). Committed and pushed. |
+| 2026-10-06 (34) | **Npcap installed + live capture bug fixed** (part of the model request: live monitoring when the app starts). With the owner's approval opened the signed Npcap 1.89 installer (owner clicked through: WinPcap-compatible, AdminOnly=0). Found R6: `network_monitor.check_capture_available` checked `scapy.config.conf.use_pcap` without loading `scapy.arch.windows`, so it was always False and the IDS could never start on Windows — now imports `scapy.all` first. Real app (no admin) now starts monitoring by itself and scores real traffic with the hybrid model. 119/119 tests. Committed and pushed. |
