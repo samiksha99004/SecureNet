@@ -263,7 +263,20 @@ mail regarding attacks")**: sent FROM the admin Gmail (`SMTP_USER`) TO every act
 (+ the Settings extra address unless it belongs to an admin / `ADMIN_EMAILS`), one batched email with the incident
 report. `notifier.get_recipients()` is the single rule (alerts, digest, `/notifications/status`); the old
 `[SecureNet Admin]` detailed copy (`render_admin_email`, `split_recipients`, `host_details`) was removed. Admins
-still get their own sign-in/confirmation codes and the explicit *Send test email* they click. UI: Preferences shows
+still get their own sign-in/confirmation codes and the explicit *Send test email* they click.
+**Email pacing + design (session 38, owner: "tonnes of emails like spamming — email when normal changes to abnormal,
+then every 5 min; keep desktop alerting the same; email has too much info dump, keep it simple, keep the printable
+report")**: `AlertNotifier.enqueue` marks a **new episode** when no alert came for `ALERT_EMAIL_INTERVAL_SECONDS`
+(300); `seconds_until_next_email()` = `ALERT_EMAIL_BATCH_SECONDS` (30) for a new episode, else until 5 min after the
+last alert email (never closer than 5 min); `_run` sleeps that long and sends ONE email for everything queued;
+`stop()` only flushes if that keeps the spacing. Pop-ups/bell/desktop (WebSocket `alert`) are NOT throttled.
+`render_alert_email(alerts, kind)` kinds new / continuing / digest / test: short summary only — title, one-line intro
+("Your network was normal until HH:MM…" / "still detecting…"), grey panel with ABNORMAL TRAFFIC pill, most likely
+attack (most common guess, "in X of N alerts", "the model's best guess"), alert count by severity, time range, sources
+("IP and N others"), *Open SecureNet* button, "full report is attached — open or print it", footer (at most one email
+every 5 min; how to switch off). Subjects `[SecureNet] Abnormal traffic detected - most likely DDoS (N alerts)` /
+`[SecureNet] Abnormal traffic continues - N alerts, most likely DDoS`. The attached `.txt` incident report is unchanged.
+`/notifications/status` gains `intervalSeconds`; Notifications tab explains the pacing. UI: Preferences shows
 admins a note instead of the alert-email switch; Notifications tab says alerts go to users, never the admin, and
 "No SecureNet users to email yet" when there are none.
 
@@ -687,6 +700,8 @@ every time:          double-click START_SECURENET.bat  (right-click → Run as a
 
 | P37 | The admin received attack emails (a detailed admin copy) although the admin is the sender, not a user | Session 37: alerts/digest only to non-admin users (+ non-admin extra address); admin copy removed |
 
+| P38 | Users got an alert email for almost every alert (spam), and each email was a long per-alert table | Session 38: email on normal → abnormal, then at most one summary every 5 min; short summary email + printable report; screen/desktop alerts unchanged |
+
 ### Still open
 | ID | Severity | Issue | Notes / next step |
 |---|---|---|---|
@@ -753,3 +768,4 @@ every time:          double-click START_SECURENET.bat  (right-click → Run as a
 | 2026-10-06 (35) | **Normal / abnormal verdict + guess tables, app protected against attacks on itself** (owner: instead of the attack name show normal traffic / abnormal traffic detected, with a guess table below of what attack it might be like the report photos (Table 1 stage 1, Table 2 stage 2, final verdict); make SecureNet itself hard to attack). Backend: `Detection.flagged/guesses`, IDS verdict counters + `/ids/status.verdicts`, `security_events.attack_guesses` (migration `f7c2a8e5b3d1`, applied to Neon), `services/verdict.py`, wording in alert payload / notifications / emails / incident report / exports; `core/hardening.py` + `ALLOWED_HOSTS`, WS connection cap, flow caps in `network_monitor.py`, alert storm limit, CSV formula escaping, uvicorn flags in the launchers. Frontend: `TrafficVerdictCard`, `utils/verdict.ts`, status card/counters/pop-ups/bell/History/drawer/reports wording, Vite security headers. Tests 129/129, Chrome 20/21 (+1 test-script fix) and 5/5 (SPA CSP). Real app restarted. Committed and pushed. |
 | 2026-10-06 (36) | **Only the admin account kept** (owner: delete both SecureNet users, keep only admin). Deleted Samarth Jain (samiksha94820@gmail.com) and Anivrath (4mt23ic012@mite.ac.in) from Neon after a JSON backup (`F:\SecureNet-backup\securenet-users-deleted-20261006-234937.json`: users, their 8 OTP rows, 1 support message); their references cleared (support message kept with user_id = null; no events/settings/reports pointed to them). Neon now has 1 account: Samiksha Jain (admin, active). No code changes. Committed and pushed. |
 | 2026-10-06 (37) | **Admin sends attack emails, never receives them** (owner: admin is not a user; admin should send mails to users when there are attacks/alerts and should not receive any attack mail). `notifier.py`: `get_recipients()` = active non-admin users with alert emails on + extra address unless it is an admin's; admin copy + `split_recipients`/`render_admin_email`/`host_details` removed; email heading reworded (abnormal traffic). Tests updated + `test_admin_never_gets_attack_emails` (130/130). Frontend: Preferences note for admins instead of the alert-email switch; Notifications tab wording + "No SecureNet users to email yet". Harness check: admin + 2 users, admin also set as extra address, one alert → mails only to the 2 users. Neon currently has only the admin, so no attack emails are sent until users register. Real backend restarted. Committed and pushed. |
+| 2026-10-07 (38) | **Alert emails paced + simplified** (owner: too many emails as a SecureNet user; email when normal turns abnormal, then every 5 min; desktop alerts unchanged; email too much info, keep it simple, keep the printable report). `notifier.py`: episode tracking, `seconds_until_next_email`, throttled `_run`, spacing-safe `stop`, new `render_alert_email(alerts, kind)` + `summarize_alerts`/`likely_attack`, new subjects; `ALERT_EMAIL_INTERVAL_SECONDS=300` (config + .env.example); test email uses the new layout; status `intervalSeconds`; Notifications tab text. Tests 133/133 (+ spacing, short email + full report, shutdown spacing). Email rendered in Chrome at 620/360 px (0 overflow). Harness with a 20 s interval: 16 alerts → 16 on-screen alerts, 2 emails (new episode at once, one summary after the interval). Real app restarted. Committed and pushed. |

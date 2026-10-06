@@ -65,10 +65,11 @@ async def test_alerts_are_batched_to_all_registered_users(client, captured_otps,
     [mail] = sent
     assert mail["to"] == ["analyst@example.com", "soc@example.com"]
     assert all("admin@example.com" not in m["to"] for m in sent)
-    assert "Abnormal traffic detected: 2 alerts (1 HIGH)" in mail["subject"] and "most severe possible attack: DDoS" in mail["subject"]
+    assert mail["subject"].startswith("[SecureNet] Abnormal traffic detected - most likely ")
+    assert "(2 alerts)" in mail["subject"]
     assert not mail["subject"].startswith("[SecureNet Admin]")
-    assert "DDoS" in mail["html"] and "SSH-Bruteforce" in mail["html"] and "Bot" not in mail["text"]
-    assert "report is attached" in mail["text"]
+    assert "2 alerts" in mail["html"] and "Bot" not in mail["text"]
+    assert "full report is attached" in mail["text"]
     assert "+919000000001" not in mail["text"]          # users don't see other users' details
 
     [report] = mail["attachments"]
@@ -165,3 +166,85 @@ async def test_test_email_endpoint(client, admin, monkeypatch):
     assert sent == [["admin@example.com"]]
     r = await client.post("/api/notifications/test-email", headers=headers)
     assert r.status_code == 429  # cooldown
+
+
+# ── email only on normal -> abnormal, then at most every 5 minutes ─────────
+
+class Clock:
+    def __init__(self):
+        self.t = 1000.0
+
+    def __call__(self):
+        return self.t
+
+
+async def test_attack_emails_are_spaced_five_minutes_apart(client, captured_otps, sent, monkeypatch):
+    from app.core.config import settings
+    from app.services import notifier as module
+
+    clock = Clock()
+    monkeypatch.setattr(module.time, "monotonic", clock)
+    await register(client, captured_otps, email="admin@example.com")
+    await register(client, captured_otps, email="user@example.com")
+    await set_prefs()
+    notifier = AlertNotifier()
+    interval = settings.ALERT_EMAIL_INTERVAL_SECONDS
+    assert interval == 300
+
+    # normal -> abnormal: emailed after the short batch window
+    notifier.enqueue(await make_event(SeverityLevel.HIGH, attack="DDoS"))
+    assert notifier.seconds_until_next_email() == settings.ALERT_EMAIL_BATCH_SECONDS
+    assert await notifier.flush() == 1
+    assert sent[-1]["subject"].startswith("[SecureNet] Abnormal traffic detected")
+
+    # still abnormal a few seconds later: many alerts wait for ONE email 5 min after the last
+    for _ in range(20):
+        clock.t += 3
+        notifier.enqueue(await make_event(SeverityLevel.HIGH, attack="DDoS"))
+    assert notifier.seconds_until_next_email() == pytest.approx(interval - 60)
+    clock.t = 1000.0 + interval
+    assert notifier.seconds_until_next_email() == 0
+    assert await notifier.flush() == 20
+    assert len(sent) == 2 and "Abnormal traffic continues - 20 alerts" in sent[-1]["subject"]
+    assert "still detecting abnormal traffic" in sent[-1]["text"]
+
+    # 5 quiet minutes = normal again; the next alert is a new episode
+    clock.t += interval + 1
+    notifier.enqueue(await make_event(SeverityLevel.MEDIUM, attack="Bot"))
+    assert notifier.seconds_until_next_email() == settings.ALERT_EMAIL_BATCH_SECONDS
+    assert await notifier.flush() == 1
+    assert "Abnormal traffic detected" in sent[-1]["subject"]
+
+
+async def test_alert_email_is_short_and_carries_the_printable_report(client, captured_otps, sent):
+    await register(client, captured_otps, email="admin@example.com")
+    await register(client, captured_otps, email="user@example.com")
+    await set_prefs()
+    notifier = AlertNotifier()
+    for i in range(30):
+        notifier.enqueue(await make_event(SeverityLevel.HIGH if i % 3 else SeverityLevel.MEDIUM,
+                                          attack="DDoS" if i < 25 else "Bot"))
+    assert await notifier.flush() == 30
+    [mail] = sent
+    text = mail["text"]
+    assert "Most likely attack : DDoS (in 25 of 30 alerts)" in text
+    assert "30 alerts (20 high · 10 medium)" in text
+    assert "Open SecureNet" in mail["html"] and "full report is attached" in mail["html"]
+    assert len(text.splitlines()) < 20                     # a summary, not a dump of 30 alerts
+    assert "203.0.113.7:50000" not in text                  # per-alert details live in the report
+    [report] = mail["attachments"]
+    body = report.content.decode("utf-8")
+    assert "Abnormal traffic : 30 incident(s)" in body and body.count("Event ID") == 30
+    assert "203.0.113.7:50000" in body
+
+
+async def test_shutdown_does_not_break_the_five_minutes(client, captured_otps, sent):
+    await register(client, captured_otps, email="admin@example.com")
+    await register(client, captured_otps, email="user@example.com")
+    await set_prefs()
+    notifier = AlertNotifier()
+    notifier.enqueue(await make_event(SeverityLevel.HIGH, attack="DDoS"))
+    await notifier.flush()
+    notifier.enqueue(await make_event(SeverityLevel.HIGH, attack="DDoS"))
+    await notifier.stop()                                   # a minute later the computer shuts down
+    assert len(sent) == 1

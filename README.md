@@ -41,8 +41,10 @@ unusual traffic flows, then **XGBoost** names the attack type (categories from t
 - **Instant alerts**: on-screen pop-ups, a notification bell, an alert sound and Windows desktop notifications
   — each can be switched on or off in *Settings → Preferences* (desktop notifications ask the browser for
   permission the first time).
-- **Email alerts**: the admin's email account sends every SecureNet user an email when abnormal traffic is
-  detected (grouped into one email when there are many), with the incident report attached. The admin is the
+- **Email alerts**: the admin's email account sends every SecureNet user an email when the network turns from
+  normal to abnormal, then at most one short summary every 5 minutes while it stays abnormal (no inbox flood).
+  The email shows only the essentials — most likely attack, how many alerts, when, from where — with the full
+  printable incident report attached. On-screen and desktop alerts still show every alert. The admin is the
   sender and never receives attack emails. Each user can switch their own alert emails off and on again
   (*Settings → Preferences → Attack Alert Emails*).
 - **Daily reports**: one box per day with attacks, downloadable as `.txt`, `.csv` or `.pdf`.

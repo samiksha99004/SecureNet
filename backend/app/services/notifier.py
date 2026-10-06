@@ -3,8 +3,11 @@ SecureNet — Alert e-mail notifier
 
 Every stored security event is handed to `notifier.enqueue(event)` by the IDS.
 The notifier:
-  * collects alerts for ALERT_EMAIL_BATCH_SECONDS and then sends ONE email per
-    recipient listing them (an attack burst never floods inboxes);
+  * emails when the network goes from NORMAL to ABNORMAL (after ALERT_EMAIL_BATCH_SECONDS,
+    so the start of a burst lands in one email), then — while it stays abnormal — at most
+    ONE summary email every ALERT_EMAIL_INTERVAL_SECONDS (5 min). After 5 quiet minutes the
+    network counts as normal again, and the next alert starts a new episode (email at once).
+    In-app pop-ups and desktop alerts are not throttled — they show every alert;
   * filters by Settings → Notifications (high / medium / blocked);
   * sends FROM the admin's Gmail (SMTP_USER) TO every active SecureNet user (and the
     optional extra address from Settings). The admin is the sender, not a user, and
@@ -18,6 +21,7 @@ In-app / desktop pop-ups are handled by the frontend from the WebSocket
 from __future__ import annotations
 
 import asyncio
+from collections import Counter
 import html
 import time
 import uuid
@@ -135,71 +139,141 @@ def local_time(iso: str) -> str:
     return f"{to_local(parse_iso_utc(iso), offset):%d %b %Y, %H:%M:%S} ({tz_label(offset)})"
 
 
-def render_alert_email(alerts: Sequence[AlertInfo], heading: str) -> tuple[str, str]:
-    """Return (text, html) bodies for a list of alerts."""
-    shown = list(alerts)[: settings.ALERT_EMAIL_MAX_EVENTS]
-    hidden = len(alerts) - len(shown)
-
-    text_lines = [heading, ""]
-    for a in shown:
-        text_lines.append(
-            f"[{a.severity.upper()}] {a.title} (possible attack: {a.guess}) — {a.source_ip}:{a.source_port} → "
-            f"{a.destination_ip}:{a.destination_port} ({a.protocol}) score {a.anomaly_score:.3f}, "
-            f"at {local_time(a.timestamp)}"
-        )
-    if hidden:
-        text_lines.append(f"... and {hidden} more")
-    text_lines += ["", "The full incident report is attached to this email.",
-                   f"Open the dashboard: {settings.DASHBOARD_URL}/history"]
-
-    rows = "".join(
-        f"""<tr>
-          <td style="padding:8px;border-bottom:1px solid #e2e8f0">
-            <span style="background:{SEVERITY_COLORS.get(a.severity, '#64748b')};color:#fff;border-radius:4px;
-                         padding:2px 6px;font-size:11px;font-weight:bold">{_esc(a.severity.upper())}</span></td>
-          <td style="padding:8px;border-bottom:1px solid #e2e8f0"><b>{_esc(a.title)}</b><br>
-            Possible attack: {_esc(a.guess)}<br>
-            <span style="color:#64748b;font-size:12px">{_esc(a.reason or '')}</span></td>
-          <td style="padding:8px;border-bottom:1px solid #e2e8f0;font-family:monospace">
-            {_esc(a.source_ip)}:{a.source_port}<br>→ {_esc(a.destination_ip)}:{a.destination_port} {_esc(a.protocol)}</td>
-          <td style="padding:8px;border-bottom:1px solid #e2e8f0;font-family:monospace">{a.anomaly_score:.3f}</td>
-          <td style="padding:8px;border-bottom:1px solid #e2e8f0">{_esc(a.action)}</td>
-          <td style="padding:8px;border-bottom:1px solid #e2e8f0;font-size:12px">{_esc(local_time(a.timestamp))}</td>
-        </tr>"""
-        for a in shown
-    )
-    more = f"<p style='color:#64748b'>… and {hidden} more alert(s).</p>" if hidden else ""
-    body = f"""<html><body style="margin:0;background:#0a1020;font-family:Arial,Helvetica,sans-serif">
-  <div style="max-width:760px;margin:0 auto;padding:24px">
-    <div style="color:#38bdf8;font-size:20px;font-weight:bold;margin-bottom:4px">🛡 {_esc(settings.APP_NAME)}</div>
-    <div style="background:#ffffff;border-radius:8px;padding:20px">
-      <h2 style="margin:0 0 12px;color:#0f172a">{_esc(heading)}</h2>
-      <table style="width:100%;border-collapse:collapse;font-size:13px;color:#0f172a">
-        <tr style="text-align:left;color:#64748b;font-size:11px;text-transform:uppercase">
-          <th style="padding:8px">Severity</th><th style="padding:8px">Verdict</th><th style="padding:8px">Flow</th>
-          <th style="padding:8px">Score</th><th style="padding:8px">Action</th><th style="padding:8px">Time</th></tr>
-        {rows}
-      </table>
-      {more}
-      <p style="margin-top:16px;color:#334155">The full incident report is attached to this email.</p>
-      <p style="margin-top:12px"><a href="{_esc(settings.DASHBOARD_URL)}/history"
-         style="background:#0ea5e9;color:#fff;padding:10px 16px;border-radius:6px;text-decoration:none">
-         Open SecureNet dashboard</a></p>
-    </div>
-    <p style="color:#64748b;font-size:11px">You receive this because you are a registered SecureNet user.</p>
-  </div></body></html>"""
-    return "\n".join(text_lines), body
+def _clock(iso: str) -> str:
+    offset = server_offset_minutes()
+    return f"{to_local(parse_iso_utc(iso), offset):%H:%M}"
 
 
-def alert_subject(alerts: Sequence[AlertInfo]) -> str:
-    high = sum(1 for a in alerts if a.severity == "high")
-    worst = most_severe(alerts)
-    if len(alerts) == 1:
-        return (f"[{settings.APP_NAME}] {ABNORMAL} ({worst.severity.upper()}) from {worst.source_ip}"
-                f" — possible attack: {worst.guess}")
-    extra = f" ({high} HIGH)" if high else ""
-    return (f"[{settings.APP_NAME}] {ABNORMAL}: {len(alerts)} alerts{extra}"
-            f" — most severe possible attack: {worst.guess}")
+def _day(iso: str) -> str:
+    offset = server_offset_minutes()
+    return f"{to_local(parse_iso_utc(iso), offset):%d %b %Y}"
+
+
+def likely_attack(alerts: Sequence[AlertInfo]) -> tuple[str, int]:
+    """The attack the model guessed most often in these alerts, and in how many."""
+    names = []
+    for a in alerts:
+        guess = a.guess
+        names.append(guess.split(" (")[0] if guess else "Unknown")
+    name, count = Counter(names).most_common(1)[0]
+    return name, count
+
+
+def summarize_alerts(alerts: Sequence[AlertInfo]) -> dict:
+    ordered = sorted(alerts, key=lambda a: a.timestamp)
+    severities = Counter(a.severity for a in ordered)
+    sources = Counter(a.source_ip for a in ordered)
+    name, count = likely_attack(ordered)
+    offset = server_offset_minutes()
+    first, last = ordered[0].timestamp, ordered[-1].timestamp
+    when = _clock(first) if _clock(first) == _clock(last) else f"{_clock(first)} – {_clock(last)}"
+    top_source, _ = sources.most_common(1)[0]
+    others = len(sources) - 1
+    return {
+        "total": len(ordered),
+        "high": severities.get("high", 0), "medium": severities.get("medium", 0), "low": severities.get("low", 0),
+        "attack": name, "attack_count": count,
+        "when": f"{when} on {_day(last)} ({tz_label(offset)})",
+        "first_clock": _clock(first),
+        "source": top_source + (f" and {others} other{'s' if others != 1 else ''}" if others else ""),
+        "worst": max(ordered, key=lambda a: SEVERITY_RANK.get(a.severity, 0)).severity,
+    }
+
+
+# what each kind of email says first
+EMAIL_KINDS = {
+    "new": ("Abnormal traffic detected",
+            "Your network was normal until {first_clock}. SecureNet has now detected abnormal traffic."),
+    "continuing": ("Abnormal traffic is continuing",
+                   "SecureNet is still detecting abnormal traffic on your network. This is a summary of the "
+                   "last few minutes."),
+    "digest": ("Security summary", "A summary of the abnormal traffic SecureNet detected recently."),
+    "test": ("Test alert", "This is a test. Email alerts from SecureNet are working."),
+}
+
+
+def render_alert_email(alerts: Sequence[AlertInfo], kind: str = "new") -> tuple[str, str]:
+    """(text, html) of an alert email: a short, plain summary — what happened, the most likely
+    attack, how many alerts, when — and one button. Every detail of every alert is in the
+    attached incident report, ready to print."""
+    info = summarize_alerts(alerts)
+    title, intro = EMAIL_KINDS.get(kind, EMAIL_KINDS["new"])
+    intro = intro.format(**info)
+    app = _esc(settings.APP_NAME)
+    alerts_line = f"{info['total']} alert{'' if info['total'] == 1 else 's'}"
+    split = " · ".join(f"{n} {label}" for n, label in
+                       ((info["high"], "high"), (info["medium"], "medium"), (info["low"], "low")) if n)
+    guess_note = ("" if info["total"] == 1
+                  else f" (in {info['attack_count']} of {info['total']} alerts)")
+    interval_min = max(1, settings.ALERT_EMAIL_INTERVAL_SECONDS // 60)
+    link = f"{settings.DASHBOARD_URL}/history"
+    color = SEVERITY_COLORS.get(info["worst"], "#c2562f")
+
+    text = "\n".join([
+        f"{settings.APP_NAME}: {title}",
+        "",
+        intro,
+        "",
+        f"Most likely attack : {info['attack']}{guess_note} - the model's best guess",
+        f"Alerts             : {alerts_line}" + (f" ({split})" if split else ""),
+        f"When               : {info['when']}",
+        f"Coming from        : {info['source']}",
+        "",
+        "The full report is attached - open or print it for every detail.",
+        f"See each alert in SecureNet: {link}",
+        "",
+        f"You get at most one alert email every {interval_min} minutes. Alerts on your screen are not affected.",
+    ])
+
+    def row(label: str, value: str) -> str:
+        return (f'<tr><td style="padding:6px 16px 6px 0;color:#59636e;font-size:14px;white-space:nowrap;'
+                f'vertical-align:top">{_esc(label)}</td>'
+                f'<td style="padding:6px 0;font-size:14px;color:#1f2328">{value}</td></tr>')
+
+    rows = "".join([
+        row("Most likely attack", f"<b>{_esc(info['attack'])}</b>{_esc(guess_note)}"
+            f'<br><span style="color:#8c959f;font-size:12px">the model\'s best guess</span>'),
+        row("Alerts", f"{_esc(alerts_line)}" + (f' <span style="color:#59636e">({_esc(split)})</span>' if split else "")),
+        row("When", _esc(info["when"])),
+        row("Coming from", _esc(info["source"])),
+    ])
+    body = f"""<!DOCTYPE html>
+<html><body style="margin:0;padding:0;background:#ffffff;font-family:Arial,Helvetica,sans-serif;color:#1f2328">
+<div style="display:none;max-height:0;overflow:hidden">{_esc(title)}: most likely {_esc(info['attack'])}, {_esc(alerts_line)}</div>
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#ffffff">
+  <tr><td align="center" style="padding:24px 12px">
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:520px">
+      <tr><td style="font-size:20px;font-weight:bold;color:#c2562f;padding:0 0 4px">&#128737; {app}</td></tr>
+      <tr><td style="font-size:22px;padding:4px 0 8px">{_esc(title)}</td></tr>
+      <tr><td style="font-size:14px;line-height:1.5;color:#3d444d;padding:0 0 16px">{_esc(intro)}</td></tr>
+      <tr><td style="background:#eef1f6;border-left:4px solid {color};border-radius:12px;padding:16px 20px">
+        <div style="display:inline-block;background:{color};color:#ffffff;font-size:12px;font-weight:bold;
+                    letter-spacing:0.05em;border-radius:999px;padding:4px 10px;margin:0 0 10px">ABNORMAL TRAFFIC</div>
+        <table role="presentation" cellpadding="0" cellspacing="0">{rows}</table>
+      </td></tr>
+      <tr><td style="padding:20px 0 0">
+        <a href="{_esc(link)}" style="display:inline-block;background:#c2562f;color:#ffffff;text-decoration:none;
+           font-size:14px;font-weight:bold;border-radius:6px;padding:10px 18px">Open SecureNet</a>
+      </td></tr>
+      <tr><td style="font-size:14px;line-height:1.5;padding:16px 2px 0;color:#3d444d">
+        The full report is attached &mdash; open or print it for every detail.</td></tr>
+      <tr><td style="font-size:12px;line-height:1.5;color:#8c959f;padding:24px 2px 0;border-top:1px solid #e6e9ee">
+        You get at most one alert email every {interval_min} minutes; alerts on your screen are not affected.
+        To stop these emails: SecureNet &rarr; Settings &rarr; Preferences &rarr; Attack Alert Emails.<br>
+        Sent by {app} &ndash; Behavioural Intrusion Detection System</td></tr>
+    </table>
+  </td></tr>
+</table>
+</body></html>"""
+    return text, body
+
+
+def alert_subject(alerts: Sequence[AlertInfo], kind: str = "new") -> str:
+    info = summarize_alerts(alerts)
+    count = f"{info['total']} alert{'' if info['total'] == 1 else 's'}"
+    if kind == "continuing":
+        return f"[{settings.APP_NAME}] Abnormal traffic continues - {count}, most likely {info['attack']}"
+    return f"[{settings.APP_NAME}] {ABNORMAL} - most likely {info['attack']} ({count})"
 
 
 # ── Notifier service ─────────────────────────────────────────────────────────
@@ -225,13 +299,32 @@ class AlertNotifier:
         self._wakeup = asyncio.Event()
         self._task: Optional[asyncio.Task] = None
         self._last_digest = time.time()
+        self._last_alert_at: Optional[float] = None    # when the latest alert arrived (monotonic)
+        self._last_email_at: Optional[float] = None    # when the latest alert email went out
+        self._new_episode = False                      # network went from normal to abnormal
         self.emails_sent = 0
         self.last_error: Optional[str] = None
 
     def enqueue(self, event: SecurityEvent) -> None:
         """Queue a stored security event for the next alert email."""
+        now = time.monotonic()
+        quiet = self._last_alert_at is None or now - self._last_alert_at > settings.ALERT_EMAIL_INTERVAL_SECONDS
+        if quiet:                       # normal → abnormal: this alert starts a new episode
+            self._new_episode = True
+        self._last_alert_at = now
         self._pending.append(AlertInfo.from_event(event))
         self._wakeup.set()
+
+    def seconds_until_next_email(self) -> float:
+        """How long the queued alerts wait: a short batch window for a new episode,
+        otherwise until 5 minutes after the previous alert email."""
+        interval = settings.ALERT_EMAIL_INTERVAL_SECONDS
+        if self._new_episode or self._last_email_at is None:
+            since = None if self._last_email_at is None else time.monotonic() - self._last_email_at
+            if since is not None and since < interval:      # a new episode right after an email: still 5 min apart
+                return interval - since
+            return float(settings.ALERT_EMAIL_BATCH_SECONDS)
+        return max(0.0, interval - (time.monotonic() - self._last_email_at))
 
     async def start(self) -> None:
         if self._task is None:
@@ -243,17 +336,23 @@ class AlertNotifier:
             self._task.cancel()
             await asyncio.gather(self._task, return_exceptions=True)
             self._task = None
-        await self.flush()  # don't lose alerts queued right before shutdown
+        # alerts queued right before shutdown: send them unless that would break the 5-minute
+        # spacing (they stay in History and the daily report either way)
+        if self._pending and self.seconds_until_next_email() <= settings.ALERT_EMAIL_BATCH_SECONDS:
+            await self.flush()
 
     async def _run(self) -> None:
         while True:
             try:
                 await asyncio.wait_for(self._wakeup.wait(), timeout=60)
-                # Batch window: let a burst of alerts accumulate into one email
-                await asyncio.sleep(settings.ALERT_EMAIL_BATCH_SECONDS)
             except asyncio.TimeoutError:
                 pass
             self._wakeup.clear()
+            if self._pending:
+                # new episode: wait the batch window; still abnormal: wait until 5 min after the last email.
+                # Alerts arriving meanwhile join the same email.
+                await asyncio.sleep(self.seconds_until_next_email())
+                self._wakeup.clear()
             try:
                 await self.flush()
                 await self._maybe_send_digest()
@@ -268,6 +367,8 @@ class AlertNotifier:
         pending, self._pending = self._pending, []
         if not pending:
             return 0
+        kind = "new" if self._new_episode else "continuing"
+        self._new_episode = False
         async with AsyncSessionLocal() as db:
             prefs = (await db.execute(select(NotificationSettings).limit(1))).scalars().first()
             if prefs is None or not prefs.email_enabled:
@@ -281,14 +382,11 @@ class AlertNotifier:
             events = await fetch_events(db, alerts)
 
         alerts.sort(key=lambda a: a.timestamp, reverse=True)
-        heading = (
-            f"{ABNORMAL} — possible attack: {alerts[0].guess}" if len(alerts) == 1
-            else f"{ABNORMAL}: {len(alerts)} alerts"
-        )
         report = await asyncio.to_thread(report_attachment, events)
-        subject = alert_subject(alerts)
-        text, body = render_alert_email(alerts, heading)
+        subject = alert_subject(alerts, kind)
+        text, body = render_alert_email(alerts, kind)
         mails = [(recipients, subject, text, body)]
+        self._last_email_at = time.monotonic()
         for rcpts, subj, text, body in mails:
             try:
                 await send_email(rcpts, subj, text, body, attachments=[report])
@@ -325,7 +423,7 @@ class AlertNotifier:
             text = f"No security events were detected in the last {hours} hour(s)."
             body = f"<html><body style='font-family:Arial'><h3>{_esc(settings.APP_NAME)} digest</h3><p>{text}</p></body></html>"
         else:
-            text, body = render_alert_email(alerts, f"Digest: {total} security event(s) in the last {hours} hour(s)")
+            text, body = render_alert_email(alerts, "digest")
         try:
             await send_email(recipients, f"[{settings.APP_NAME}] Security digest — {total} event(s) in {hours}h",
                              text, body)

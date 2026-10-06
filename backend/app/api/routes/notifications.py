@@ -57,6 +57,7 @@ class NotificationStatus(CamelModel):
     recipient_count: int
     recipients: List[str] = []     # admins only
     batch_seconds: int
+    interval_seconds: int = 300      # at most one attack email this often
     emails_sent: int
     last_error: Optional[str] = None
 
@@ -103,6 +104,7 @@ async def notification_status(current_user: User = Depends(get_current_user)):
         recipient_count=len(recipients),
         recipients=recipients if current_user.role == UserRole.ADMIN else [],
         batch_seconds=settings.ALERT_EMAIL_BATCH_SECONDS,
+        interval_seconds=settings.ALERT_EMAIL_INTERVAL_SECONDS,
         emails_sent=notifier.emails_sent,
         last_error=notifier.last_error,
     )
@@ -134,7 +136,7 @@ async def send_test_email(current_user: User = Depends(get_current_user)):
         protocol="TCP", anomaly_score=0.91, action="alerted",
         reason="This is a test message from SecureNet — email alerting is working.",
     )
-    text, body = render_alert_email([sample], "SecureNet test alert")
+    text, body = render_alert_email([sample], "test")
     try:
         await send_email([current_user.email], f"[{settings.APP_NAME}] Test alert email", text, body)
     except EmailDeliveryError as exc:

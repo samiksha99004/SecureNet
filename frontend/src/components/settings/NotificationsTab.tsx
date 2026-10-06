@@ -114,8 +114,10 @@ export function NotificationsTab() {
               <strong>Email delivery is configured on the server.</strong>
               <span>
                 Alerts are sent from the admin email to {s.recipientCount} SecureNet user
-                address{s.recipientCount === 1 ? '' : 'es'} (never to the admin); bursts are grouped into one email
-                every {s.batchSeconds}s.
+                address{s.recipientCount === 1 ? '' : 'es'} (never to the admin): one email when the network turns
+                from normal to abnormal, then at most one summary every{' '}
+                {Math.round((s.intervalSeconds ?? 300) / 60)} minutes while it stays abnormal. Pop-ups and desktop
+                alerts still show every alert.
                 {s.lastError && <> Last error: {s.lastError}</>}
               </span>
             </>

@@ -35,6 +35,8 @@ export interface NotificationStatus {
   recipientCount: number;
   recipients: string[];                 // only returned to admins
   batchSeconds: number;
+  /** at most one attack email this often (seconds) */
+  intervalSeconds?: number;
   emailsSent: number;
   lastError: string | null;
 }
