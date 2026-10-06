@@ -29,13 +29,16 @@ class CaptureUnavailable(RuntimeError):
 def check_capture_available() -> None:
     """Raise CaptureUnavailable with an actionable message if sniffing can't work."""
     try:
-        from scapy.config import conf  # noqa: F401
+        # Import Scapy fully: on Windows `conf.use_pcap` only becomes True once the platform
+        # layer (scapy.arch.windows) has loaded and found Npcap. Checking scapy.config alone
+        # always saw False, so the IDS refused to start even with Npcap installed.
+        import scapy.all  # noqa: F401
+        from scapy.config import conf
     except ImportError as exc:  # pragma: no cover - scapy is a hard dependency
         raise CaptureUnavailable("Network monitoring is not installed completely. Run SETUP.bat again.") from exc
 
     system = platform.system()
     if system == "Windows":
-        from scapy.config import conf
         if not conf.use_pcap:
             raise CaptureUnavailable(
                 "The IDS can't start on this computer yet. It needs a one-time setup: install Npcap "
