@@ -91,7 +91,7 @@ class Settings(BaseSettings):
 
     # ML models — optional. Nothing is loaded unless ML_AUTOLOAD is true.
     # Either model (Isolation Forest, XGBoost) or both may be present.
-    ML_AUTOLOAD: bool = False
+    ML_AUTOLOAD: bool = True
     ML_MODELS_DIR: str = "./models"
 
     # Detection defaults (the Settings page overrides these at runtime)
@@ -124,6 +124,7 @@ class Settings(BaseSettings):
     # computer restarts it turns itself back on and shows a desktop notice.
     # Turning it OFF removes both. (The test-suite switches all of this off.)
     IDS_AUTOSTART: bool = True
+    IDS_ON_AT_STARTUP: bool = True       # live monitoring as soon as the backend starts
     IDS_STATE_FILE: str = "./data/ids-state.json"
     IDS_STARTUP_DIR: str = ""            # empty = the Windows Startup folder of this user
     DESKTOP_NOTIFICATIONS: bool = True

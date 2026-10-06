@@ -3,6 +3,6 @@
 #   pip install -r requirements-ml.txt
 # Use the same scikit-learn / XGBoost versions the .pkl files were trained with.
 -r requirements.txt
-scikit-learn>=1.5
-xgboost>=2.1
+scikit-learn==1.9.1     # the version the hybrid model was trained with
+xgboost==3.4.1          # same
 joblib>=1.4

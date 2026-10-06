@@ -75,13 +75,22 @@ async def _apply_update(db: AsyncSession, model, updates, user: User):
 
 
 @router.get("", response_model=AllSettingsResponse)
-async def get_all_settings(current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
-    return AllSettingsResponse(
-        detection=DetectionSettingsResponse.model_validate(await get_or_create(db, DetectionSettings)),
-        protection=ProtectionSettingsResponse.model_validate(await get_or_create(db, ProtectionSettings)),
-        notifications=NotificationSettingsResponse.model_validate(await get_or_create(db, NotificationSettings)),
-        system=SystemSettingsResponse.model_validate(await get_or_create(db, SystemSettings)),
-    )
+async def get_all_settings(current_user: User = Depends(get_current_user)):
+    return await cached_all_settings()
+
+
+async def cached_all_settings() -> AllSettingsResponse:
+    return await cached("settings:all", _load_all_settings, ttl=300)
+
+
+async def _load_all_settings() -> AllSettingsResponse:
+    async with AsyncSessionLocal() as db:
+        return AllSettingsResponse(
+            detection=DetectionSettingsResponse.model_validate(await get_or_create(db, DetectionSettings)),
+            protection=ProtectionSettingsResponse.model_validate(await get_or_create(db, ProtectionSettings)),
+            notifications=NotificationSettingsResponse.model_validate(await get_or_create(db, NotificationSettings)),
+            system=SystemSettingsResponse.model_validate(await get_or_create(db, SystemSettings)),
+        )
 
 
 @router.get("/detection", response_model=DetectionSettingsResponse)
@@ -159,11 +168,20 @@ async def update_system_settings(
 # ── Whitelist Management ──────────────────────────────────────────────────────
 
 @router.get("/whitelist", response_model=list[WhitelistEntryResponse])
-async def get_whitelist(current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
-    result = await db.execute(
-        select(WhitelistEntry).where(WhitelistEntry.active.is_(True)).order_by(WhitelistEntry.created_at.desc())
-    )
-    return [WhitelistEntryResponse.model_validate(entry) for entry in result.scalars().all()]
+async def get_whitelist(current_user: User = Depends(get_current_user)):
+    return await cached_whitelist()
+
+
+async def cached_whitelist() -> list[WhitelistEntryResponse]:
+    return await cached("settings:whitelist", _load_whitelist, ttl=300)
+
+
+async def _load_whitelist() -> list[WhitelistEntryResponse]:
+    async with AsyncSessionLocal() as db:
+        result = await db.execute(
+            select(WhitelistEntry).where(WhitelistEntry.active.is_(True)).order_by(WhitelistEntry.created_at.desc())
+        )
+        return [WhitelistEntryResponse.model_validate(entry) for entry in result.scalars().all()]
 
 
 @router.post("/whitelist", response_model=WhitelistEntryResponse)
@@ -191,6 +209,7 @@ async def add_whitelist_entry(
     db.add(entry)
     await db.commit()
     await db.refresh(entry)
+    settings_changed()
     await get_ids_service().reload_config()
     logger.info(f"Whitelist entry added by {current_user.email}: {request.type.value}:{request.value}")
     return WhitelistEntryResponse.model_validate(entry)
@@ -213,6 +232,7 @@ async def remove_whitelist_entry(
 
     entry.active = False  # soft delete (keeps the audit trail)
     await db.commit()
+    settings_changed()
     await get_ids_service().reload_config()
     logger.info(f"Whitelist entry removed by {current_user.email}: {entry.type.value}:{entry.value}")
     return MessageResponse(message="Whitelist entry removed successfully")

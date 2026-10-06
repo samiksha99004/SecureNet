@@ -26,6 +26,7 @@ class IDSStatusResponse(CamelModel):
     mode: str
     ml_loaded: bool
     detector: str
+    threshold: Optional[float] = None    # the stage-1 threshold in use right now
     capture_active: bool
     capture_error: Optional[str] = None
     packets_processed: int

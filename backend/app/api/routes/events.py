@@ -13,13 +13,13 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.dependencies import get_current_user, require_admin
-from app.db.base import get_db
+from app.db.base import AsyncSessionLocal, get_db
 from app.models.security_event import EventState, SecurityEvent
 from app.models.user import User
 from app.schemas.common import MessageResponse, PaginatedResponse
 from app.schemas.security import SecurityEventResponse
 from app.services import exporters
-from app.services.cache import events_changed
+from app.services.cache import cached, events_changed
 from app.services.event_query import EventFilters, combine, sort_clause
 from app.utils.logger import logger
 from app.utils.timeutil import utcnow
@@ -57,27 +57,30 @@ async def get_events(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Paginated list of security events with filtering and sorting."""
-    where = combine(filters.conditions())
+    """Paginated list of security events with filtering and sorting (cached until events change)."""
+    where = combine(filters.conditions())          # validates the filters (400 on bad values)
     order = sort_clause(sortBy, sortOrder)
+    key = "events:list:" + "|".join(map(str, (page, pageSize, sortBy, sortOrder, *vars(filters).values())))
 
-    count_q = select(func.count()).select_from(SecurityEvent)
-    query = select(SecurityEvent)
-    if where is not None:
-        count_q = count_q.where(where)
-        query = query.where(where)
-    total = (await db.execute(count_q)).scalar() or 0
+    async def load() -> PaginatedResponse[SecurityEventResponse]:
+        async with AsyncSessionLocal() as db:
+            count_q = select(func.count()).select_from(SecurityEvent)
+            query = select(SecurityEvent)
+            if where is not None:
+                count_q = count_q.where(where)
+                query = query.where(where)
+            total = (await db.execute(count_q)).scalar() or 0
+            query = query.order_by(order, SecurityEvent.id).limit(pageSize).offset((page - 1) * pageSize)
+            events = (await db.execute(query)).scalars().all()
+        return PaginatedResponse[SecurityEventResponse](
+            data=[convert_event_to_response(e) for e in events],
+            total=total,
+            page=page,
+            page_size=pageSize,
+            total_pages=(total + pageSize - 1) // pageSize,
+        )
 
-    query = query.order_by(order, SecurityEvent.id).limit(pageSize).offset((page - 1) * pageSize)
-    events = (await db.execute(query)).scalars().all()
-
-    return PaginatedResponse[SecurityEventResponse](
-        data=[convert_event_to_response(e) for e in events],
-        total=total,
-        page=page,
-        page_size=pageSize,
-        total_pages=(total + pageSize - 1) // pageSize,
-    )
+    return await cached(key, load, ttl=300)
 
 
 @router.get("/export")

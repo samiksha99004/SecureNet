@@ -45,6 +45,12 @@ async def list_daily_reports(
     return await cached(f"events:daily:{tz_offset}", lambda: _daily_reports(tz_offset), ttl=300)
 
 
+async def cached_daily_local() -> list[DailyReport]:
+    """The daily reports in this computer's time zone (what its browser asks for), prepared ahead."""
+    offset = incident_report.server_offset_minutes()
+    return await cached(f"events:daily:{offset}", lambda: _daily_reports(offset), ttl=300)
+
+
 async def _daily_reports(tz_offset: int) -> list[DailyReport]:
     async with AsyncSessionLocal() as db:
         rows = (await db.execute(

@@ -4,39 +4,52 @@ SecureNet — Two-stage detector (paper, Algorithm 1)
     scaled   ← Scaler.transform(features)
     score    ← IsolationForest.score(scaled)
     if score > θ:
-        category    ← XGBoost.predict(scaled)
+        category    ← XGBoost.predict(...)
         topFeatures ← ExplainTop(scaled, category)
 
-Both stages are OPTIONAL. Depending on which artifacts exist in ML_MODELS_DIR
-the detector runs as:
-  * Isolation Forest + XGBoost  (anomaly gate, then attack classification)
-  * Isolation Forest only       (anomalies reported with no attack category)
-  * XGBoost only                (every flow classified; non-benign → alert)
-  * nothing loaded              (IDS captures traffic but does not score it)
+Two model formats are understood (looked up in ML_MODELS_DIR):
 
-Nothing is loaded at import time; call `load()` (done at startup only when
+* **Hybrid** (the retrained model, `F:\\retraining_hybrid`) — `model_config.json`
+  + `isolation_forest.joblib` + `scaler.joblib` + `xgboost_stage2.json`
+  (+ `hybrid_metrics.json` with the test results). Exactly the pipeline that was
+  tested (92.2 % accuracy on 465,837 unseen CICIDS2018 flows):
+    x      = the 63 features in `features_used` order
+    stage 1: score = -IF.score_samples(scaler(log1p(max(x, 0) + 1)));  flagged if score ≥ θ
+             (θ = the model's tested threshold unless the admin chose a custom one)
+    stage 2: XGBoost on the raw x → 7 classes; "Benign" cancels the stage-1 flag,
+             any other class is the attack.
+* **Legacy** (`isolation_forest.pkl`, `xgboost*.pkl`, `scaler.pkl`, `feature_columns.pkl`,
+  `label_encoder.pkl`) — each part optional, as before.
+
+Nothing is loaded at import time; call `load()` (done at startup when
 ML_AUTOLOAD=true, or via POST /api/model/reload).
-
-Isolation Forest anomaly score = -score_samples(x), i.e. the original
-Liu et al. score in (0, 1]: ~0.5 is ordinary, → 1 is increasingly anomalous.
 """
 
 from __future__ import annotations
 
+import json
 import math
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, List, Optional
 
 from app.ml.features import FEATURE_COLUMNS
 from app.utils.logger import logger
 
-# Artifact file names looked up inside ML_MODELS_DIR (first match wins).
+# Legacy artifact names (first match wins).
 IF_FILES = ("isolation_forest_model.pkl", "isolation_forest.pkl", "isolation_forest.joblib")
 XGB_FILES = ("xgboost_multiclass_model.pkl", "xgboost_model.pkl", "xgboost.pkl", "xgboost_classifier.joblib")
 SCALER_FILES = ("scaler.pkl", "feature_scaler.joblib")
 ENCODER_FILES = ("label_encoder.pkl",)
 COLUMNS_FILES = ("feature_columns.pkl",)
+
+# Hybrid (retrained) model files.
+HYBRID_CONFIG = "model_config.json"
+HYBRID_IF = "isolation_forest.joblib"
+HYBRID_SCALER = "scaler.joblib"
+HYBRID_XGB = "xgboost_stage2.json"
+HYBRID_METRICS = "hybrid_metrics.json"
 
 BENIGN_LABELS = {"benign", "normal", "0"}
 
@@ -44,7 +57,7 @@ BENIGN_LABELS = {"benign", "normal", "0"}
 @dataclass
 class Detection:
     """Result of scoring one flow."""
-    anomaly_score: float                 # 0..1, higher = more anomalous
+    anomaly_score: float                 # stage-1 score, higher = more anomalous
     is_alert: bool                       # store + alert?
     attack_type: Optional[str] = None    # stage-2 category (None = unknown/none)
     confidence: Optional[float] = None   # stage-2 probability of attack_type
@@ -61,22 +74,33 @@ def _first_existing(directory: Path, names) -> Optional[Path]:
 
 
 class Detector:
-    """Holds the optional Isolation Forest / XGBoost models and scores flows."""
+    """Holds the Isolation Forest / XGBoost models and scores flows."""
 
     def __init__(self) -> None:
         self.reset()
 
     def reset(self) -> None:
+        self.kind = "none"                       # none | legacy | hybrid
         self.isolation_forest = None
-        self.xgboost = None
+        self.xgboost = None                      # legacy sklearn-style classifier
+        self.booster = None                      # hybrid xgboost.Booster
         self.scaler = None
         self.label_encoder = None
         self.feature_columns: List[str] = list(FEATURE_COLUMNS)
         self.xgb_appends_if_score = False
         self.models_dir: Optional[Path] = None
         self.errors: Dict[str, str] = {}
+        # hybrid metadata
+        self.classes: List[str] = []
+        self.benign_index: Optional[int] = None
+        self.calibrated_threshold: Optional[float] = None   # the threshold the model was tested with
+        self.config: Dict = {}
+        self.test_metrics: Optional[Dict] = None            # hybrid_metrics.json (real test results)
+        self.importances: List[float] = []                 # stage-2 gain per feature (sums to 1)
+        self.trained_at: Optional[datetime] = None
+        self.versions: Dict[str, str] = {}
 
-    # ── loading ──────────────────────────────────────────────────────────────
+    # ── state ────────────────────────────────────────────────────────────────
 
     @property
     def has_isolation_forest(self) -> bool:
@@ -84,7 +108,7 @@ class Detector:
 
     @property
     def has_xgboost(self) -> bool:
-        return self.xgboost is not None
+        return self.xgboost is not None or self.booster is not None
 
     @property
     def loaded(self) -> bool:
@@ -99,21 +123,117 @@ class Detector:
             parts.append("xgboost")
         return "+".join(parts) if parts else "none"
 
+    # ── loading ──────────────────────────────────────────────────────────────
+
     def load(self, models_dir: Path) -> bool:
-        """Load whatever artifacts exist in `models_dir`. Returns self.loaded."""
+        """Load whatever model is in `models_dir`. Returns self.loaded."""
         self.reset()
         self.models_dir = models_dir
         if not models_dir.is_dir():
             self.errors["models_dir"] = f"Directory not found: {models_dir}"
             logger.warning(self.errors["models_dir"])
             return False
-
         try:
-            import joblib
+            import joblib  # noqa: F401
         except ImportError:
             self.errors["dependencies"] = "ML libraries missing — pip install -r requirements-ml.txt"
             logger.warning(self.errors["dependencies"])
             return False
+
+        if (models_dir / HYBRID_CONFIG).is_file():
+            self._load_hybrid(models_dir)
+        else:
+            self._load_legacy(models_dir)
+        logger.info(f"Detector ready: {self.name} ({self.kind})")
+        return self.loaded
+
+    def _load_hybrid(self, models_dir: Path) -> None:
+        import joblib
+        import numpy as np
+
+        self.kind = "hybrid"
+        try:
+            cfg = json.loads((models_dir / HYBRID_CONFIG).read_text(encoding="utf-8"))
+            self.feature_columns = [str(c) for c in cfg["features_used"]]
+            self.classes = [str(c) for c in cfg["classes"]]
+            self.benign_index = int(cfg.get("benign_code", self.classes.index("Benign")))
+            self.calibrated_threshold = float(cfg["threshold"])
+            self.config = cfg
+        except (OSError, ValueError, KeyError) as exc:
+            self.errors["config"] = f"{HYBRID_CONFIG}: {exc}"
+            logger.error(f"Hybrid model config unreadable: {exc}")
+            self.kind = "none"
+            return
+        n = len(self.feature_columns)
+
+        def _joblib(kind: str, name: str):
+            path = models_dir / name
+            if not path.is_file():
+                self.errors[kind] = f"{name} not found"
+                return None
+            try:
+                obj = joblib.load(path)
+            except Exception as exc:
+                self.errors[kind] = f"{name}: {exc}"
+                logger.error(f"Failed to load {kind} from {path}: {exc}")
+                return None
+            if getattr(obj, "n_features_in_", n) != n:
+                self.errors[kind] = f"{name} expects {obj.n_features_in_} features, the config lists {n}"
+                logger.error(self.errors[kind])
+                return None
+            logger.info(f"Loaded {kind}: {name}")
+            return obj
+
+        self.scaler = _joblib("scaler", HYBRID_SCALER)
+        iforest = _joblib("isolation_forest", HYBRID_IF)
+        # stage 1 needs its scaler: the forest was trained on scaled log features
+        self.isolation_forest = iforest if self.scaler is not None else None
+        if iforest is not None and self.scaler is None:
+            self.errors["isolation_forest"] = "scaler.joblib is required by the Isolation Forest"
+
+        xgb_path = models_dir / HYBRID_XGB
+        if xgb_path.is_file():
+            try:
+                import xgboost as xgb
+
+                booster = xgb.Booster()
+                booster.load_model(str(xgb_path))
+                params = json.loads(booster.save_config())["learner"]["learner_model_param"]
+                n_class = int(params.get("num_class", 0))
+                if booster.num_features() != n or n_class != len(self.classes):
+                    raise ValueError(f"model has {booster.num_features()} features / {n_class} classes, "
+                                     f"config lists {n} / {len(self.classes)}")
+                self.booster = booster
+                gain = booster.get_score(importance_type="gain")
+                raw = [float(gain.get(f"f{i}", 0.0)) for i in range(n)]
+                total = sum(raw) or 1.0
+                self.importances = [g / total for g in raw]
+                self.versions["xgboost"] = xgb.__version__
+                self.trained_at = datetime.fromtimestamp(xgb_path.stat().st_mtime, tz=timezone.utc).replace(tzinfo=None)
+                logger.info(f"Loaded xgboost: {HYBRID_XGB} ({booster.num_boosted_rounds()} rounds x {n_class} classes)")
+            except Exception as exc:
+                self.errors["xgboost"] = f"{HYBRID_XGB}: {exc}"
+                logger.error(f"Failed to load stage-2 XGBoost: {exc}")
+        else:
+            self.errors["xgboost"] = f"{HYBRID_XGB} not found"
+
+        try:
+            import sklearn
+            self.versions["scikit-learn"] = sklearn.__version__
+        except ImportError:
+            pass
+        metrics_path = models_dir / HYBRID_METRICS
+        if metrics_path.is_file():
+            try:
+                self.test_metrics = json.loads(metrics_path.read_text(encoding="utf-8"))
+            except (OSError, ValueError) as exc:
+                self.errors["metrics"] = f"{HYBRID_METRICS}: {exc}"
+        _ = np  # numpy is needed by both stages; imported here so a missing install fails at load time
+
+    def _load_legacy(self, models_dir: Path) -> None:
+        import joblib
+
+        self.kind = "legacy"
 
         def _load(kind: str, names) -> object:
             path = _first_existing(models_dir, names)
@@ -152,33 +272,65 @@ class Detector:
                 self.errors["xgboost"] = "This XGBoost model needs the Isolation Forest score as input — disabled"
                 logger.error(self.errors["xgboost"])
                 self.xgboost = None
-
-        logger.info(f"Detector ready: {self.name}")
-        return self.loaded
+        if not self.loaded:
+            self.kind = "none"
 
     # ── metadata ─────────────────────────────────────────────────────────────
 
     def attack_classes(self) -> List[str]:
-        classes = self._classes()
-        return [c for c in classes if c.lower() not in BENIGN_LABELS]
+        return [c for c in self._classes() if c.lower() not in BENIGN_LABELS]
 
     def _classes(self) -> List[str]:
+        if self.kind == "hybrid":
+            return list(self.classes)
         if self.label_encoder is not None:
             return [str(c) for c in self.label_encoder.classes_]
         if self.xgboost is not None and hasattr(self.xgboost, "classes_"):
             return [str(c) for c in self.xgboost.classes_]
         return []
 
+    def _weights(self) -> Optional[List[float]]:
+        if self.kind == "hybrid":
+            return self.importances or None
+        if self.xgboost is not None and hasattr(self.xgboost, "feature_importances_"):
+            return [float(w) for w in list(self.xgboost.feature_importances_)[: len(self.feature_columns)]]
+        return None
+
     def feature_importance(self, limit: int = 20) -> List[Dict]:
-        """Global XGBoost feature importances (Isolation Forest has none)."""
-        if self.xgboost is None or not hasattr(self.xgboost, "feature_importances_"):
+        """Global stage-2 feature importances (the Isolation Forest has none)."""
+        if self.kind == "hybrid":
+            weights = self.importances
+            names = self.feature_columns
+        elif self.xgboost is not None and hasattr(self.xgboost, "feature_importances_"):
+            weights = [float(w) for w in self.xgboost.feature_importances_]
+            names = list(self.feature_columns) + (["IF anomaly score"] if self.xgb_appends_if_score else [])
+        else:
             return []
-        names = list(self.feature_columns) + (["IF anomaly score"] if self.xgb_appends_if_score else [])
-        pairs = sorted(zip(names, map(float, self.xgboost.feature_importances_)), key=lambda p: p[1], reverse=True)
+        pairs = sorted(zip(names, weights), key=lambda p: p[1], reverse=True)
         return [
             {"feature_name": n, "importance_score": round(s, 6), "rank": i + 1}
-            for i, (n, s) in enumerate(pairs[:limit])
+            for i, (n, s) in enumerate(pairs[:limit]) if s > 0
         ]
+
+    def stage2_info(self) -> Dict:
+        """n_estimators / max_depth / learning_rate of the stage-2 model — only what is really known.
+
+        An XGBoost model file does not keep its training settings (reading them back gives
+        XGBoost's defaults), so for the hybrid model depth / learning rate come only from
+        model_config.json when it records them ("xgb_params"); otherwise they are left empty.
+        """
+        if self.booster is not None:
+            params = self.config.get("xgb_params") or {}
+            return {
+                "n_estimators": self.booster.num_boosted_rounds(),
+                "max_depth": params.get("max_depth"),
+                "learning_rate": params.get("learning_rate"),
+            }
+        if self.xgboost is not None and hasattr(self.xgboost, "get_params"):
+            p = self.xgboost.get_params()
+            return {"n_estimators": p.get("n_estimators"), "max_depth": p.get("max_depth"),
+                    "learning_rate": p.get("learning_rate")}
+        return {}
 
     # ── scoring (CPU-bound: call via asyncio.to_thread) ──────────────────────
 
@@ -192,6 +344,80 @@ class Detector:
         """Score one flow. Returns None when no model is loaded."""
         if not self.loaded:
             return None
+        if self.kind == "hybrid":
+            return self._analyze_hybrid([features], threshold, stage2_enabled, stage2_confidence)[0]
+        return self._analyze_legacy(features, threshold, stage2_enabled, stage2_confidence)
+
+    def analyze_batch(
+        self,
+        features_list: List[Dict[str, float]],
+        threshold: float,
+        stage2_enabled: bool = True,
+        stage2_confidence: float = 0.0,
+    ) -> List[Optional[Detection]]:
+        """Score many flows at once — same verdicts as analyze(), much faster for a burst
+        (the models' fixed per-call cost is paid once)."""
+        if not features_list:
+            return []
+        if not self.loaded:
+            return [None] * len(features_list)
+        if self.kind == "hybrid":
+            return self._analyze_hybrid(features_list, threshold, stage2_enabled, stage2_confidence)
+        return [self._analyze_legacy(f, threshold, stage2_enabled, stage2_confidence) for f in features_list]
+
+    def _analyze_hybrid(self, features_list: List[Dict[str, float]], threshold: float,
+                        stage2_enabled: bool, stage2_confidence: float) -> List[Detection]:
+        import numpy as np
+
+        X = np.array([[float(f.get(name, 0.0)) for name in self.feature_columns] for f in features_list],
+                     dtype=np.float64)
+        X = np.nan_to_num(X, nan=0.0, posinf=0.0, neginf=0.0)
+        n = len(X)
+
+        Z = None
+        scores = None
+        if self.isolation_forest is not None:
+            Z = self.scaler.transform(np.log1p(np.clip(X, 0, None) + 1.0))
+            scores = -self.isolation_forest.score_samples(Z)
+            flagged = np.flatnonzero(scores >= threshold)
+        else:
+            flagged = np.arange(n)
+
+        results: List[Optional[Detection]] = [None] * n
+        for i in range(n):
+            if scores is not None and scores[i] < threshold:
+                results[i] = Detection(anomaly_score=float(scores[i]), is_alert=False)
+
+        use_stage2 = self.booster is not None and (stage2_enabled or scores is None)
+        proba = None
+        if use_stage2 and len(flagged):
+            import xgboost as xgb
+            proba = self.booster.predict(xgb.DMatrix(X[flagged]))
+
+        for k, i in enumerate(flagged):
+            score = float(scores[i]) if scores is not None else None
+            top = self._top_features(Z[i] if Z is not None else X[i])
+            stage1 = (f"Isolation Forest score {score:.3f} is at or above the threshold {threshold:.3f}"
+                      if score is not None else "Stage 1 not loaded")
+            if proba is None:
+                results[i] = Detection(score, True, None, None, stage1, top)   # anomaly without a category
+                continue
+            p = proba[k]
+            idx = int(np.argmax(p))
+            label = self.classes[idx] if idx < len(self.classes) else str(idx)
+            confidence = float(p[idx])
+            anomaly = score if score is not None else 1.0 - float(p[self.benign_index or 0])
+            if idx == self.benign_index:
+                # tested behaviour: stage 2 answering Benign cancels the stage-1 flag
+                results[i] = Detection(anomaly_score=anomaly, is_alert=False,
+                                       reason=f"{stage1}; XGBoost: Benign ({confidence:.0%}) - not an attack")
+                continue
+            attack_type = label if confidence >= stage2_confidence else None
+            results[i] = Detection(anomaly, True, attack_type, confidence, f"{stage1}; XGBoost: {label} ({confidence:.0%})", top)
+        return results
+
+    def _analyze_legacy(self, features: Dict[str, float], threshold: float,
+                        stage2_enabled: bool, stage2_confidence: float) -> Detection:
         import numpy as np
 
         raw = np.array(
@@ -249,18 +475,16 @@ class Detector:
         """ExplainTop: features furthest from the training distribution.
 
         With a StandardScaler the scaled value is a z-score, so |z| is a
-        direct measure of how unusual the feature is. XGBoost importances
+        direct measure of how unusual the feature is. Stage-2 importances
         (when available) weight the ranking toward features the model uses.
         """
-        weights = None
-        if self.xgboost is not None and hasattr(self.xgboost, "feature_importances_"):
-            weights = list(self.xgboost.feature_importances_)[: len(self.feature_columns)]
+        weights = self._weights()
         scored = []
         for i, name in enumerate(self.feature_columns):
             value = float(row[i])
             if not math.isfinite(value):
                 continue
-            contribution = abs(value) * (float(weights[i]) if weights else 1.0)
+            contribution = abs(value) * (float(weights[i]) if weights and i < len(weights) else 1.0)
             scored.append((name, value, contribution))
         scored.sort(key=lambda t: t[2], reverse=True)
         return [

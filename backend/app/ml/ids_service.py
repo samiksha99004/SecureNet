@@ -23,7 +23,7 @@ import asyncio
 import ipaddress
 import time
 from dataclasses import dataclass, field
-from typing import Optional
+from typing import List, Optional
 
 from sqlalchemy import select
 
@@ -37,7 +37,7 @@ from app.models.security_event import (
     ActionTaken, DetectionMode, EventState, Protocol, SecurityEvent, SeverityLevel,
 )
 from app.models.settings import (
-    DetectionSettings, ProtectionSettings, WhitelistEntry, WhitelistEntryType,
+    DetectionSensitivity, DetectionSettings, ProtectionSettings, WhitelistEntry, WhitelistEntryType,
 )
 from app.utils.logger import logger
 from app.utils.timeutil import to_iso_z, utcnow
@@ -46,6 +46,17 @@ from app.services.notifier import get_notifier
 from app.websocket.manager import manager
 
 QUEUE_SIZE = 10_000
+BATCH_MAX = 256          # flows scored together when traffic arrives faster than one at a time
+
+# When the loaded model brings the threshold it was tested with, the Low / Medium /
+# High presets are placed around it (Medium = exactly the tested value); "Custom"
+# always uses the admin's own number. Models without a tested threshold keep the
+# stored value.
+PRESET_OFFSETS = {
+    DetectionSensitivity.LOW: 0.05,      # fewer alerts
+    DetectionSensitivity.MEDIUM: 0.0,    # the tested threshold
+    DetectionSensitivity.HIGH: -0.03,    # catch more, more false alarms
+}
 
 
 def alert_payload(event: SecurityEvent) -> dict:
@@ -126,6 +137,10 @@ class IDSService:
 
     async def reload_models(self) -> bool:
         loaded = await asyncio.to_thread(self.detector.load, settings.models_dir)
+        try:
+            await self.reload_config()        # the model may bring its own tested threshold
+        except Exception as exc:
+            logger.warning(f"Could not refresh IDS settings after loading the model: {exc}")
         await self.broadcast_status()
         return loaded
 
@@ -204,9 +219,11 @@ class IDSService:
 
         if det:
             cfg.detection_enabled = det.enabled
-            cfg.anomaly_threshold = det.anomaly_threshold
+            cfg.anomaly_threshold = self.effective_threshold(det.sensitivity, det.anomaly_threshold)
             cfg.stage2_enabled = det.stage2_enabled
             cfg.stage2_confidence = det.stage2_confidence_threshold
+        else:   # no settings saved yet: the default sensitivity (Medium)
+            cfg.anomaly_threshold = self.effective_threshold(DetectionSensitivity.MEDIUM, cfg.anomaly_threshold)
         if prot:
             cfg.default_mode = DetectionMode(prot.mode.value)
             cfg.auto_block = prot.auto_block
@@ -228,6 +245,12 @@ class IDSService:
             except ValueError:
                 logger.warning(f"Ignoring invalid whitelist entry {entry.type.value}:{entry.value}")
         self.config = cfg
+
+    def effective_threshold(self, sensitivity, stored: float) -> float:
+        tested = self.detector.calibrated_threshold
+        if tested is None or sensitivity not in PRESET_OFFSETS:
+            return float(stored)
+        return round(tested + PRESET_OFFSETS[sensitivity], 6)
 
     def is_whitelisted(self, flow: FlowRecord) -> bool:
         cfg = self.config
@@ -255,6 +278,7 @@ class IDSService:
             "mode": self.mode.value,
             "ml_loaded": self.detector.loaded,
             "detector": self.detector.name,
+            "threshold": self.config.anomaly_threshold,
             "capture_active": bool(monitor and monitor.running),
             "capture_error": self.capture_error or (monitor.last_error if monitor else None),
             "packets_processed": monitor.packet_count if monitor else 0,
@@ -294,15 +318,22 @@ class IDSService:
     async def _worker(self) -> None:
         assert self._queue is not None
         while True:
-            record = await self._queue.get()
+            batch = [await self._queue.get()]
+            # take whatever else is already waiting: one model call for the whole burst
+            while len(batch) < BATCH_MAX:
+                try:
+                    batch.append(self._queue.get_nowait())
+                except asyncio.QueueEmpty:
+                    break
             try:
-                await self.process_flow(record)
+                await self.process_flows(batch)
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
                 logger.error(f"Flow processing error: {exc}", exc_info=True)
             finally:
-                self._queue.task_done()
+                for _ in batch:
+                    self._queue.task_done()
 
     async def _maintenance(self) -> None:
         while True:
@@ -312,18 +343,37 @@ class IDSService:
 
     async def process_flow(self, flow: FlowRecord) -> Optional[SecurityEvent]:
         """Run one finished flow through the detection pipeline."""
-        self.flows_analyzed += 1
-        if self.is_whitelisted(flow) or not self.config.detection_enabled or not self.detector.loaded:
-            return None
+        events = await self.process_flows([flow])
+        return events[0]
+
+    async def process_flows(self, flows: List[FlowRecord]) -> List[Optional[SecurityEvent]]:
+        """Run finished flows through the pipeline; scores them in one model call."""
+        self.flows_analyzed += len(flows)
+        results: List[Optional[SecurityEvent]] = [None] * len(flows)
+        if not self.config.detection_enabled or not self.detector.loaded:
+            return results
+        todo = [i for i, f in enumerate(flows) if not self.is_whitelisted(f)]
+        if not todo:
+            return results
 
         cfg = self.config
-        detection: Optional[Detection] = await asyncio.to_thread(
-            self.detector.analyze, flow.features, cfg.anomaly_threshold, cfg.stage2_enabled, cfg.stage2_confidence
-        )
-        if detection is None:
-            return None
+        batch = getattr(self.detector, "analyze_batch", None)
+        if batch is not None:
+            detections = await asyncio.to_thread(
+                batch, [flows[i].features for i in todo], cfg.anomaly_threshold, cfg.stage2_enabled,
+                cfg.stage2_confidence)
+        else:   # detectors without a batch call (e.g. test doubles)
+            detections = [await asyncio.to_thread(self.detector.analyze, flows[i].features, cfg.anomaly_threshold,
+                                                  cfg.stage2_enabled, cfg.stage2_confidence) for i in todo]
+        for i, detection in zip(todo, detections):
+            if detection is not None:
+                results[i] = await self._handle(flows[i], detection)
+        return results
 
-        severity = self._severity(detection.anomaly_score, cfg.anomaly_threshold)
+    async def _handle(self, flow: FlowRecord, detection: Detection) -> Optional[SecurityEvent]:
+        """Live score for every scored flow; store + alert + email for alerts."""
+        cfg = self.config
+        severity = self._severity_for(detection, cfg.anomaly_threshold)
         if not detection.is_alert:
             await self._broadcast_score(flow, detection, severity, throttle=True)
             return None
@@ -377,6 +427,24 @@ class IDSService:
         logger.info(f"Alert: {event.attack_type or 'anomaly'} from {flow.src_ip} "
                     f"score={detection.anomaly_score:.3f} severity={severity.value} action={action.value}")
         return event
+
+    def _severity_for(self, detection: Detection, threshold: float) -> SeverityLevel:
+        """Severity of a detection.
+
+        For a model with a tested threshold (the hybrid model) the stage-1 scores sit in a narrow
+        band just above the threshold, so "distance above θ" would call almost everything Low —
+        a DDoS the classifier is 100 % sure of included. There the severity is how sure stage 2
+        is that the flow is that attack: High ≥ 90 %, Medium ≥ 60 %, Low below. Anomalies stage 2
+        cannot name (and older models) keep the distance-above-θ rule.
+        """
+        if (getattr(self.detector, "calibrated_threshold", None) is not None
+                and detection.attack_type and detection.confidence is not None):
+            if detection.confidence >= 0.9:
+                return SeverityLevel.HIGH
+            if detection.confidence >= 0.6:
+                return SeverityLevel.MEDIUM
+            return SeverityLevel.LOW
+        return self._severity(detection.anomaly_score, threshold)
 
     @staticmethod
     def _severity(score: float, threshold: float) -> SeverityLevel:

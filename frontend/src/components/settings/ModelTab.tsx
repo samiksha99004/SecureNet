@@ -84,7 +84,10 @@ function IsolationForestCard({ info }: { info: IsolationForestInfo }) {
         <InfoRow label="N Estimators"  value={na(info.nEstimators)} mono />
         <InfoRow label="Max Samples"   value={na(info.maxSamples)} mono />
         <InfoRow label="Contamination" value={info.contamination !== null ? formatScore(info.contamination, 4) : null} mono />
-        <InfoRow label="Threshold"     value={info.threshold !== null ? formatScore(info.threshold, 4) : null} mono />
+        <InfoRow label="Threshold in use" value={info.threshold !== null ? formatScore(info.threshold, 4) : null} mono />
+        {info.testedThreshold !== null && (
+          <InfoRow label="Tested threshold" value={formatScore(info.testedThreshold, 4)} mono />
+        )}
         <InfoRow label="Trained At"    value={formatDate(info.trainedAt)} />
       </dl>
 
@@ -92,10 +95,10 @@ function IsolationForestCard({ info }: { info: IsolationForestInfo }) {
         <div className={styles.metricsBlock}>
           <h4 className={styles.metricsTitle}>Performance Metrics</h4>
           <dl className={styles.infoGrid}>
-            <InfoRow label="ROC-AUC"   value={info.metrics.rocAuc   !== null ? formatPercent(info.metrics.rocAuc) : null} mono />
-            <InfoRow label="Precision" value={info.metrics.precision !== null ? formatPercent(info.metrics.precision) : null} mono />
-            <InfoRow label="Recall"    value={info.metrics.recall    !== null ? formatPercent(info.metrics.recall) : null} mono />
-            <InfoRow label="F1 Score"  value={info.metrics.f1Score   !== null ? formatPercent(info.metrics.f1Score) : null} mono />
+            {info.metrics.rocAuc    !== null && <InfoRow label="ROC-AUC"   value={formatPercent(info.metrics.rocAuc)} mono />}
+            {info.metrics.precision !== null && <InfoRow label="Precision" value={formatPercent(info.metrics.precision)} mono />}
+            {info.metrics.recall    !== null && <InfoRow label="Recall"    value={formatPercent(info.metrics.recall)} mono />}
+            {info.metrics.f1Score   !== null && <InfoRow label="F1 Score"  value={formatPercent(info.metrics.f1Score)} mono />}
           </dl>
         </div>
       ) : (
@@ -147,7 +150,8 @@ function XGBoostCard({ info }: { info: XGBoostInfo }) {
 
       {info.metrics ? (
         <div className={styles.metricsBlock}>
-          <h4 className={styles.metricsTitle}>Overall Performance</h4>
+          <h4 className={styles.metricsTitle}>Overall Performance (tested)</h4>
+          {info.metrics.evaluation && <p className={styles.featureStatement}>{info.metrics.evaluation}.</p>}
           <dl className={styles.infoGrid}>
             <InfoRow label="Accuracy"    value={info.metrics.accuracy   !== null ? formatPercent(info.metrics.accuracy) : null} mono />
             <InfoRow label="Macro F1"    value={info.metrics.macroF1    !== null ? formatPercent(info.metrics.macroF1) : null} mono />
@@ -177,7 +181,7 @@ function XGBoostCard({ info }: { info: XGBoostInfo }) {
                         <td className={styles.ptdNum}>{m.precision !== null ? formatPercent(m.precision) : 'N/A'}</td>
                         <td className={styles.ptdNum}>{m.recall    !== null ? formatPercent(m.recall) : 'N/A'}</td>
                         <td className={styles.ptdNum}>{m.f1Score   !== null ? formatPercent(m.f1Score) : 'N/A'}</td>
-                        <td className={styles.ptdNum}>{m.support   !== null ? String(m.support) : 'N/A'}</td>
+                        <td className={styles.ptdNum}>{m.support   !== null ? m.support.toLocaleString() : 'N/A'}</td>
                       </tr>
                     ))}
                   </tbody>

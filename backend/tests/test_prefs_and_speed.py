@@ -111,3 +111,28 @@ async def test_expired_user_is_rechecked_in_the_background(client, captured_otps
     await asyncio.gather(*dependencies._user_loading.values(), return_exceptions=True)
     # ... and refused from the next request on
     assert (await client.get("/api/auth/me", headers=headers)).status_code == 401
+
+
+async def test_history_and_recipients_are_never_stale(client, captured_otps):
+    admin = await register(client, captured_otps, email="boss2@example.com")
+    user = await register(client, captured_otps, email="worker2@example.com")
+    ha = {"Authorization": f"Bearer {admin['tokens']['accessToken']}"}
+    hu = {"Authorization": f"Bearer {user['tokens']['accessToken']}"}
+    assert (await client.get("/api/events", headers=ha)).json()["total"] == 0
+    assert (await client.get("/api/notifications/status", headers=ha)).json()["recipientCount"] == 2
+    await client.get("/api/settings", headers=ha)      # first load (creates the settings rows here)
+    with count_queries() as q:
+        await client.get("/api/events", headers=ha)
+        await client.get("/api/notifications/status", headers=ha)
+        await client.get("/api/settings", headers=ha)
+        await client.get("/api/settings/whitelist", headers=ha)
+        await client.get("/api/settings/whitelist", headers=ha)
+    assert q["n"] <= 1                                  # only the first whitelist read; the rest from memory
+
+    ids = IDSService()
+    ids.detector = FakeDetector(Detection(0.95, True, "DDoS", 0.99))
+    await ids.process_flow(make_flow())
+    assert (await client.get("/api/events", headers=ha)).json()["total"] == 1      # new event shows at once
+
+    await client.put("/api/auth/me/preferences", headers=hu, json={"emailAlerts": False})
+    assert (await client.get("/api/notifications/status", headers=ha)).json()["recipientCount"] == 1

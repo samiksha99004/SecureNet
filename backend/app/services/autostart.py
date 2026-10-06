@@ -36,7 +36,7 @@ _CREATE_NO_WINDOW = 0x08000000
 
 ON_TITLE = "SecureNet"
 ON_MESSAGE = "SecureNet is on and is monitoring."
-FAILED_TITLE = "SecureNet could not turn monitoring back on"
+FAILED_TITLE = "SecureNet could not start monitoring"
 
 
 # ── saved state ──────────────────────────────────────────────────────────────
@@ -119,34 +119,41 @@ async def remember_ids_state(enabled: bool, started_by: Optional[dict] = None) -
 # ── turn the IDS back on when the backend starts ─────────────────────────────
 
 async def resume_after_restart() -> bool:
-    """If the IDS was ON when SecureNet last stopped, turn it on again and show
-    one desktop notification. Returns True when the IDS was turned back on."""
+    """Turn the IDS on when the backend starts — always when IDS_ON_AT_STARTUP is set (the
+    owner wants live monitoring as soon as SecureNet opens), otherwise only if it was ON when
+    SecureNet last stopped — and show one desktop notification. A user turning the IDS OFF
+    while this is still retrying wins. Returns True when the IDS was turned on."""
     if not settings.IDS_AUTOSTART:
         return False
     from app.ml.ids_service import get_ids_service   # late import: avoids a cycle at startup
     from app.ml.network_monitor import CaptureUnavailable
 
     ids = get_ids_service()
+    started = to_iso_z(utcnow())
     for attempt in range(1, RESUME_ATTEMPTS + 1):
         state = await asyncio.to_thread(load_state)
-        if not state.get("enabled") or ids.enabled:   # OFF, or a user already turned it on
+        switched_off_now = state.get("enabled") is False and str(state.get("changedAt", "")) > started
+        wanted = (settings.IDS_ON_AT_STARTUP and not switched_off_now) or state.get("enabled") is True
+        if not wanted or ids.enabled:   # not wanted, or a user already turned it on
             return False
         try:
             await ids.start("monitor")
         except CaptureUnavailable as exc:
-            logger.error(f"IDS could not be turned back on after the restart: {exc}")
-            await notify_desktop(FAILED_TITLE, "The IDS was on before the computer restarted, but it can't "
-                                               "start on this computer right now. Open SecureNet for details.")
+            logger.error(f"IDS could not be turned on at start-up: {exc}")
+            await notify_desktop(FAILED_TITLE, "SecureNet can't watch the network on this computer right now. "
+                                               "Open SecureNet for details.")
             return False
         except Exception as exc:  # network / database not ready yet right after start-up
-            logger.warning(f"Turning the IDS back on failed (attempt {attempt}/{RESUME_ATTEMPTS}): {exc}")
+            logger.warning(f"Turning the IDS on failed (attempt {attempt}/{RESUME_ATTEMPTS}): {exc}")
             await asyncio.sleep(RESUME_RETRY_SECONDS)
             continue
-        ids.started_by = state.get("startedBy")
-        logger.info("IDS turned back on after the restart (it was on before)")
+        ids.started_by = state.get("startedBy") if state.get("enabled") else None
+        if not state.get("enabled"):
+            await remember_ids_state(True, None)   # also comes back after a computer restart
+        logger.info("IDS turned on at start-up" + (" (it was on before)" if state.get("enabled") else ""))
         await notify_desktop(ON_TITLE, ON_MESSAGE)
         return True
 
-    await notify_desktop(FAILED_TITLE, "The IDS was on before the computer restarted, but SecureNet could not "
-                                       "reach its database. Open SecureNet and turn the IDS on.")
+    await notify_desktop(FAILED_TITLE, "SecureNet could not reach its database to start monitoring. "
+                                       "Open SecureNet and turn the IDS on.")
     return False

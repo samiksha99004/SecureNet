@@ -55,10 +55,12 @@ async def _load_user(user_id: uuid.UUID) -> Optional[User]:
 
 def forget_user(user_id) -> None:
     """Drop the remembered copy of this account (call after changing it)."""
+    from app.services.cache import invalidate   # late import: cache → logger → config only
     try:
         _user_cache.pop(uuid.UUID(str(user_id)), None)
     except ValueError:
         pass
+    invalidate("settings:recipients")            # the alert-email recipient list may have changed
 
 
 def clear_user_cache() -> None:

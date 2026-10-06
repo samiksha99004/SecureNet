@@ -232,7 +232,7 @@ def render_admin_email(events: Sequence[SecurityEvent], heading: str, registered
         op = (f"{operator.get('name')} <{operator.get('email')}>, phone {operator.get('phone') or '-'} "
               f"({'Admin' if operator.get('role') == 'admin' else 'SecureNet User'})")
     else:
-        op = "not recorded (the IDS was not turned on from the dashboard)"
+        op = "SecureNet itself (switched on automatically when SecureNet started)"
 
     text = [heading, "ADMIN COPY - includes user and event details.", "",
             f"IDS turned on by  : {op}", f"Monitored computer: {host}", "",

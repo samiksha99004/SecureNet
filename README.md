@@ -204,17 +204,25 @@ right-click → **Run as administrator**.
 7. **Shutting down**: if the IDS is ON when you shut down, it turns itself back on after the next start
    and shows a desktop notice. Turn it OFF first if you don't want that.
 
-### Detection models (optional)
+### Detection model
 
-Without models SecureNet still captures traffic and counts flows, but it does not score them (the
-dashboard says so). To enable detection:
+SecureNet uses a **hybrid model**: an Isolation Forest (stage 1, "is this flow unusual?") and an XGBoost
+classifier (stage 2, "which attack is it?") trained on CICIDS2018. Tested on 465,837 flows neither
+model had seen, the whole pipeline is **92.2 % accurate** (Benign 98.7 %, DDoS 90.7 %, DoS 95.5 %, Bot
+99.2 %, Brute Force 99.6 % recall; Infilteration 27.5 % is its weak spot). *Settings → Model* shows these
+real test results, and every alert shows the model's real score, attack class, confidence and the
+features that weighed most.
 
-1. Put the trained files in `backend\models\`: `isolation_forest_model.pkl` (or `isolation_forest.pkl`),
-   `xgboost_multiclass_model.pkl` (or `xgboost_model.pkl`), `scaler.pkl`, `label_encoder.pkl` and
-   `feature_columns.pkl`. Either model on its own also works.
-2. From PowerShell in the project folder run `.\SETUP.ps1 -WithML` (installs scikit-learn and XGBoost).
-3. Set `ML_AUTOLOAD=true` in `backend\.env` and restart, or, as admin, click
-   *Settings → Model → Load / reload models*.
+The model files (about 60 MB) are not in git. To use them:
+
+1. Copy `model_config.json`, `scaler.joblib`, `isolation_forest.joblib`, `xgboost_stage2.json` and
+   `hybrid_metrics.json` into `backend\models\` (see `backend\models\README.md`).
+2. From PowerShell in the project folder run `.\SETUP.ps1 -WithML` (installs scikit-learn 1.9.1 and
+   XGBoost 3.4.1 — the versions the model was trained with).
+3. Start SecureNet. The model loads automatically and the IDS turns on (live monitoring) as soon as the
+   backend starts. As admin you can also click *Settings → Model → Load / reload models*.
+
+Without model files SecureNet still captures and counts traffic but does not score it (the dashboard says so).
 
 ---
 

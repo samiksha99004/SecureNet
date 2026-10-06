@@ -16,7 +16,10 @@ export interface IsolationForestInfo {
   nEstimators: number | null;
   maxSamples: number | null;
   contamination: number | null;
+  /** threshold in use now (sensitivity preset or custom) */
   threshold: number | null;
+  /** the threshold the model was tested with (null for models that don't record one) */
+  testedThreshold: number | null;
   featureCount: number | null;
   featureNames: string[];
   trainedAt: string | null;   // ISO 8601
@@ -46,6 +49,9 @@ export interface XGBoostInfo {
 }
 
 export interface XGBoostMetrics {
+  /** what the numbers were measured on */
+  evaluation: string | null;
+  testRows: number | null;
   accuracy: number | null;
   macroF1: number | null;
   weightedF1: number | null;

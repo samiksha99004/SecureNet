@@ -35,6 +35,8 @@ FEATURE_COLUMNS: List[str] = [
     "Active Mean", "Active Std", "Active Max", "Active Min",
     "Idle Mean", "Idle Std", "Idle Max", "Idle Min",
     "Protocol_0", "Protocol_6", "Protocol_17",
+    # used by the retrained hybrid model (cleaned_dataset_2: protocol number, not one-hot)
+    "Protocol", "Fwd URG Flags",
 ]
 
 # CICFlowMeter default activity timeout (µs): a gap longer than this splits
@@ -89,6 +91,7 @@ class Flow:
     bwd_header_bytes: int = 0
     fwd_header_min: Optional[int] = None
     fwd_psh: int = 0
+    fwd_urg: int = 0
     flag_counts: Dict[str, int] = field(default_factory=lambda: {k: 0 for k in "FSRPAUEC"})
     init_fwd_win: int = -1
     init_bwd_win: int = -1
@@ -144,6 +147,8 @@ class Flow:
             )
             if "P" in pkt.flags:
                 self.fwd_psh += 1
+            if "U" in pkt.flags:
+                self.fwd_urg += 1
             if pkt.payload_len > 0:
                 self.fwd_act_data += 1
             if self.init_fwd_win < 0 and pkt.window is not None:
@@ -261,6 +266,8 @@ class Flow:
             "Protocol_0": 1.0 if self.protocol == 0 else 0.0,
             "Protocol_6": 1.0 if self.protocol == 6 else 0.0,
             "Protocol_17": 1.0 if self.protocol == 17 else 0.0,
+            "Protocol": float(self.protocol),
+            "Fwd URG Flags": float(self.fwd_urg),
         }
 
 

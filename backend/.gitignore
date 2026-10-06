@@ -51,6 +51,8 @@ logs/
 models/*.joblib
 models/*.pkl
 models/*.h5
+models/*.json
+models/archive*/
 
 # Reports
 reports/*.pdf

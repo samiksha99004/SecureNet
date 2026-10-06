@@ -201,7 +201,7 @@ export function DashboardPage() {
         {/* ── Row 3: Live chart ────────────────────────────────────────────── */}
         <section aria-label="Live anomaly monitoring">
           <Suspense fallback={<LoadingState message="Loading live chart..." />}>
-            <LiveAnomalyChart threshold={detection.data?.anomalyThreshold ?? 0.5} idsOff={idsOff} />
+            <LiveAnomalyChart threshold={idsStatus.data?.threshold ?? detection.data?.anomalyThreshold ?? 0.5} idsOff={idsOff} />
           </Suspense>
         </section>
 

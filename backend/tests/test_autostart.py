@@ -131,3 +131,29 @@ async def test_resume_without_capture_shows_a_plain_notice(capture, monkeypatch)
     assert await autostart.resume_after_restart() is False
     assert not get_ids_service().enabled
     assert len(capture) == 1 and capture[0][0] == autostart.FAILED_TITLE
+
+
+async def test_ids_turns_on_when_securenet_starts(capture, monkeypatch):
+    """IDS_ON_AT_STARTUP: live monitoring as soon as the backend starts, even if nothing was saved."""
+    monkeypatch.setattr(settings, "IDS_ON_AT_STARTUP", True)
+    assert autostart.load_state() == {}
+    assert await autostart.resume_after_restart() is True
+    assert get_ids_service().enabled
+    assert capture == [("SecureNet", "SecureNet is on and is monitoring.")]
+    assert autostart.load_state()["enabled"] is True          # and again after a computer restart
+
+
+async def test_switching_off_during_startup_wins(capture, monkeypatch):
+    monkeypatch.setattr(settings, "IDS_ON_AT_STARTUP", True)
+    real_start, calls = get_ids_service().start, []
+
+    async def slow_start(mode=None):
+        calls.append(mode)
+        if len(calls) == 1:
+            autostart.save_state(False)                      # the user presses OFF meanwhile
+            raise OSError("database not ready yet")
+        await real_start(mode)
+
+    monkeypatch.setattr(get_ids_service(), "start", slow_start)
+    assert await autostart.resume_after_restart() is False
+    assert not get_ids_service().enabled and capture == []

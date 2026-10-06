@@ -20,7 +20,8 @@ class IsolationForestInfo(CamelModel):
     n_estimators: Optional[int] = None
     max_samples: Optional[int] = None
     contamination: Optional[float] = None
-    threshold: Optional[float] = None
+    threshold: Optional[float] = None            # in use now (settings preset / custom)
+    tested_threshold: Optional[float] = None     # the threshold the model was tested with
     feature_count: Optional[int] = None
     feature_names: List[str] = []
     trained_at: Optional[UtcDatetime] = None
@@ -36,6 +37,8 @@ class PerClassMetric(CamelModel):
 
 
 class XGBoostMetrics(CamelModel):
+    evaluation: Optional[str] = None             # what the numbers were measured on
+    test_rows: Optional[int] = None
     accuracy: Optional[float] = None
     macro_f1: Optional[float] = None
     weighted_f1: Optional[float] = None

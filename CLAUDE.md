@@ -27,8 +27,33 @@ The conference paper is `conference_paper_no_results_conclusion (2).pdf`.
 | UI | React + TypeScript dashboard, live score graph, alerts, report history | ✅ dark + warm **peach** light theme (Settings → Preferences); plain-language copy for common users |
 | Alerts | Desktop + email notifications | ✅ in-app pop-ups, bell, sound, desktop; batched alert email to every registered user **from the admin Gmail with the incident report (.txt) attached**; daily reports on the Reports page; IDS left ON survives a shutdown (turns itself back on at the next start + one Windows desktop notice) |
 
-**Models are optional and currently NOT loaded** (owner's decision: "either Isolation Forest or XGBoost or both",
-to be enabled later). With no model the IDS still captures and counts traffic but scores nothing; the UI says so.
+**The retrained hybrid model is loaded (session 33)** — Isolation Forest + XGBoost from `F:\retraining_hybrid`
+(copied to `backend/models/`, not in git): 63 CICIDS2018 features, 7 classes (Benign, DDoS, DoS, Infilteration, Bot,
+Brute Force, SQL Injection), tested threshold 0.4602, **92.24 % accuracy** on 465,837 unseen test flows. Loaded at
+startup (`ML_AUTOLOAD` now defaults to true) and the IDS turns on at startup (`IDS_ON_AT_STARTUP`). Without model
+files the IDS still captures and counts traffic but scores nothing; the UI says so.
+
+### Hybrid model (session 33) — `app/ml/detector.py` kind `hybrid`
+Used when `backend/models/model_config.json` exists (otherwise the legacy `.pkl` loader). Files: `model_config.json`
+(features_used, classes, benign_code, threshold, roc_auc), `scaler.joblib`, `isolation_forest.joblib` (300 trees,
+8,192 rows/tree), `xgboost_stage2.json` (Booster, 200 rounds × 7 classes), `hybrid_metrics.json` (real test results).
+Exactly the tested pipeline (`F:\retraining_hybrid\4_evaluate.py`): x = 63 features by name →
+stage 1 `score = -IF.score_samples(scaler(log1p(max(x,0)+1)))`, flagged when `score ≥ θ` → stage 2 XGBoost on the
+**raw** x, argmax class; **Benign cancels** the flag; otherwise alert with that class (named only if confidence ≥
+the stage-2 confidence setting, else "Unclassified"). `analyze_batch()` scores bursts in one call (identical verdicts,
+~0.13 ms/flow vs 16 ms one at a time); the IDS worker drains up to `BATCH_MAX = 256` waiting flows. Features: the app's
+extractor now also emits `Protocol` (number) and `Fwd URG Flags`; names match `features_used`; time columns in µs.
+**Threshold**: `IDSService.effective_threshold` — when the model records a tested threshold, presets follow it
+(Medium = tested, Low +0.05, High −0.03); Custom = admin's value; no settings row ⇒ Medium. Neon has MEDIUM ⇒ 0.4602.
+**Severity** (hybrid): stage-2 confidence ≥ 0.9 High, ≥ 0.6 Medium, else Low; unnamed anomalies keep distance-above-θ.
+**Model page** (`/api/model/info`): real values only — threshold in use + tested threshold, ROC-AUC 0.896, accuracy,
+macro/weighted F1 and per-class precision/recall/F1/support from `hybrid_metrics.json` with the evaluation note;
+max depth / learning rate are **not** stored in an XGBoost model file, so they show "Not available" (never guessed).
+ML libs pinned to the training versions: scikit-learn 1.9.1, XGBoost 3.4.1 (`requirements-ml.txt`, installed in the
+venv). `backend/scripts/verify_model.py` replays held-out test rows through `Detector.analyze` one flow at a time and
+compares with the tested pipeline (20,000 rows: 100 % identical verdicts, score difference 0, 91.98 % = reference).
+Live-traffic caveat (from `F:\all_10_csv_manual\documents\CLAUDE.md`): real LAN flows differ from the 2018 testbed, so
+live accuracy can be lower than the offline 92.2 %; the app shows the model's real output either way.
 
 ### Algorithm 1 (paper) — implemented in `IDSService.process_flow` + `Detector.analyze`
 ```
@@ -323,11 +348,24 @@ every time:          double-click START_SECURENET.bat  (right-click → Run as a
   Administrator backend. Without it, turning the IDS on returns a clear 503 message. Npcap is **not installed** yet.
   The start-up entry (IDS left ON at shutdown) starts the backend **without** admin rights; capture then works as long
   as Npcap is installed with its default setting ("Restrict Npcap driver's access to Administrators only" **unticked**).
-- Enable models later: put the `.pkl` files in `backend/models/`, `.\setup.ps1 -WithML`, then set
-  `ML_AUTOLOAD=true` in `.env` **or** click *Settings → Model → Load / reload models* (admin).
+- Models: copy the hybrid files into `backend/models/` (see `backend/models/README.md`), `.\SETUP.ps1 -WithML`;
+  they load at startup (`ML_AUTOLOAD=true` default) or via *Settings → Model → Load / reload models* (admin). The old
+  August `.pkl` models were moved to `backend/models/archive_2026-08/` (unused).
 - Electron: `npm run build:frontend` then `npm start` in `desktop\` (backend serves the SPA on :8000).
 
 ## 6. Verification status (2026-09-25)
+- **Session 33 — hybrid model loaded, live detection, speed (2026-10-06):** venv got scikit-learn 1.9.1 + XGBoost 3.4.1
+  (training versions); test split re-scored in the app venv = 0.9224 (identical). `verify_model.py`: 20,000 test
+  rows through `Detector.analyze` → 100 % same verdicts as the tested pipeline, score diff 0. Batch = single verdicts;
+  ~8,000 flows/s in batches. Backend **119/119** (new `tests/test_hybrid_model.py`: loads as tested hybrid, live flow
+  has all 63 features, batch = single, 1,000 test rows = reference, Model page shows real metrics, severity rule;
+  `test_autostart`: IDS on at startup + OFF during start-up wins; `test_prefs_and_speed`: history/recipients never
+  stale). Real backend on Neon: all page GETs 200, model `isolation_forest+xgboost`, threshold in use 0.460194 =
+  tested, repeat requests ~5 ms (Settings 3.7 s → 5 ms, History 1.9 s → 6 ms), WebSocket OK; turning the IDS on →
+  503 "needs Npcap" (Npcap still not installed). Chrome `qa3/live.js` **13/13** on the harness (real model, fake
+  capture, 300 real test-split flows replayed through the IDS): 165 alerts for 183 true attacks (DDoS 91/98, Bot 32/32,
+  Brute Force 15/15, DoS 21/22, Infilteration 4/16), pop-ups with real classes, live chart with real scores, events
+  with score/class/confidence/reason, Model tab 0.4602 + 92.2 % + 465,837 + 7 classes, Detection tab preset text.
 - **Session 29 — website live, plain code email, greeting, name only (2026-09-26):** website published to
   https://samiksha99004.github.io/securenet-site/ (HTTP 200 for page, css, js, icon; owner's portfolio at
   samiksha99004.github.io untouched); Chrome on the live site: sidebar highlight follows the section, both themes,
@@ -578,6 +616,9 @@ every time:          double-click START_SECURENET.bat  (right-click → Run as a
 | P32 | No public website (sign-in "Visit our website" / Contact us had no link) | Session 29: `website/` published to GitHub Pages; contact website set in Neon |
 | P33 | Dashboard had no personal greeting; message form showed the user's email | Session 29: "Good morning/afternoon/evening, <name>" (updates every minute); From = name only |
 | Q10 | Medium → fixed | App took ~5 s per page (8 queries × ~300 ms, user re-read every request, reconnect every 4 min, type lookups on new connections, Neon cold start) | Session 28: user + dashboard caches, 3-query summary, warm connections, idle-only replacement, keep-awake while in use → ~0.1 s |
+| O2 | Medium → fixed (session 33) | Models not loaded; compatibility unverified | Hybrid model loaded with the training library versions; verified identical to the tested results |
+| P34 | Live detection had no model (no real scores) and did not start with the app | Session 33: hybrid model auto-loaded, IDS on at startup, real scores/classes/metrics |
+| P35 | Settings / History / notification status took 1–4 s per visit | Session 33: cached until changed + prepared at startup → ~5 ms |
 | P5 | First start on a fresh install could show the boot error while Vite prepared dependencies | `index.html` retries once automatically before reporting |
 | M14 | No alert notifications | Full notification system (pop-ups, bell feed, sound, desktop, batched emails to registered users, digest, test email) |
 | L1–L4, L6, L7, L9 | Deprecations, no-op middleware, unused deps, stats, clutter, LIKE escaping, unverified build | Fixed / archived |
@@ -589,7 +630,6 @@ every time:          double-click START_SECURENET.bat  (right-click → Run as a
 | ID | Severity | Issue | Notes / next step |
 |---|---|---|---|
 | O1 | High | **Npcap not installed** → live capture unavailable on this PC. Installer **downloaded to `F:\tools\installers\npcap-1.89.exe`** (signature valid, Nmap Software LLC; SHA-256 8AED85E9…05CC) | Owner runs it (admin prompt; tick *WinPcap API-compatible Mode*; the driver itself goes into Windows by design), then starts SecureNet as Administrator |
-| O2 | Medium | Models not loaded (by owner's choice) — compatibility of the `.pkl` files with current scikit-learn/XGBoost unverified; unknown whether IF was trained on scaled data | When enabling: install the training-time versions, `POST /api/model/reload`, check logs |
 | O3 | Low | Protection (auto-block) mode is disabled by the owner (IDS is ON/OFF only); firewall code untested with admin rights | Re-enable only if the owner asks |
 | O4 | Medium | Paper's reported metrics (78.58% → 99.98%) not reproducible from the repo (notebook/dataset in `F:\all_10_csv_manual`) | Add training notebook + evaluation script to repo |
 | O5 | Low | Tokens in localStorage; logout doesn't revoke refresh tokens server-side | Consider httpOnly cookies / token denylist |
@@ -648,3 +688,4 @@ every time:          double-click START_SECURENET.bat  (right-click → Run as a
 | 2026-09-26 (30) | **Code email = digit boxes only** (owner: no copy button needed, just print the OTP in box format, we copy it manually). `render_code_email`: removed the "Your code" box and the select hint; test updated (110/110). Committed and pushed. |
 | 2026-09-26 (31) | **Website address without the owner's name — Cloudflare Pages prepared** (owner: no name in the website address; chose Cloudflare Pages). Checked names (securenet.pages.dev taken, securenet-ids.pages.dev free); new `website/publish-cloudflare.ps1`; `.local/cloudflare.env` template (gitignored); website README. Waiting for the owner's Cloudflare account + API token. Backend restarted with the digit-box email. Committed and pushed. |
 | 2026-09-26 (32) | Owner: keep the website on GitHub Pages for now (https://samiksha99004.github.io/securenet-site/), move to Cloudflare later. No code changes; CLAUDE.md status updated. Committed and pushed. |
+| 2026-10-06 (33) | **Retrained hybrid model loaded, live monitoring at startup, faster pages** (owner: load the hybrid Isolation Forest + XGBoost from F:\retraining_hybrid, fix API/connection errors, live monitoring when the app starts, no fake values — real results from the model's testing). venv: scikit-learn 1.9.1, XGBoost 3.4.1 (pinned in requirements-ml.txt). Model files copied to backend/models (old Aug .pkl → archive_2026-08; .gitignore models/*.json, archive*/; models/README.md). `detector.py` rewritten: hybrid loader + tested pipeline + `analyze_batch`, legacy kept; `features.py`: Protocol, Fwd URG Flags; `ids_service.py`: effective threshold (presets follow the tested threshold), reload_config after model load, batch worker, confidence-based severity, status `threshold`; `/api/model/info` real metrics (schemas: tested_threshold, evaluation, test_rows); `autostart.py` + `IDS_ON_AT_STARTUP` (default true), `ML_AUTOLOAD` default true; caches for settings/whitelist/recipients/history + more startup priming; `scripts/verify_model.py`. Frontend: Model tab (threshold in use / tested, evaluation note, only real metric rows), Detection tab preset text, live chart uses the IDS threshold. Tests 119/119, Chrome 13/13, real backend smoke OK. Live capture still needs Npcap (O1). Committed and pushed. |

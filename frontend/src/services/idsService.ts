@@ -16,6 +16,8 @@ export interface IDSStatus {
   mlLoaded: boolean;
   /** "none" | "isolation_forest" | "xgboost" | "isolation_forest+xgboost" */
   detector: string;
+  /** stage-1 threshold in use right now */
+  threshold?: number | null;
   captureActive: boolean;
   captureError: string | null;
   packetsProcessed: number;

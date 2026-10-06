@@ -257,6 +257,7 @@ async def complete_signup(request: CompleteSignupRequest, db: AsyncSession = Dep
     user.failed_login_attempts = 0
     user.last_login_at = utcnow()
     await db.commit()
+    forget_user(user.id)                          # new account: alert recipients changed
     logger.info(f"Account created: {email} ({user.role.value})")
     return create_auth_response(user)
 

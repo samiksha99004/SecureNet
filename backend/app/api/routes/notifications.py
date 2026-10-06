@@ -79,17 +79,24 @@ async def list_notifications(
     return await cached_feed(limit)
 
 
+async def _load_recipients() -> tuple[bool, List[str]]:
+    async with AsyncSessionLocal() as db:
+        prefs = (await db.execute(select(NotificationSettings).limit(1))).scalars().first()
+        return bool(prefs and prefs.email_enabled), await get_recipients(db, prefs)
+
+
+async def cached_recipients() -> tuple[bool, List[str]]:
+    return await cached("settings:recipients", _load_recipients, ttl=30)
+
+
 @router.get("/status", response_model=NotificationStatus)
-async def notification_status(
-    current_user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
-):
-    prefs = (await db.execute(select(NotificationSettings).limit(1))).scalars().first()
-    recipients = await get_recipients(db, prefs)
+async def notification_status(current_user: User = Depends(get_current_user)):
+    # "settings:" prefix: dropped when settings change; accounts changing drop it too (forget_user)
+    email_on, recipients = await cached_recipients()
     notifier = get_notifier()
     return NotificationStatus(
         email_delivery=email_delivery_status(),
-        email_alerts_enabled=bool(prefs and prefs.email_enabled),
+        email_alerts_enabled=email_on,
         recipient_count=len(recipients),
         recipients=recipients if current_user.role == UserRole.ADMIN else [],
         batch_seconds=settings.ALERT_EMAIL_BATCH_SECONDS,

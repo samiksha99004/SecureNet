@@ -55,6 +55,8 @@ async def lifespan(app: FastAPI):
     cache.set_primers([
         dashboard.cached_summary, dashboard.cached_protocols, dashboard.cached_top_sources,
         notifications.cached_feed, settings_routes.cached_detection_settings, support.cached_contact,
+        reports.cached_daily_local, settings_routes.cached_all_settings, settings_routes.cached_whitelist,
+        notifications.cached_recipients,
     ])
     prepare = asyncio.create_task(_prepare(), name="prepare-dashboard")
     awake = asyncio.create_task(
