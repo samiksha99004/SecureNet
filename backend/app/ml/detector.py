@@ -407,8 +407,9 @@ class Detector:
         for k, i in enumerate(flagged):
             score = float(scores[i]) if scores is not None else None
             top = self._top_features(Z[i] if Z is not None else X[i])
-            stage1 = (f"Isolation Forest score {score:.3f} is at or above the threshold {threshold:.3f}"
-                      if score is not None else "Stage 1 not loaded")
+            # plain words for people (no model names): what was unusual, then the attack guess
+            stage1 = (f"The traffic looked unusual: score {score:.3f} is at or above the alarm level {threshold:.3f}"
+                      if score is not None else "Checked for known attack patterns")
             if proba is None:
                 # anomaly without a category
                 results[i] = Detection(score, True, None, None, stage1, top, flagged=True)
@@ -422,12 +423,12 @@ class Detector:
             if idx == self.benign_index:
                 # tested behaviour: stage 2 answering Benign cancels the stage-1 flag
                 results[i] = Detection(anomaly_score=anomaly, is_alert=False,
-                                       reason=f"{stage1}; XGBoost: Benign ({confidence:.0%}) - not an attack",
+                                       reason=f"{stage1}. A second check found normal traffic ({confidence:.0%} sure) - not an attack",
                                        flagged=scores is not None, guesses=guesses)
                 continue
             attack_type = label if confidence >= stage2_confidence else None
             results[i] = Detection(anomaly, True, attack_type, confidence,
-                                   f"{stage1}; XGBoost: {label} ({confidence:.0%})", top,
+                                   f"{stage1}. Most likely attack: {label} ({confidence:.0%} sure)", top,
                                    flagged=True, guesses=guesses)
         return results
 
@@ -470,9 +471,9 @@ class Detector:
             attack_type = None
             if label is not None and label.lower() not in BENIGN_LABELS and confidence >= stage2_confidence:
                 attack_type = label
-            reason = f"Isolation Forest anomaly score {if_score:.3f} exceeded threshold {threshold:.2f}"
+            reason = f"The traffic looked unusual: score {if_score:.3f} is above the alarm level {threshold:.2f}"
             if label is not None:
-                reason += f"; XGBoost: {label} ({confidence:.0%})"
+                reason += f". Most likely attack: {label} ({confidence:.0%} sure)"
             return Detection(if_score, True, attack_type, confidence if attack_type else None, reason, top,
                              flagged=True, guesses=guesses)
 
@@ -484,7 +485,7 @@ class Detector:
             is_alert=is_attack,
             attack_type=label if is_attack else None,
             confidence=confidence if is_attack else None,
-            reason=f"XGBoost classified flow as {label} ({confidence:.0%})",
+            reason=f"Matches the pattern of {label} ({confidence:.0%} sure)",
             top_features=top if is_attack else [],
             flagged=is_attack,
             guesses=guesses if is_attack else [],

@@ -4,8 +4,9 @@
  * ON / OFF control plus live IDS status:
  *  - power toggle (every signed-in user). ON = capture, detect, alert + email.
  *  - capture + detector state (clearly says when no model is loaded)
- *  - current status: IDS IS OFF while stopped; when running NORMAL TRAFFIC or
- *    ABNORMAL TRAFFIC DETECTED (the attack is only shown as the model's guess)
+ *  - current status: IDS IS OFF while stopped; when running NORMAL or ABNORMAL TRAFFIC
+ *    DETECTED, with a "What kind of attack could it be?" chance table right under it
+ *  - plain words only: no model names anywhere on the dashboard
  *  - live counters from the backend
  */
 
@@ -15,7 +16,6 @@ import { useToast } from '../common/Toast';
 import { useAuth } from '../../contexts/AuthContext';
 import { useNotifications } from '../../contexts/NotificationContext';
 import {
-  DETECTOR_LABELS,
   startIDS,
   stopIDS,
   type IDSStatus,
@@ -23,7 +23,8 @@ import {
 import { requestDesktopNotifications } from '../../utils/alertChannels';
 import { formatTimestamp, formatDuration } from '../../utils/format';
 import type { SecurityEvent } from '../../types/security.types';
-import { possibleAttack } from '../../utils/verdict';
+import { attackChances, plainReason, possibleAttack } from '../../utils/verdict';
+import { AttackGuessTable } from './AttackGuessTable';
 import styles from './IDSControlWidget.module.css';
 
 interface IDSControlWidgetProps {
@@ -80,7 +81,8 @@ export function IDSControlWidget({
       ? 'IDS IS OFF'
       : hasAbnormalEvent
         ? 'ABNORMAL TRAFFIC DETECTED'
-        : 'NORMAL TRAFFIC';
+        : 'NORMAL';
+  const chances = attackChances(idsStatus?.verdicts, latestEvent);
   const cardStyle = isOff ? styles.statusOff : hasAbnormalEvent ? styles.statusAbnormal : styles.statusNormal;
 
   return (
@@ -120,7 +122,7 @@ export function IDSControlWidget({
           <p className={styles.notice}>
             <Info size={14} aria-hidden="true" />{' '}
             {isAdmin
-              ? 'No detection model is loaded — the IDS captures and counts traffic but does not score it. Load Isolation Forest and/or XGBoost from Settings → Model.'
+              ? 'Attack detection is not set up yet — traffic is counted but not checked. Load the detection model in Settings → Model.'
               : 'Attack detection is not set up yet — your SecureNet admin needs to finish the setup. Traffic is still counted while the IDS is on.'}
           </p>
         )}
@@ -138,21 +140,17 @@ export function IDSControlWidget({
             {idsStatus && isOff && (
               <span className={styles.statusHint}>Your network is not being watched. Press ON to start monitoring.</span>
             )}
-            {!isOff && hasAbnormalEvent && latestEvent && (
-              <span className={styles.statusHint}>
-                Possible attack: {possibleAttack(latestEvent)} — the model’s best guess, see the tables below.
-              </span>
-            )}
           </div>
           <div className={styles.detectorInfo}>
-            <span className={styles.statusLabel}>{isAdmin ? 'Detector' : 'Detection'}</span>
-            <span className={styles.detectorValue}>
-              {isAdmin
-                ? DETECTOR_LABELS[idsStatus?.detector ?? 'none'] ?? idsStatus?.detector
-                : idsStatus?.mlLoaded ? 'Active' : 'Not set up yet'}
-            </span>
+            <span className={styles.statusLabel}>Detection</span>
+            <span className={styles.detectorValue}>{idsStatus?.mlLoaded ? 'Active' : 'Not set up yet'}</span>
           </div>
         </div>
+
+        {/* right under the big status: what kind of attack it could be */}
+        {!isOff && hasAbnormalEvent && (
+          <AttackGuessTable rows={chances.rows} basis={chances.basis} total={chances.total} />
+        )}
 
         {!isOff && hasAbnormalEvent && latestEvent && (
           <div className={styles.incidentDetails}>
@@ -175,7 +173,7 @@ export function IDSControlWidget({
             {latestEvent.detectionReason && (
               <div className={styles.reasonBox}>
                 <span className={styles.reasonLabel}>Detection Reason</span>
-                <p className={styles.reasonText}>{latestEvent.detectionReason}</p>
+                <p className={styles.reasonText}>{plainReason(latestEvent.detectionReason)}</p>
               </div>
             )}
           </div>

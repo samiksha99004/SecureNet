@@ -123,7 +123,7 @@ export function SecuritySummaryCard({
 
           {/* Attack type distribution */}
           <section aria-label="Attack type distribution">
-            <p className={styles.sectionLabel}>Possible Attacks (model’s guess)</p>
+            <p className={styles.sectionLabel}>Possible Attacks</p>
             {data.attackTypeDistribution.length === 0 ? (
               <p className={styles.noData}>No abnormal traffic yet.</p>
             ) : (

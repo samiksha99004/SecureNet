@@ -13,6 +13,7 @@ import { EmptyState } from '../common/EmptyState';
 import { IdsOffNote } from './IdsOffNote';
 import { Lightbulb } from 'lucide-react';
 import styles from './DetectionReasonCard.module.css';
+import { plainReason } from '../../utils/verdict';
 
 interface DetectionReasonCardProps {
   reason: string | null;
@@ -55,7 +56,7 @@ export function DetectionReasonCard({
       )}
 
       {!idsOff && reason && (
-        <p className={styles.reason}>{reason}</p>
+        <p className={styles.reason}>{plainReason(reason)}</p>
       )}
 
       {idsOff ? null : !hasData ? (

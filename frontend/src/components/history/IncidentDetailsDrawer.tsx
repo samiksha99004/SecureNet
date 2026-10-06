@@ -29,7 +29,7 @@ import {
   toTitleCase,
 } from '../../utils/format';
 import styles from './IncidentDetailsDrawer.module.css';
-import { ABNORMAL_TRAFFIC, guessesOf, guessLabel, percent, possibleAttack } from '../../utils/verdict';
+import { ABNORMAL_TRAFFIC, MIN_SHOWN_CHANCE, guessesOf, guessLabel, percent, plainReason, possibleAttack } from '../../utils/verdict';
 
 interface IncidentDetailsDrawerProps {
   event: SecurityEvent | null;
@@ -212,25 +212,25 @@ export function IncidentDetailsDrawer({
               </section>
 
               {/* ── Section: Detection reason ──────────────────────────── */}
-              {guessesOf(event).length > 0 && (
+              {guessesOf(event).some((g) => g.probability >= MIN_SHOWN_CHANCE) && (
                 <section aria-label="Which attack might it be">
                   <SectionHeading>Which attack might it be?</SectionHeading>
                   <div className={styles.featuresWrapper}>
                     <p className={styles.featuresLabel}>
-                      The model’s guesses for this abnormal traffic (most likely first)
+                      SecureNet’s best guesses for this abnormal traffic (most likely first)
                     </p>
                     <table className={styles.featuresTable}>
                       <thead>
                         <tr>
                           <th scope="col" className={styles.fth}>Possible attack</th>
-                          <th scope="col" className={styles.fth}>Likelihood</th>
+                          <th scope="col" className={styles.fth}>Chance</th>
                         </tr>
                       </thead>
                       <tbody>
-                        {guessesOf(event).map((g) => (
+                        {guessesOf(event).filter((g) => g.probability >= MIN_SHOWN_CHANCE).map((g) => (
                           <tr key={g.label}>
                             <td className={styles.ftd}>{guessLabel(g.label)}</td>
-                            <td className={styles.ftdMono}>{percent(g.probability, 1)}</td>
+                            <td className={styles.ftdMono}>{percent(g.probability)}</td>
                           </tr>
                         ))}
                       </tbody>
@@ -244,7 +244,7 @@ export function IncidentDetailsDrawer({
                   <SectionHeading>Why was this detected?</SectionHeading>
 
                   {event.detectionReason && (
-                    <p className={styles.reason}>{event.detectionReason}</p>
+                    <p className={styles.reason}>{plainReason(event.detectionReason)}</p>
                   )}
 
                   {event.contributingFeatures.length > 0 && (

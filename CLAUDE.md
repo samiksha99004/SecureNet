@@ -72,6 +72,20 @@ Abnormal Traffic; pop-ups/bell/desktop "Abnormal traffic detected" + possible at
 detected (HIGH) from <ip> — possible attack: X`; reports/CSV/PDF: Verdict + Possible Attack + Model Guesses columns.
 Alerts are still only stored for flows stage 2 confirms (Benign cancels), so normal LAN flows above θ don't flood.
 
+### Dashboard in plain words (session 39)
+Owner: no model names on the dashboard (common people don't know Isolation Forest / XGBoost); the top just says
+abnormal traffic detected / normal; no tiny rows like SQL; the probability/guess table goes right under the big status.
+IDS widget: status `NORMAL` / `ABNORMAL TRAFFIC DETECTED` only (no hint line); directly under it
+`AttackGuessTable` "What kind of attack could it be?" (Attack type | Chance bar + %), from `attackChances()` in
+`utils/verdict.ts` = share of each guessed attack among the abnormal flows since the IDS was turned on (cancelled/Benign
+excluded, "Unclassified" → "Unknown type"), falling back to the latest alert's own guesses after a restart; rows under
+`MIN_SHOWN_CHANCE` (5 %) hidden (also in the incident drawer). "Detection: Active / Not set up yet" for everyone (no
+detector name); admin's no-model notice in plain words. `TrafficVerdictCard` → "Traffic Check": one table normal vs
+abnormal (final verdict, connections + share), no stage tables. Detection reasons are now written in plain words by
+`detector.py` ("The traffic looked unusual: score … is at or above the alarm level …. Most likely attack: DoS (100% sure)");
+`plainReason()` rewrites older stored reasons the same way (widget, Detection reason card, incident drawer). Model names
+remain only in admin Settings → Model / Detection.
+
 ### Self-protection (session 35) — `app/core/hardening.py`
 `HardeningMiddleware` (added last ⇒ runs first): **Host check** (`ALLOWED_HOSTS`, default `localhost,127.0.0.1,::1`,
 "*" disables; tests add `test,testserver`) → 400 "Unknown host" / WS close (DNS rebinding); **WebSocket Origin** must
@@ -702,6 +716,8 @@ every time:          double-click START_SECURENET.bat  (right-click → Run as a
 
 | P38 | Users got an alert email for almost every alert (spam), and each email was a long per-alert table | Session 38: email on normal → abnormal, then at most one summary every 5 min; short summary email + printable report; screen/desktop alerts unchanged |
 
+| P39 | Dashboard showed model names (Isolation Forest / XGBoost, stage 1/2), a hint line under the status, tiny guess rows, and the guess table far below the status | Session 39: plain status, chance table right under it (≥ 5 % only), plain detection reasons, no model names on the dashboard / history |
+
 ### Still open
 | ID | Severity | Issue | Notes / next step |
 |---|---|---|---|
@@ -769,3 +785,4 @@ every time:          double-click START_SECURENET.bat  (right-click → Run as a
 | 2026-10-06 (36) | **Only the admin account kept** (owner: delete both SecureNet users, keep only admin). Deleted Samarth Jain (samiksha94820@gmail.com) and Anivrath (4mt23ic012@mite.ac.in) from Neon after a JSON backup (`F:\SecureNet-backup\securenet-users-deleted-20261006-234937.json`: users, their 8 OTP rows, 1 support message); their references cleared (support message kept with user_id = null; no events/settings/reports pointed to them). Neon now has 1 account: Samiksha Jain (admin, active). No code changes. Committed and pushed. |
 | 2026-10-06 (37) | **Admin sends attack emails, never receives them** (owner: admin is not a user; admin should send mails to users when there are attacks/alerts and should not receive any attack mail). `notifier.py`: `get_recipients()` = active non-admin users with alert emails on + extra address unless it is an admin's; admin copy + `split_recipients`/`render_admin_email`/`host_details` removed; email heading reworded (abnormal traffic). Tests updated + `test_admin_never_gets_attack_emails` (130/130). Frontend: Preferences note for admins instead of the alert-email switch; Notifications tab wording + "No SecureNet users to email yet". Harness check: admin + 2 users, admin also set as extra address, one alert → mails only to the 2 users. Neon currently has only the admin, so no attack emails are sent until users register. Real backend restarted. Committed and pushed. |
 | 2026-10-07 (38) | **Alert emails paced + simplified** (owner: too many emails as a SecureNet user; email when normal turns abnormal, then every 5 min; desktop alerts unchanged; email too much info, keep it simple, keep the printable report). `notifier.py`: episode tracking, `seconds_until_next_email`, throttled `_run`, spacing-safe `stop`, new `render_alert_email(alerts, kind)` + `summarize_alerts`/`likely_attack`, new subjects; `ALERT_EMAIL_INTERVAL_SECONDS=300` (config + .env.example); test email uses the new layout; status `intervalSeconds`; Notifications tab text. Tests 133/133 (+ spacing, short email + full report, shutdown spacing). Email rendered in Chrome at 620/360 px (0 overflow). Harness with a 20 s interval: 16 alerts → 16 on-screen alerts, 2 emails (new episode at once, one summary after the interval). Real app restarted. Committed and pushed. |
+| 2026-10-07 (39) | **Dashboard in plain words + chance table under the status** (owner: no model names on the dashboard; top just says abnormal traffic detected / normal; don't show small rows like SQL; probability/guess table right under the big status; also asked whether SMS is needed for phone OTP — answered: no, all codes go by email; SMS would need a paid SMS provider + DLT sender registration in India, sent from the provider's sender ID, not the admin's phone). Frontend: new `AttackGuessTable`, `attackChances`/`plainReason`/`MIN_SHOWN_CHANCE` in `utils/verdict.ts`, IDSControlWidget (status words, table placement, no detector name), TrafficVerdictCard simplified to "Traffic Check", Detection reason card + incident drawer plain reasons and ≥ 5 % guesses, Security Summary label. Backend: plain reason strings in `detector.py`. Tests 133/133; Chrome `qa3/plain.js` 11/12 (the 1 failure matched the pop-up card's text, checked on the screenshot); 0 page errors. App closed afterwards at the owner's request. Committed and pushed. |

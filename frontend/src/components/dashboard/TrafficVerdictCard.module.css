@@ -26,65 +26,20 @@
 }
 
 .meta {
-  font-size: 0.75rem;
+  font-size: 0.875rem;
   color: var(--color-text-muted);
-}
-
-.verdict {
-  font-family: var(--font-heading);
-  font-weight: 700;
-  font-size: 1rem;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-  padding: var(--space-3) var(--space-4);
-  border-radius: var(--radius-md);
-}
-
-.normal {
-  color: var(--color-severity-low);
-  background: var(--tint-low-bg);
-  border: 1px solid var(--tint-low-border);
-}
-
-.abnormal {
-  color: var(--color-severity-high);
-  background: var(--tint-high-bg);
-  border: 1px solid var(--tint-high-border);
-}
-
-.tables {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
-  align-items: start;
-  gap: var(--space-4);
 }
 
 .table {
   width: 100%;
   border-collapse: collapse;
-  font-size: 0.8125rem;
+  font-size: 0.9375rem;
   color: var(--color-text);
-}
-
-.caption {
-  caption-side: top;
-  text-align: left;
-  font-weight: 600;
-  padding-bottom: var(--space-2);
-}
-
-.stage {
-  display: block;
-  font-weight: 400;
-  font-size: 0.75rem;
-  color: var(--color-text-muted);
 }
 
 .table th {
   text-align: left;
-  font-size: 0.6875rem;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
+  font-size: 0.875rem;
   color: var(--color-text-muted);
   font-weight: 600;
   padding: var(--space-2);
@@ -105,19 +60,4 @@
 .rowAlert td:first-child {
   color: var(--color-severity-high);
   font-weight: 600;
-}
-
-.none {
-  color: var(--color-text-muted);
-  font-style: italic;
-}
-
-.final {
-  font-size: 0.875rem;
-  color: var(--color-text);
-}
-
-.note {
-  font-size: 0.75rem;
-  color: var(--color-text-muted);
 }
