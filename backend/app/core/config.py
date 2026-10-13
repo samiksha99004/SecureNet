@@ -98,9 +98,9 @@ class Settings(BaseSettings):
     # Link placed in alert emails
     DASHBOARD_URL: str = "http://localhost:5173"
 
-    # ML models — optional. Nothing is loaded unless ML_AUTOLOAD is true.
+    # ML models — removed from this build (session 40): nothing is loaded unless ML_AUTOLOAD is true.
     # Either model (Isolation Forest, XGBoost) or both may be present.
-    ML_AUTOLOAD: bool = True
+    ML_AUTOLOAD: bool = False
     ML_MODELS_DIR: str = "./models"
 
     # Detection defaults (the Settings page overrides these at runtime)
@@ -133,7 +133,7 @@ class Settings(BaseSettings):
     # computer restarts it turns itself back on and shows a desktop notice.
     # Turning it OFF removes both. (The test-suite switches all of this off.)
     IDS_AUTOSTART: bool = True
-    IDS_ON_AT_STARTUP: bool = True
+    IDS_ON_AT_STARTUP: bool = False
     # An attack storm must not flood the database, emails and dashboards: at most this many
     # incidents are stored per minute (and per source address); the rest are counted only.
     ALERT_STORE_MAX_PER_MINUTE: int = 120

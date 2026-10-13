@@ -12,7 +12,7 @@
  * (needed for an electron-builder package, which does not bundle Python).
  */
 
-const { app, BrowserWindow, dialog } = require('electron');
+const { app, BrowserWindow, dialog, shell } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const http = require('http');
@@ -106,7 +106,21 @@ function createWindow() {
     height: 900,
     backgroundColor: '#0a1020', // dark theme — no white flash while loading
     title: 'SecureNet IDS',
+    icon: path.join(__dirname, '..', 'build', 'icon.ico'),
+    autoHideMenuBar: true,
     webPreferences: { nodeIntegration: false, contextIsolation: true },
+  });
+  mainWindow.removeMenu();
+  // Anything that is not the app itself (website links, mail links) opens in the normal browser.
+  mainWindow.webContents.setWindowOpenHandler(({ url }) => {
+    if (/^(https?|mailto):/i.test(url)) shell.openExternal(url);
+    return { action: 'deny' };
+  });
+  mainWindow.webContents.on('will-navigate', (event, url) => {
+    if (!url.startsWith(`http://${BACKEND_HOST}:`)) {
+      event.preventDefault();
+      if (/^(https?|mailto):/i.test(url)) shell.openExternal(url);
+    }
   });
   mainWindow.loadURL(APP_URL);
   if (isDev) mainWindow.webContents.openDevTools();
@@ -121,6 +135,18 @@ function stopBackend() {
     backendProcess.kill();
     backendProcess = null;
   }
+}
+
+// Only one SecureNet window: a second click on the icon just brings the first one forward.
+if (!app.requestSingleInstanceLock()) {
+  app.quit();
+} else {
+  app.on('second-instance', () => {
+    if (mainWindow) {
+      if (mainWindow.isMinimized()) mainWindow.restore();
+      mainWindow.focus();
+    }
+  });
 }
 
 app.whenReady().then(async () => {

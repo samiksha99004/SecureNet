@@ -24,10 +24,12 @@
       "output": "dist-electron"
     },
     "files": [
-      "electron/**/*"
+      "electron/**/*",
+      "build/icon.*"
     ],
     "win": {
-      "target": "nsis"
+      "target": "nsis",
+      "icon": "build/icon.ico"
     }
   }
 }
