@@ -9,7 +9,7 @@
 ---
 
 > **Session 40 — model removed (owner's request).** The trained hybrid model is **no longer in the app**: its files were
-> moved out of `backend/models/` to `F:\SecureNet-backup\models-removed-2026-10-13\` (the only copy — `F:etraining_hybrid`
+> moved out of `backend/models/` to `F:\SecureNet-backup\models-removed-2026-10-13\` (the only copy — `F:\retraining_hybrid`
 > no longer exists), `ML_AUTOLOAD` and `IDS_ON_AT_STARTUP` now default to **false**. The app runs with no detection ("Detection:
 > Not set up yet"). To bring it back: move the files back into `backend/models/` and set `ML_AUTOLOAD=true` (+ optionally
 > `IDS_ON_AT_STARTUP=true`). The sections below that describe the hybrid model describe the code, which is unchanged.
