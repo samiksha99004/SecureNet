@@ -185,7 +185,8 @@ class HardeningMiddleware:
             receive = replay
 
         path = scope.get("path", "")
-        is_api = path.startswith("/api") or path in ("/health", "/")
+        # "/" is the dashboard itself when a built frontend is served (Electron opens it there)
+        is_api = path.startswith("/api") or path == "/health" or (path == "/" and not self.spa_policy)
         async def send_with_headers(message):
             if message["type"] == "http.response.start":
                 headers = [(k, v) for k, v in message.get("headers", [])]

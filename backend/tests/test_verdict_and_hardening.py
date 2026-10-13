@@ -159,6 +159,32 @@ async def test_security_headers(client, admin):
         assert h["cache-control"] == "no-store"
 
 
+async def test_dashboard_root_gets_the_dashboard_policy():
+    """The desktop app opens "/": with a built frontend it must get the dashboard CSP, not the API one."""
+    from app.core.hardening import API_CSP, HardeningMiddleware
+
+    async def page(scope, receive, send):
+        await send({"type": "http.response.start", "status": 200, "headers": []})
+        await send({"type": "http.response.body", "body": b"<html></html>"})
+
+    async def receive():
+        return {"type": "http.request", "body": b"", "more_body": False}
+
+    async def policy_for(path, spa_policy):
+        sent = []
+        async def send(message):
+            sent.append(message)
+        mw = HardeningMiddleware(page, ["localhost"], [], spa_policy=spa_policy)
+        scope = {"type": "http", "path": path, "headers": [(b"host", b"localhost:8000"), (b"content-length", b"0")]}
+        await mw(scope, receive, send)
+        return dict(sent[0]["headers"])[b"content-security-policy"].decode()
+
+    assert await policy_for("/", "default-src 'self'") == "default-src 'self'"
+    assert await policy_for("/login", "default-src 'self'") == "default-src 'self'"
+    assert await policy_for("/health", "default-src 'self'") == API_CSP
+    assert await policy_for("/", None) == API_CSP
+
+
 async def test_oversized_requests_are_refused(client):
     big = b'{"email": "' + b"a" * 2_000_000 + b'"}'
     r = await client.post("/api/auth/login", content=big, headers={"Content-Type": "application/json"})
