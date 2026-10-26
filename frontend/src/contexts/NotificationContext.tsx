@@ -157,13 +157,18 @@ export function NotificationProvider({ children }: { children: ReactNode }) {
       setItems((prev) => [alert, ...prev.filter((i) => i.eventId !== alert.eventId)].slice(0, MAX_ITEMS));
 
       const { popups: popupsOn, sound, desktop } = prefsRef.current;
-      if (popupsOn) {
+      // Only the abnormal-state scheduler's alerts (desktopPop, every 3 min) pop a card / play a
+      // sound / show a desktop notification. Per-flow alerts just update the feed+bell silently,
+      // so the dashboard isn't flooded with one pop-up per flow.
+      if (popupsOn && alert.desktopPop) {
         setPopups((prev) => [alert, ...prev].slice(0, MAX_POPUPS));
         const timer = setTimeout(() => dismissPopup(alert.eventId), POPUP_TIMEOUT_MS[alert.severity] ?? 10_000);
         timers.current.set(alert.eventId, timer);
       }
-      if (sound && alert.severity !== 'low') playAlertSound(alert.severity);
-      if (popupsOn && desktop && !document.hasFocus()) {
+      if (sound && alert.desktopPop && alert.severity !== 'low') playAlertSound(alert.severity);
+      // OS desktop notification only for the abnormal-state scheduler's alerts (desktopPop),
+      // which fire every 3 min while abnormal — per-flow alerts don't, so the desktop isn't spammed.
+      if (alert.desktopPop && desktop && !document.hasFocus()) {
         showDesktopNotification(
           `SecureNet — ${alert.severity.toUpperCase()}: ${titleOf(alert)} (possible attack: ${guessOf(alert)})`,
           alert.message,

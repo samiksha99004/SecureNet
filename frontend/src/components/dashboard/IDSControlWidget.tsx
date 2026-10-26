@@ -23,8 +23,7 @@ import {
 import { requestDesktopNotifications } from '../../utils/alertChannels';
 import { formatTimestamp, formatDuration } from '../../utils/format';
 import type { SecurityEvent } from '../../types/security.types';
-import { attackChances, plainReason, possibleAttack } from '../../utils/verdict';
-import { AttackGuessTable } from './AttackGuessTable';
+import { plainReason, possibleAttack } from '../../utils/verdict';
 import styles from './IDSControlWidget.module.css';
 
 interface IDSControlWidgetProps {
@@ -46,7 +45,6 @@ export function IDSControlWidget({
   const [isBusy, setIsBusy] = useState(false);
 
   const isEnabled = idsStatus?.enabled ?? false;
-  const hasAbnormalEvent = !!latestEvent && latestEvent.state === 'active';
 
   async function run(action: () => Promise<unknown>, success: string) {
     setIsBusy(true);
@@ -73,17 +71,30 @@ export function IDSControlWidget({
     }
   }
 
-  // "Normal" is only claimed while the IDS is actually watching
+  // Live verdict from the rolling window (what the CLI printed each refresh) — not sticky.
   const isOff = !isEnabled;
+  const recentRows = idsStatus?.verdicts?.recent ?? [];
+  const recentTotal = idsStatus?.verdicts?.recentTotal ?? 0;
+  const recentAbnormalPct = idsStatus?.verdicts?.recentAbnormalPct ?? 0;
+  // ABNORMAL only when attacks make up more than 30% of recent traffic; below that stays NORMAL
+  // (green) while the breakdown below still lists every attack class, even 0.1%.
+  const ABNORMAL_THRESHOLD = 30;
+  const liveAbnormal = isEnabled && recentTotal > 0 && recentAbnormalPct > ABNORMAL_THRESHOLD;
+  const attackRows = recentRows.filter((r) => !isBenignLabel(r.label));
   const statusLabel = !idsStatus
     ? (isLoading ? 'CHECKING…' : 'STATUS UNKNOWN')
     : isOff
       ? 'IDS IS OFF'
-      : hasAbnormalEvent
-        ? 'ABNORMAL TRAFFIC DETECTED'
-        : 'NORMAL';
-  const chances = attackChances(idsStatus?.verdicts, latestEvent);
-  const cardStyle = isOff ? styles.statusOff : hasAbnormalEvent ? styles.statusAbnormal : styles.statusNormal;
+      : recentTotal === 0
+        ? 'WAITING FOR TRAFFIC…'
+        : liveAbnormal
+          ? 'ABNORMAL TRAFFIC DETECTED'
+          : 'NORMAL TRAFFIC';
+  const cardStyle = isOff ? styles.statusOff : liveAbnormal ? styles.statusAbnormal : styles.statusNormal;
+
+  function isBenignLabel(l: string) {
+    return ['benign', 'normal'].includes(l.toLowerCase());
+  }
 
   return (
     <div className={styles.widget}>
@@ -132,7 +143,7 @@ export function IDSControlWidget({
       <div className={styles.statusSection}>
         <div className={`${styles.statusCard} ${cardStyle}`}>
           <div className={styles.statusIcon}>
-            {isOff ? <ShieldOff size={22} /> : hasAbnormalEvent ? <AlertTriangle size={22} /> : <Shield size={22} />}
+            {isOff ? <ShieldOff size={22} /> : liveAbnormal ? <AlertTriangle size={22} /> : <Shield size={22} />}
           </div>
           <div className={styles.statusContent}>
             <span className={styles.statusLabel}>Current Status</span>
@@ -147,12 +158,41 @@ export function IDSControlWidget({
           </div>
         </div>
 
-        {/* right under the big status: what kind of attack it could be */}
-        {!isOff && hasAbnormalEvent && (
-          <AttackGuessTable rows={chances.rows} basis={chances.basis} total={chances.total} />
+        {/* CLI-style live breakdown: share of each class over the last 90s (normal + attacks) */}
+        {!isOff && recentTotal > 0 && (
+          <div style={{ marginTop: 14 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 8 }}>
+              <span style={{ fontSize: 12, textTransform: 'uppercase', letterSpacing: '0.04em', opacity: 0.7 }}>
+                Live traffic breakdown
+                {attackRows.length > 0 && (
+                  <span style={{ marginLeft: 8, color: liveAbnormal ? '#ef4444' : '#f59e0b', fontWeight: 600 }}>
+                    · attacks {recentAbnormalPct.toFixed(1)}%
+                  </span>
+                )}
+              </span>
+              <span style={{ fontSize: 12, opacity: 0.6 }}>last 90s · {recentTotal} flows</span>
+            </div>
+            {recentRows.map((r) => {
+              const color = isBenignLabel(r.label) ? '#22c55e' : '#ef4444';
+              return (
+                <div key={r.label} style={{ display: 'flex', alignItems: 'center', gap: 10, margin: '5px 0' }}>
+                  <span style={{ flex: '0 0 44%', fontSize: 13, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                    {r.label}
+                  </span>
+                  <div style={{ flex: 1, height: 8, borderRadius: 4, background: 'rgba(148,163,184,0.18)', overflow: 'hidden' }}>
+                    <div style={{ width: `${r.pct}%`, height: '100%', background: color, borderRadius: 4 }} />
+                  </div>
+                  <span style={{ flex: '0 0 52px', textAlign: 'right', fontSize: 13, fontVariantNumeric: 'tabular-nums' }}>
+                    {r.pct.toFixed(1)}%
+                  </span>
+                </div>
+              );
+            })}
+          </div>
         )}
 
-        {!isOff && hasAbnormalEvent && latestEvent && (
+        {/* incident details only during a LIVE attack (not stale) */}
+        {!isOff && liveAbnormal && latestEvent && (
           <div className={styles.incidentDetails}>
             <h3 className={styles.incidentTitle}>Latest Unresolved Incident</h3>
             <div className={styles.incidentGrid}>

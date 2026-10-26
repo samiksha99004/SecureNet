@@ -25,6 +25,9 @@ export interface NotificationItem {
   anomalyScore: number;
   actionTaken: ActionTaken;
   message: string;
+  /** set by the backend's abnormal-state scheduler: this alert should pop an OS desktop
+   *  notification (every 3 min while abnormal). Per-flow alerts omit it, so they don't spam. */
+  desktopPop?: boolean;
 }
 
 export type EmailDeliveryStatus = 'enabled' | 'disabled' | 'misconfigured';

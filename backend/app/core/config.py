@@ -109,6 +109,11 @@ class Settings(BaseSettings):
     DETECTION_MODE: str = "monitor"
 
     # Packet capture / flow assembly
+    CAPTURE_SOURCE: str = "scapy"        # "scapy" (built-in) or "local_csv" (our CICFlowMeter-4.0 pipeline)
+    LIVE_CSV_DIR: str = r"F:\Intrusion_Detection-System\live_ids\csv"  # CsvFlowSource watches this (used when CAPTURE_SOURCE=local_csv)
+    LIVE_CAPTURE_SPAWN: bool = True      # True = app launches WinDivert capture + CICFlowMeter convert itself (no terminals; needs admin)
+    LIVE_PROJECT_DIR: str = r"F:\Intrusion_Detection-System"                      # holds live_ids/ + the capture scripts
+    LIVE_PYTHON: str = r"F:\Intrusion_Detection-System\venv\Scripts\python.exe"   # project venv python (has pydivert + scapy)
     CAPTURE_INTERFACE: str = ""          # empty = Scapy default interface
     FLOW_IDLE_TIMEOUT_SECONDS: float = 15.0
     FLOW_ACTIVE_TIMEOUT_SECONDS: float = 120.0

@@ -18,6 +18,13 @@ export interface GuessRow {
   cancelled: boolean;
 }
 
+/** One class in the rolling-window live breakdown (CLI-style). */
+export interface RecentRow {
+  label: string;
+  flows: number;
+  pct: number;
+}
+
 /** Verdict tables since the IDS was turned on. */
 export interface VerdictSummary {
   scored: number;
@@ -29,6 +36,10 @@ export interface VerdictSummary {
   /** final verdict (stage 2 can cancel a stage-1 alarm) */
   finalNormal: number;
   finalAbnormal: number;
+  /** rolling-window live breakdown — what the CLI printed each refresh */
+  recent?: RecentRow[];
+  recentTotal?: number;
+  recentAbnormalPct?: number;
 }
 
 export interface IDSStatus {

@@ -90,10 +90,11 @@ class Detector:
         self.reset()
 
     def reset(self) -> None:
-        self.kind = "none"                       # none | legacy | hybrid
+        self.kind = "none"                       # none | legacy | hybrid | local
         self.isolation_forest = None
         self.xgboost = None                      # legacy sklearn-style classifier
         self.booster = None                      # hybrid xgboost.Booster
+        self.local = None                        # our local plain-XGBoost model (kind 'local')
         self.scaler = None
         self.label_encoder = None
         self.feature_columns: List[str] = list(FEATURE_COLUMNS)
@@ -118,14 +119,20 @@ class Detector:
 
     @property
     def has_xgboost(self) -> bool:
-        return self.xgboost is not None or self.booster is not None
+        return self.xgboost is not None or self.booster is not None or self.local is not None
+
+    @property
+    def has_local(self) -> bool:
+        return self.local is not None
 
     @property
     def loaded(self) -> bool:
-        return self.has_isolation_forest or self.has_xgboost
+        return self.has_isolation_forest or self.has_xgboost or self.has_local
 
     @property
     def name(self) -> str:
+        if self.has_local:
+            return "local-xgboost"
         parts = []
         if self.has_isolation_forest:
             parts.append("isolation_forest")
@@ -150,12 +157,51 @@ class Detector:
             logger.warning(self.errors["dependencies"])
             return False
 
-        if (models_dir / HYBRID_CONFIG).is_file():
+        from app.ml.local_adapter import LocalModel
+        if LocalModel.present(models_dir):
+            self._load_local(models_dir)
+        elif (models_dir / HYBRID_CONFIG).is_file():
             self._load_hybrid(models_dir)
         else:
             self._load_legacy(models_dir)
         logger.info(f"Detector ready: {self.name} ({self.kind})")
         return self.loaded
+
+    def _load_local(self, models_dir: Path) -> None:
+        """Load our plain-XGBoost model (local_model.pkl + classes.json). Scores CICFlowMeter-4.0
+        feature dicts via local_adapter.JAVA_COLUMN. No Isolation-Forest stage: argmax class, and
+        any non-Benign class is the attack (confidence floor = stage2_confidence setting)."""
+        from app.ml.local_adapter import LocalModel
+
+        self.kind = "local"
+        try:
+            lm = LocalModel.load(models_dir)
+        except Exception as exc:
+            self.errors["local"] = f"local_model.pkl: {exc}"
+            logger.error(f"Failed to load local model: {exc}")
+            self.kind = "none"
+            return
+        if lm is None:
+            self.errors["local"] = "local_model.pkl not found"
+            self.kind = "none"
+            return
+        self.local = lm
+        self.classes = [str(c) for c in lm.classes]
+        self.benign_index = lm.benign_index() if lm.benign_index() >= 0 else None
+        self.feature_columns = list(lm.feats)
+        self.versions["model"] = "local-xgboost"
+        try:
+            import xgboost as xgb
+            self.versions["xgboost"] = xgb.__version__
+        except Exception:
+            pass
+        try:
+            self.importances = [float(x) for x in getattr(lm.model, "feature_importances_", [])]
+        except Exception:
+            self.importances = []
+        self.trained_at = datetime.fromtimestamp(
+            (models_dir / "local_model.pkl").stat().st_mtime, tz=timezone.utc).replace(tzinfo=None)
+        logger.info(f"Loaded local model: {lm.n_classes} classes, {len(lm.feats)} features")
 
     def _load_hybrid(self, models_dir: Path) -> None:
         import joblib
@@ -291,7 +337,7 @@ class Detector:
         return [c for c in self._classes() if c.lower() not in BENIGN_LABELS]
 
     def _classes(self) -> List[str]:
-        if self.kind == "hybrid":
+        if self.kind in ("hybrid", "local"):
             return list(self.classes)
         if self.label_encoder is not None:
             return [str(c) for c in self.label_encoder.classes_]
@@ -300,7 +346,7 @@ class Detector:
         return []
 
     def _weights(self) -> Optional[List[float]]:
-        if self.kind == "hybrid":
+        if self.kind in ("hybrid", "local"):
             return self.importances or None
         if self.xgboost is not None and hasattr(self.xgboost, "feature_importances_"):
             return [float(w) for w in list(self.xgboost.feature_importances_)[: len(self.feature_columns)]]
@@ -354,6 +400,8 @@ class Detector:
         """Score one flow. Returns None when no model is loaded."""
         if not self.loaded:
             return None
+        if self.kind == "local":
+            return self._analyze_local_batch([features], threshold, stage2_enabled, stage2_confidence)[0]
         if self.kind == "hybrid":
             return self._analyze_hybrid([features], threshold, stage2_enabled, stage2_confidence)[0]
         return self._analyze_legacy(features, threshold, stage2_enabled, stage2_confidence)
@@ -371,9 +419,47 @@ class Detector:
             return []
         if not self.loaded:
             return [None] * len(features_list)
+        if self.kind == "local":
+            return self._analyze_local_batch(features_list, threshold, stage2_enabled, stage2_confidence)
         if self.kind == "hybrid":
             return self._analyze_hybrid(features_list, threshold, stage2_enabled, stage2_confidence)
         return [self._analyze_legacy(f, threshold, stage2_enabled, stage2_confidence) for f in features_list]
+
+    def _analyze_local_batch(self, features_list: List[Dict[str, float]], threshold: float,
+                             stage2_enabled: bool, stage2_confidence: float) -> List[Optional[Detection]]:
+        """Score flows with our plain-XGBoost model. `threshold` (the IF alarm level) is not used -
+        our model has no anomaly stage; the attack call is argmax != Benign, gated by the confidence
+        floor (stage2_confidence). A flow missing any required feature is not scored (no placeholder)."""
+        import numpy as np
+
+        proba, ok = self.local.score_batch(features_list)
+        classes = self._classes()
+        binx = self.local.benign_index()
+        out: List[Optional[Detection]] = []
+        for i in range(len(features_list)):
+            if not ok[i]:
+                out.append(Detection(anomaly_score=0.0, is_alert=False,
+                                     reason="Flow was missing required features — not scored"))
+                continue
+            p = proba[i]
+            idx = int(np.argmax(p))
+            label = classes[idx] if idx < len(classes) else str(idx)
+            conf = float(p[idx])
+            benign_p = float(p[binx]) if binx >= 0 else None
+            anomaly = (1.0 - benign_p) if benign_p is not None else conf
+            is_attack = label.lower() not in BENIGN_LABELS and conf >= stage2_confidence
+            out.append(Detection(
+                anomaly_score=anomaly,
+                is_alert=is_attack,
+                attack_type=label if is_attack else None,
+                confidence=conf if is_attack else None,
+                reason=(f"Matches the pattern of {label} ({conf:.0%} sure)" if is_attack
+                        else f"Looks normal ({label} {conf:.0%} sure)"),
+                top_features=[],
+                flagged=is_attack,
+                guesses=_guesses(classes, p) if is_attack else [],
+            ))
+        return out
 
     def _analyze_hybrid(self, features_list: List[Dict[str, float]], threshold: float,
                         stage2_enabled: bool, stage2_confidence: float) -> List[Detection]:

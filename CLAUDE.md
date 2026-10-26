@@ -16,6 +16,23 @@
 > **Desktop app:** `F:\SecureNet IDS.lnk` (icon `desktop/build/icon.ico`) opens SecureNet in its own Electron window (starts
 > the backend itself, serves the built `frontend/dist`; one window only; external links open in the browser). After
 > frontend changes run `npm run build` in `frontend/`. Note: a shell with `ELECTRON_RUN_AS_NODE=1` (VS Code terminals) can't start Electron.
+>
+> **Session 41 — LOCAL model integrated (2026-10-27).** This copy lives inside `F:\Intrusion_Detection-System\SecureNet`
+> (the IDS-research project; old pristine copy kept at `F:\SecureNet` + `..\SecureNet_backup_old`). The removed hybrid is
+> replaced by the research project's own **plain-XGBoost model** (`backend/models/local_model.pkl` + `classes.json`, 12
+> classes, 55 CICFlowMeter-4.0 features). New code, nothing old deleted:
+> `app/ml/local_adapter.py` (`LocalModel` + `JAVA_COLUMN` map model-feature→CICFlowMeter-4.0 header), a new **`local`
+> detector kind** in `detector.py` (`_load_local` + `_analyze_local_batch`: argmax class, any non-Benign = attack, confidence
+> floor = `stage2_confidence`; no IF stage so the `threshold`/sensitivity slider doesn't gate flagging), and
+> `app/ml/csv_capture.py` (`CsvFlowSource`: a drop-in for `NetworkMonitor` that tails the project's `live_ids/csv` output
+> instead of sniffing, so the model is fed flows from the **same real CICFlowMeter-4.0** it was trained on — avoids the
+> train/serve skew that scapy features would cause). `.env`: `ML_AUTOLOAD=true`, `CAPTURE_SOURCE=local_csv`,
+> `LIVE_CSV_DIR=F:\Intrusion_Detection-System\live_ids\csv`, `IDS_ON_AT_STARTUP=true`. Installed `pandas` into `backend/venv`
+> (was missing; dill/xgboost/sklearn/numpy already present). VERIFIED: detector loads (`kind=local-xgboost`) and
+> `analyze_batch` scores through the app context (xgboost 3.4 loads the 3.2-trained model with a harmless compat warning).
+> TO RUN LIVE: start capture+convert (`live_ids/1_capture_windivert.py` + `2_convert.py`, admin) so CSVs appear, then start
+> SecureNet (backend+frontend) with IDS ON — the dashboard shows what `live_status.py` used to print in the CLI.
+> NOT yet end-to-end tested with the servers + a live attack. To revert to scapy+no-model: `CAPTURE_SOURCE=scapy`, `ML_AUTOLOAD=false`.
 
 ## 1. What this project is
 

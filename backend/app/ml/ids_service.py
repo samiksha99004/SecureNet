@@ -49,6 +49,9 @@ from app.websocket.manager import manager
 
 QUEUE_SIZE = 10_000
 BATCH_MAX = 256          # flows scored together when traffic arrives faster than one at a time
+RECENT_WINDOW_SECONDS = 90   # rolling window for the live "normal vs attack %" breakdown (CLI-style)
+ABNORMAL_PCT_THRESHOLD = 30  # attacks must exceed this % of recent flows to count as ABNORMAL
+DESKTOP_ALERT_INTERVAL = 180 # desktop pop: first immediately, then every 3 min while abnormal
 
 # When the loaded model brings the threshold it was tested with, the Low / Medium /
 # High presets are placed around it (Medium = exactly the tested value); "Custom"
@@ -141,6 +144,13 @@ class IDSService:
         self.flows_normal = 0          # stage 1: not unusual
         self.flows_flagged = 0         # stage 1: abnormal
         self.guess_counts: Counter = Counter()   # stage 2's best guess for each flagged flow
+        # rolling window of recent per-flow labels (Benign or attack class) for the CLI-style
+        # live breakdown: (timestamp, label). Old entries are pruned in verdict_summary().
+        self.recent_labels: deque = deque()
+        # abnormal-state notification scheduler (attacks > 40% of recent flows)
+        self._abnormal_now = False        # gates the alert email (only while abnormal)
+        self._abn_episode = False         # currently inside an abnormal episode
+        self._abn_last_desktop = 0.0      # last desktop pop (epoch)
 
     # ── lifecycle ────────────────────────────────────────────────────────────
 
@@ -179,12 +189,23 @@ class IDSService:
 
             self._loop = asyncio.get_running_loop()
             self._queue = asyncio.Queue(maxsize=QUEUE_SIZE)
-            self.monitor = NetworkMonitor(
-                on_flow=self._enqueue_from_thread,
-                interface=settings.CAPTURE_INTERFACE or None,
-                idle_timeout=settings.FLOW_IDLE_TIMEOUT_SECONDS,
-                active_timeout=settings.FLOW_ACTIVE_TIMEOUT_SECONDS,
-            )
+            if settings.CAPTURE_SOURCE == "local_csv":
+                # feed from our WinDivert -> CICFlowMeter-4.0 pipeline (no train/serve skew)
+                from app.ml.csv_capture import CsvFlowSource
+                self.monitor = CsvFlowSource(
+                    on_flow=self._enqueue_from_thread,
+                    csv_dir=settings.LIVE_CSV_DIR,
+                    spawn=settings.LIVE_CAPTURE_SPAWN,
+                    project_dir=settings.LIVE_PROJECT_DIR,
+                    python_exe=settings.LIVE_PYTHON,
+                )
+            else:
+                self.monitor = NetworkMonitor(
+                    on_flow=self._enqueue_from_thread,
+                    interface=settings.CAPTURE_INTERFACE or None,
+                    idle_timeout=settings.FLOW_IDLE_TIMEOUT_SECONDS,
+                    active_timeout=settings.FLOW_ACTIVE_TIMEOUT_SECONDS,
+                )
             try:
                 await asyncio.to_thread(self.monitor.start)
             except CaptureUnavailable as exc:
@@ -322,6 +343,20 @@ class IDSService:
             {"label": label, "flows": n, "cancelled": label == BENIGN_GUESS}
             for label, n in sorted(self.guess_counts.items(), key=lambda t: (-t[1], t[0]))
         ]
+        # rolling-window breakdown (CLI-style): % of each class over the last RECENT_WINDOW_SECONDS
+        cutoff = time.time() - RECENT_WINDOW_SECONDS
+        while self.recent_labels and self.recent_labels[0][0] < cutoff:
+            self.recent_labels.popleft()
+        recent_counts = Counter(lbl for _, lbl in self.recent_labels)
+        recent_total = sum(recent_counts.values())
+        recent = [
+            {"label": lbl, "flows": n, "pct": round(n / recent_total * 100, 1)}
+            for lbl, n in sorted(recent_counts.items(), key=lambda t: (-t[1], t[0]))
+        ] if recent_total else []
+        recent_abnormal_pct = round(
+            sum(n for lbl, n in recent_counts.items() if lbl.lower() not in BENIGN_NAMES)
+            / recent_total * 100, 1) if recent_total else 0.0
+
         return {
             "scored": self.flows_scored,
             "normal": self.flows_normal,
@@ -329,6 +364,10 @@ class IDSService:
             "guesses": guesses,
             "final_normal": self.flows_normal + cancelled,
             "final_abnormal": self.flows_flagged - cancelled,
+            # live rolling window (what the CLI printed each refresh)
+            "recent": recent,
+            "recent_total": recent_total,
+            "recent_abnormal_pct": recent_abnormal_pct,
         }
 
     async def broadcast_status(self) -> None:
@@ -380,7 +419,56 @@ class IDSService:
         while True:
             await asyncio.sleep(5)
             await self.blocker.unblock_expired()
+            await self._evaluate_abnormal_state()
             await self.broadcast_status()
+
+    async def _evaluate_abnormal_state(self) -> None:
+        """Drive the abnormal-traffic notifications (desktop every 3 min; the email is gated in
+        _handle on self._abnormal_now so the notifier sends at episode start + every 10 min).
+        Abnormal = attacks make up more than ABNORMAL_PCT_THRESHOLD of the recent window."""
+        summary = self.verdict_summary()
+        abnormal = summary["recent_total"] > 0 and summary["recent_abnormal_pct"] > ABNORMAL_PCT_THRESHOLD
+        self._abnormal_now = abnormal
+        if not abnormal:
+            self._abn_episode = False      # back to normal -> next abnormal starts a fresh episode
+            return
+        now = time.time()
+        first = not self._abn_episode
+        if first:
+            self._abn_episode = True
+            self._abn_last_desktop = 0.0   # force an immediate desktop pop on episode start
+        if first or (now - self._abn_last_desktop) >= DESKTOP_ALERT_INTERVAL:
+            self._abn_last_desktop = now
+            try:
+                await self._send_desktop_abnormal(summary)
+            except Exception as exc:
+                logger.error(f"desktop abnormal alert failed: {exc}")
+
+    async def _send_desktop_abnormal(self, summary: dict) -> None:
+        """Pop one desktop notification summarising the current abnormal traffic (every 3 min)."""
+        attacks = [r for r in summary["recent"] if r["label"].lower() not in ("benign", "normal")]
+        top = attacks[0]["label"] if attacks else "Unknown"
+        pct = summary["recent_abnormal_pct"]
+        breakdown = ", ".join(f"{r['label']} {r['pct']:.0f}%" for r in attacks[:3])
+        payload = {
+            "eventId": f"network-{int(time.time())}",
+            "timestamp": to_iso_z(utcnow()),
+            "severity": "high" if pct >= 70 else "medium",
+            "verdict": "abnormal",
+            "attackType": top,
+            "confidence": None,
+            "possibleAttack": top,
+            "sourceIp": "",
+            "sourcePort": 0,
+            "destinationIp": "",
+            "destinationPort": 0,
+            "protocol": "OTHER",
+            "anomalyScore": 0.0,
+            "actionTaken": "alerted",
+            "message": f"Abnormal network traffic — attacks are {pct:.0f}% of recent flows ({breakdown}).",
+            "desktopPop": True,          # tells the frontend this one should pop an OS desktop notification
+        }
+        await manager.send_alert(payload)
 
     async def process_flow(self, flow: FlowRecord) -> Optional[SecurityEvent]:
         """Run one finished flow through the detection pipeline."""
@@ -417,15 +505,21 @@ class IDSService:
         flagged = detection.flagged or detection.is_alert
         if not flagged:
             self.flows_normal += 1
+            self._record_recent("Benign")
             return
         self.flows_flagged += 1
         if not detection.is_alert:
             self.guess_counts[BENIGN_GUESS] += 1          # stage 2 cancelled the alarm
+            self._record_recent("Benign")
             return
         top = detection.guesses[0]["label"] if detection.guesses else None
         if top is None or top.lower() in BENIGN_NAMES:
             top = UNCLASSIFIED_GUESS
         self.guess_counts[top] += 1
+        self._record_recent(top)
+
+    def _record_recent(self, label: str) -> None:
+        self.recent_labels.append((time.time(), label))
 
     def _storm_allows(self, source_ip: str) -> bool:
         """Store at most N incidents a minute (and M per source): an attacker flooding the
@@ -508,7 +602,10 @@ class IDSService:
 
         await self._broadcast_score(flow, detection, severity, throttle=False)
         await manager.send_alert(alert_payload(event))
-        get_notifier().enqueue(event)
+        # email only while the network is ABNORMAL (attacks > 40% of recent flows); the notifier
+        # then sends at episode start + every ALERT_EMAIL_INTERVAL_SECONDS (10 min) while it lasts.
+        if self._abnormal_now:
+            get_notifier().enqueue(event)
         logger.info(f"Alert: abnormal traffic (possible {event.attack_type or 'unknown'}) from {flow.src_ip} "
                     f"score={detection.anomaly_score:.3f} severity={severity.value} action={action.value}")
         return event

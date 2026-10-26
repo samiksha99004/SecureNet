@@ -109,15 +109,12 @@ async def get_recipients(db, prefs: Optional[NotificationSettings]) -> List[str]
     users = (await db.execute(
         select(User.email, User.role, User.email_alerts).where(User.account_status == AccountStatus.ACTIVE)
     )).all()
-    admins = {email.strip().lower() for email, role, _ in users if email and role == UserRole.ADMIN}
-    admins |= settings.admin_emails
-    recipients = {email.strip().lower() for email, role, wants in users
-                  if email and wants and role != UserRole.ADMIN}
+    # Abnormal-traffic alerts go to every active user who has email alerts on — INCLUDING admins
+    # (owner's request 2026-10-27: the admin account projectids99 must receive the alert too).
+    recipients = {email.strip().lower() for email, role, wants in users if email and wants}
     if prefs is not None and prefs.email_address:
-        extra = prefs.email_address.strip().lower()
-        if extra not in admins:
-            recipients.add(extra)
-    return sorted(recipients - admins)
+        recipients.add(prefs.email_address.strip().lower())
+    return sorted(recipients)
 
 
 # ── Email rendering ──────────────────────────────────────────────────────────

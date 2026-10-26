@@ -47,6 +47,13 @@ class GuessRow(CamelModel):
     cancelled: bool = False              # "Benign": stage 2 cancelled the alarm
 
 
+class RecentRow(CamelModel):
+    """One class in the rolling-window live breakdown (CLI-style): its share right now."""
+    label: str
+    flows: int
+    pct: float
+
+
 class VerdictSummary(CamelModel):
     """Table 1 / Table 2 / final verdict since the IDS was turned on."""
     scored: int
@@ -55,6 +62,10 @@ class VerdictSummary(CamelModel):
     guesses: List[GuessRow] = []
     final_normal: int
     final_abnormal: int
+    # rolling-window live breakdown (what the CLI printed each refresh)
+    recent: List[RecentRow] = []
+    recent_total: int = 0
+    recent_abnormal_pct: float = 0.0
 
 
 IDSStatusResponse.model_rebuild()
