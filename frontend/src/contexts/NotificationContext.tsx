@@ -33,11 +33,9 @@ import {
   desktopPermission,
   playAlertSound,
   requestDesktopNotifications,
-  showDesktopNotification,
   type DesktopPermission,
 } from '../utils/alertChannels';
 import type { NotificationItem } from '../types/notifications.types';
-import { guessOf, titleOf } from '../utils/notifications';
 import type { WebSocketMessage } from '../types/websocket.types';
 
 const MAX_ITEMS = 50;
@@ -156,26 +154,16 @@ export function NotificationProvider({ children }: { children: ReactNode }) {
       const alert = message.payload;
       setItems((prev) => [alert, ...prev.filter((i) => i.eventId !== alert.eventId)].slice(0, MAX_ITEMS));
 
-      const { popups: popupsOn, sound, desktop } = prefsRef.current;
-      // Only the abnormal-state scheduler's alerts (desktopPop, every 3 min) pop a card / play a
-      // sound / show a desktop notification. Per-flow alerts just update the feed+bell silently,
-      // so the dashboard isn't flooded with one pop-up per flow.
+      const { popups: popupsOn, sound } = prefsRef.current;
+      // Only the abnormal-state scheduler's alerts (desktopPop, every 3 min) pop an in-app card and
+      // play a sound; per-flow alerts just update the feed+bell silently (no flood). The OS desktop
+      // toast is sent by the BACKEND (app/utils/desktop.py), so it works even when SecureNet is closed.
       if (popupsOn && alert.desktopPop) {
         setPopups((prev) => [alert, ...prev].slice(0, MAX_POPUPS));
         const timer = setTimeout(() => dismissPopup(alert.eventId), POPUP_TIMEOUT_MS[alert.severity] ?? 10_000);
         timers.current.set(alert.eventId, timer);
       }
       if (sound && alert.desktopPop && alert.severity !== 'low') playAlertSound(alert.severity);
-      // OS desktop notification only for the abnormal-state scheduler's alerts (desktopPop),
-      // which fire every 3 min while abnormal — per-flow alerts don't, so the desktop isn't spammed.
-      if (alert.desktopPop && desktop && !document.hasFocus()) {
-        showDesktopNotification(
-          `SecureNet — ${alert.severity.toUpperCase()}: ${titleOf(alert)} (possible attack: ${guessOf(alert)})`,
-          alert.message,
-          alert.eventId,
-          () => openEvent(alert.eventId)
-        );
-      }
     },
     [dismissPopup, openEvent]
   );

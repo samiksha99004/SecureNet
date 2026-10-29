@@ -38,7 +38,6 @@ export function AlertPopups() {
                 <span className={styles.proto}>{alert.protocol}</span>
               </p>
               <p className={styles.meta}>
-                Score {alert.anomalyScore.toFixed(3)} ·{' '}
                 <span className={blocked ? styles.blocked : undefined}>
                   {blocked ? 'Source IP blocked' : alert.actionTaken}
                 </span>

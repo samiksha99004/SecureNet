@@ -199,7 +199,6 @@ export function IDSControlWidget({
               <DetailRow label="Verdict" value="Abnormal traffic" highlight />
               <DetailRow label="Possible attack" value={possibleAttack(latestEvent)} />
               <DetailRow label="Severity" value={latestEvent.severity.toUpperCase()} />
-              <DetailRow label="Anomaly Score" value={latestEvent.anomalyScore.toFixed(4)} />
               <DetailRow label="Source" value={`${latestEvent.sourceIp}:${latestEvent.sourcePort}`} />
               <DetailRow label="Destination" value={`${latestEvent.destinationIp}:${latestEvent.destinationPort}`} />
               <DetailRow label="Protocol" value={latestEvent.protocol} />

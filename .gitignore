@@ -5,3 +5,7 @@ desktop/dist-electron/
 
 # Tools/caches when the PC has no F: drive (scripts/securenet-env.ps1)
 .local/
+
+# Electron runtime data + machine-specific launcher
+desktop/userdata/
+launch_securenet.vbs

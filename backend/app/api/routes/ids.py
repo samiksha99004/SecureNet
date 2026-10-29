@@ -54,6 +54,12 @@ class RecentRow(CamelModel):
     pct: float
 
 
+class TrendPoint(CamelModel):
+    """One point in the attack-% trend chart (t = epoch seconds, pct = attacks % of recent flows)."""
+    t: int
+    pct: float
+
+
 class VerdictSummary(CamelModel):
     """Table 1 / Table 2 / final verdict since the IDS was turned on."""
     scored: int
@@ -66,6 +72,7 @@ class VerdictSummary(CamelModel):
     recent: List[RecentRow] = []
     recent_total: int = 0
     recent_abnormal_pct: float = 0.0
+    trend: List[TrendPoint] = []   # attack-% history for the dashboard trend chart
 
 
 IDSStatusResponse.model_rebuild()

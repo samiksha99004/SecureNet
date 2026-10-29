@@ -25,6 +25,12 @@ export interface RecentRow {
   pct: number;
 }
 
+/** One point in the attack-% trend chart. */
+export interface TrendPoint {
+  t: number;   // epoch seconds
+  pct: number; // attacks as % of recent flows
+}
+
 /** Verdict tables since the IDS was turned on. */
 export interface VerdictSummary {
   scored: number;
@@ -40,6 +46,8 @@ export interface VerdictSummary {
   recent?: RecentRow[];
   recentTotal?: number;
   recentAbnormalPct?: number;
+  /** attack-% history for the dashboard trend chart */
+  trend?: TrendPoint[];
 }
 
 export interface IDSStatus {

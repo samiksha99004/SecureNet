@@ -44,6 +44,7 @@ from app.utils.logger import logger
 from app.utils.timeutil import to_iso_z, utcnow
 from app.services.cache import events_changed
 from app.services.notifier import get_notifier
+from app.utils.desktop import notify_desktop   # backend-native Windows toast (works with the app closed)
 from app.services.verdict import ABNORMAL, BENIGN_NAMES, possible_attack
 from app.websocket.manager import manager
 
@@ -52,6 +53,8 @@ BATCH_MAX = 256          # flows scored together when traffic arrives faster tha
 RECENT_WINDOW_SECONDS = 90   # rolling window for the live "normal vs attack %" breakdown (CLI-style)
 ABNORMAL_PCT_THRESHOLD = 30  # attacks must exceed this % of recent flows to count as ABNORMAL
 DESKTOP_ALERT_INTERVAL = 180 # desktop pop: first immediately, then every 3 min while abnormal
+TREND_POINTS = 72            # attack-% history for the dashboard trend chart (72 x 5s = last 6 min)
+STORE_THROTTLE_SECONDS = 300 # store/alert at most ONE event per attack type per 5 min (not per flow)
 
 # When the loaded model brings the threshold it was tested with, the Low / Medium /
 # High presets are placed around it (Medium = exactly the tested value); "Custom"
@@ -151,20 +154,28 @@ class IDSService:
         self._abnormal_now = False        # gates the alert email (only while abnormal)
         self._abn_episode = False         # currently inside an abnormal episode
         self._abn_last_desktop = 0.0      # last desktop pop (epoch)
+        self.trend: deque = deque(maxlen=TREND_POINTS)   # (epoch, attack%) for the dashboard trend chart
+        self._last_store: dict = {}       # attack_type -> last epoch an event was stored (5-min throttle)
 
     # ── lifecycle ────────────────────────────────────────────────────────────
 
     async def initialize(self) -> None:
-        """Called at app startup: load models only if ML_AUTOLOAD is set."""
+        """Called at app startup. The model load and the DB settings fetch run IN THE BACKGROUND
+        so the server answers /health (and the login page loads) immediately — they finish within a
+        couple of seconds, well before the user logs in and presses ON. Same model, same accuracy."""
         if settings.ML_AUTOLOAD:
-            await self.reload_models()
+            asyncio.create_task(self.reload_models())   # background: don't block app startup
         else:
             logger.info("ML_AUTOLOAD=false — no detection model loaded (IDS will run capture-only)")
+        self.mode = self.config.default_mode            # default (MONITOR); start() reloads config anyway
+        asyncio.create_task(self._bg_reload_config())
+
+    async def _bg_reload_config(self) -> None:
         try:
             await self.reload_config()
+            self.mode = self.config.default_mode
         except Exception as exc:  # DB may be unreachable at boot; retried on start
             logger.warning(f"Could not load IDS settings at startup: {exc}")
-        self.mode = self.config.default_mode
 
     async def reload_models(self) -> bool:
         loaded = await asyncio.to_thread(self.detector.load, settings.models_dir)
@@ -368,6 +379,8 @@ class IDSService:
             "recent": recent,
             "recent_total": recent_total,
             "recent_abnormal_pct": recent_abnormal_pct,
+            # attack-% history for the dashboard trend chart (last ~5 min, 5s apart)
+            "trend": [{"t": int(t), "pct": round(p, 1)} for t, p in self.trend],
         }
 
     async def broadcast_status(self) -> None:
@@ -429,6 +442,7 @@ class IDSService:
         summary = self.verdict_summary()
         abnormal = summary["recent_total"] > 0 and summary["recent_abnormal_pct"] > ABNORMAL_PCT_THRESHOLD
         self._abnormal_now = abnormal
+        self.trend.append((time.time(), summary["recent_abnormal_pct"]))   # 5s-spaced attack-% history
         if not abnormal:
             self._abn_episode = False      # back to normal -> next abnormal starts a fresh episode
             return
@@ -466,9 +480,12 @@ class IDSService:
             "anomalyScore": 0.0,
             "actionTaken": "alerted",
             "message": f"Abnormal network traffic — attacks are {pct:.0f}% of recent flows ({breakdown}).",
-            "desktopPop": True,          # tells the frontend this one should pop an OS desktop notification
+            "desktopPop": True,          # in-app popup when the app is open
         }
         await manager.send_alert(payload)
+        # OS desktop toast straight from the backend → shows even when SecureNet is NOT open
+        await notify_desktop("Abnormal network traffic detected",
+                             f"Attacks are {pct:.0f}% of recent flows ({breakdown}). Open SecureNet to see why.")
 
     async def process_flow(self, flow: FlowRecord) -> Optional[SecurityEvent]:
         """Run one finished flow through the detection pipeline."""
@@ -559,6 +576,15 @@ class IDSService:
                                f"(limit {settings.ALERT_STORE_MAX_PER_MINUTE}/min)")
             await self._broadcast_score(flow, detection, severity, throttle=True)
             return None
+
+        # Store/alert at most ONE event per attack type per 5 min (history gets a row every ~5 min,
+        # not every second). Scoring/trend/breakdown are unaffected — they count every flow elsewhere.
+        store_key = detection.attack_type or "unclassified"
+        now = time.time()
+        if now - self._last_store.get(store_key, 0) < STORE_THROTTLE_SECONDS:
+            await self._broadcast_score(flow, detection, severity, throttle=True)
+            return None
+        self._last_store[store_key] = now
 
         action = ActionTaken.ALERTED
         reason = detection.reason

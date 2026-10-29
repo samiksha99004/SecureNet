@@ -127,33 +127,43 @@ def render_code_email(code: str, heading: str, next_step: str) -> tuple[str, str
         f"This code expires in {minutes} minutes and works only once.\n"
         "If you didn't request this code, you can ignore this email."
     )
-    digits = "".join(
-        '<td style="padding:0 3px">'
-        '<div style="width:34px;height:44px;line-height:44px;background:#ffffff;border:1px solid #d9dee6;'
-        "border-radius:6px;text-align:center;font-family:Consolas,'Courier New',monospace;font-size:24px;"
-        f'color:#1f2328">{html_mod.escape(ch)}</div></td>'
-        for ch in code
-    )
+    # One contiguous code string (not per-digit boxes): this is what lets Gmail / Apple Mail /
+    # iOS recognise it as a verification code and show their OWN one-tap "Copy code" button, and
+    # it is trivially select-and-copy everywhere else. (Email has no JavaScript, so a custom
+    # clickable copy button cannot work — the native mail-app chip is the real "copy button".)
+    font = ("-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Oxygen,Ubuntu,"
+            "Helvetica,Arial,sans-serif")
+    mono = "ui-monospace,SFMono-Regular,'SF Mono',Consolas,'Liberation Mono',Menlo,monospace"
     body = f"""<!DOCTYPE html>
-<html><body style="margin:0;padding:0;background:#ffffff;font-family:Arial,Helvetica,sans-serif;color:#1f2328">
+<html><body style="margin:0;padding:0;background:#f4f6f9;font-family:{font};color:#0f172a;-webkit-font-smoothing:antialiased">
 <div style="display:none;max-height:0;overflow:hidden">Your {app} verification code is {code}</div>
-<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#ffffff">
-  <tr><td align="center" style="padding:24px 12px">
-    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:520px">
-      <tr><td style="font-size:20px;font-weight:bold;color:#c2562f;padding:0 0 4px">&#128737; {app}</td></tr>
-      <tr><td style="font-size:22px;padding:4px 0 16px">{html_mod.escape(heading)} verification code</td></tr>
-      <tr><td style="background:#eef1f6;border-radius:12px;padding:20px 22px">
-        <div style="font-size:15px;color:#3d444d;margin:0 0 12px">Code requested</div>
-        <table role="presentation" cellpadding="0" cellspacing="0" style="margin:0 0 0 -3px"><tr>{digits}</tr></table>
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#f4f6f9">
+  <tr><td align="center" style="padding:32px 16px">
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:480px;background:#ffffff;border:1px solid #e5e9f0;border-radius:16px">
+      <tr><td style="padding:32px 36px 8px">
+        <div style="font-size:17px;font-weight:700;color:#0ea5a4;letter-spacing:.2px">&#128737; {app}</div>
       </td></tr>
-      <tr><td style="font-size:14px;line-height:1.5;padding:18px 2px 0">
-        <p style="margin:0 0 10px">{html_mod.escape(next_step)}</p>
-        <p style="margin:0 0 10px">This code expires in <b>{minutes} minutes</b> and works only once.</p>
-        <p style="margin:0;color:#59636e">If you didn't request this code, you can ignore this email.
-           Never share this code with anyone.</p>
+      <tr><td style="padding:12px 36px 4px">
+        <div style="font-size:22px;font-weight:700;letter-spacing:-.2px;color:#0f172a">{html_mod.escape(heading)} verification code</div>
+        <div style="font-size:14px;line-height:1.55;color:#64748b;padding-top:8px">{html_mod.escape(next_step)}</div>
       </td></tr>
-      <tr><td style="font-size:12px;color:#8c959f;padding:24px 2px 0;border-top:1px solid #e6e9ee">
-        Sent by {app} - Behavioural Intrusion Detection System</td></tr>
+      <tr><td style="padding:22px 36px 6px">
+        <div style="background:#f1f5f9;border:1px solid #e2e8f0;border-radius:12px;padding:22px 16px;text-align:center">
+          <div style="font-size:12px;font-weight:600;letter-spacing:.8px;text-transform:uppercase;color:#94a3b8;padding-bottom:12px">Your code</div>
+          <div style="font-family:{mono};font-size:36px;font-weight:700;letter-spacing:12px;color:#0f172a;padding-left:12px">{html_mod.escape(code)}</div>
+        </div>
+      </td></tr>
+      <tr><td style="padding:16px 36px 4px">
+        <div style="font-size:13.5px;line-height:1.6;color:#475569">
+          Expires in <b style="color:#0f172a">{minutes} minutes</b> &middot; works only once.
+        </div>
+      </td></tr>
+      <tr><td style="padding:14px 36px 28px">
+        <div style="font-size:12.5px;line-height:1.6;color:#94a3b8;border-top:1px solid #eef2f7;padding-top:16px">
+          If you didn't request this code you can ignore this email &mdash; never share it with anyone.<br>
+          Sent by {app} &middot; Behavioural Intrusion Detection System
+        </div>
+      </td></tr>
     </table>
   </td></tr>
 </table>

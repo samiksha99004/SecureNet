@@ -19,6 +19,11 @@ const http = require('http');
 const { spawn } = require('child_process');
 
 const isDev = process.argv.includes('--dev');
+// Windows: makes desktop toast notifications show "SecureNet IDS" + the app icon
+// (instead of a generic "Electron" identity).
+if (process.platform === 'win32') app.setAppUserModelId('SecureNet IDS');
+// Keep ALL app data/cache on F: (never C:): Electron defaults userData to %APPDATA% on C:.
+try { app.setPath('userData', path.join(__dirname, '..', 'userdata')); } catch (e) { /* ignore */ }
 const BACKEND_HOST = 'localhost';
 const BACKEND_PORT = 8000;
 const BACKEND_DIR =
@@ -26,6 +31,17 @@ const BACKEND_DIR =
 const FRONTEND_DIST =
   process.env.SECURENET_FRONTEND_DIST || path.resolve(__dirname, '..', '..', 'frontend', 'dist');
 const APP_URL = isDev ? 'http://localhost:5173' : `http://${BACKEND_HOST}:${BACKEND_PORT}/`;
+// Shown instantly while the backend boots, so the app window never appears "late".
+const SPLASH = 'data:text/html;charset=utf-8,' + encodeURIComponent(
+  `<!doctype html><meta charset="utf-8"><style>
+   html,body{height:100%;margin:0;background:#0a1020;color:#e2e8f0;
+   font-family:'Segoe UI',system-ui,sans-serif;display:flex;align-items:center;
+   justify-content:center;flex-direction:column;gap:16px}
+   .ring{width:52px;height:52px;border:5px solid rgba(45,212,191,.25);
+   border-top-color:#2dd4bf;border-radius:50%;animation:spin 1s linear infinite}
+   @keyframes spin{to{transform:rotate(360deg)}}
+   .t{font-size:20px;font-weight:600} .s{font-size:13px;color:#94a3b8}</style>
+   <div class="ring"></div><div class="t">SecureNet IDS</div><div class="s">Starting…</div>`);
 
 let mainWindow = null;
 let backendProcess = null;
@@ -89,9 +105,9 @@ async function startBackend() {
   });
 
   const ready = (async () => {
-    for (let attempt = 1; attempt <= 60; attempt++) {
+    for (let attempt = 1; attempt <= 200; attempt++) {   // ~60s total, but checks every 300ms
       if (await checkBackendHealth()) return;
-      await new Promise((r) => setTimeout(r, 1000));
+      await new Promise((r) => setTimeout(r, 300));
     }
     throw new Error('Backend did not become ready within 60 seconds');
   })();
@@ -122,7 +138,7 @@ function createWindow() {
       if (/^(https?|mailto):/i.test(url)) shell.openExternal(url);
     }
   });
-  mainWindow.loadURL(APP_URL);
+  mainWindow.loadURL(SPLASH);   // instant: the real app URL loads once the backend is ready
   if (isDev) mainWindow.webContents.openDevTools();
   mainWindow.on('closed', () => {
     mainWindow = null;
@@ -150,9 +166,10 @@ if (!app.requestSingleInstanceLock()) {
 }
 
 app.whenReady().then(async () => {
+  createWindow();               // show the window + splash immediately
   try {
     await startBackend();
-    createWindow();
+    if (mainWindow) mainWindow.loadURL(APP_URL);   // swap splash -> the real app
   } catch (error) {
     console.error('[Electron] Startup failed:', error);
     dialog.showErrorBox('SecureNet could not start', String(error.message || error));

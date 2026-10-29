@@ -122,12 +122,15 @@ class CsvFlowSource:
             except OSError as exc:
                 self.last_error = f"could not launch {script}: {exc}"
                 logger.error(self.last_error)
-        time.sleep(3.0)
-        # if the WinDivert capturer died quickly it almost always means 'not Administrator'
+        # NOTE: no blocking wait here — turning the IDS ON must be instant. If the WinDivert
+        # capturer dies quickly (almost always 'not Administrator'), the background loop reports it.
+
+    def _check_capture_alive(self) -> None:
+        """Non-blocking capture-health check, run once by the loop ~2s after start."""
         if self._procs and self._procs[0].poll() is not None:
             tail = ""
             try:
-                with open(self._err_log, encoding="utf-8", errors="replace") as fh:
+                with open(getattr(self, "_err_log", ""), encoding="utf-8", errors="replace") as fh:
                     tail = fh.read()[-300:].strip().replace("\n", " ")
             except OSError:
                 pass
@@ -149,12 +152,16 @@ class CsvFlowSource:
 
     # ── worker loop ──────────────────────────────────────────────────────────
     def _loop(self) -> None:
+        iters = 0
         while not self._stop.is_set():
             try:
                 self._ingest_new()
             except Exception as exc:
                 self.last_error = str(exc)
                 logger.error(f"CsvFlowSource error: {exc}", exc_info=True)
+            iters += 1
+            if self.spawn and iters == 2:   # ~POLL_SECONDS after start: capturer had time to fail
+                self._check_capture_alive()
             self._stop.wait(POLL_SECONDS)
 
     def _ingest_new(self) -> None:

@@ -19,24 +19,23 @@
  * History and Reports. Turning it ON loads everything again.
  */
 
-import { useCallback, useEffect, useRef, Suspense, lazy } from 'react';
+import { useCallback, useEffect, useRef } from 'react';
 import {
   Activity,
   AlertTriangle,
   ShieldAlert,
-  BarChart2,
 } from 'lucide-react';
 import { MainLayout } from '../components/layout/MainLayout';
 import { IDSControlWidget } from '../components/dashboard/IDSControlWidget';
 import { KPICard } from '../components/common/KPICard';
 import { HostStatusCard } from '../components/dashboard/HostStatusCard';
-import { SecuritySummaryCard } from '../components/dashboard/SecuritySummaryCard';
-import { LoadingState } from '../components/common/LoadingState';
 import { DetectionReasonCard } from '../components/dashboard/DetectionReasonCard';
 import { ProtocolDistributionCard } from '../components/dashboard/ProtocolDistributionCard';
 import { TopSourcesCard } from '../components/dashboard/TopSourcesCard';
 import { TrafficVerdictCard } from '../components/dashboard/TrafficVerdictCard';
 import { RecentEventsTable } from '../components/dashboard/RecentEventsTable';
+import { AttackTrendCard } from '../components/dashboard/AttackTrendCard';
+import { SessionStatsCard } from '../components/dashboard/SessionStatsCard';
 import { useAsyncData } from '../hooks/useAsyncData';
 import { useWebSocketMessage } from '../hooks/useLiveMonitoring';
 import {
@@ -46,13 +45,8 @@ import {
   getTopSources,
 } from '../services/dashboardService';
 import { getIDSStatus } from '../services/idsService';
-import { getDetectionSettings } from '../services/settingsService';
-import { formatScore, formatNumber } from '../utils/format';
+import { formatNumber } from '../utils/format';
 import styles from './DashboardPage.module.css';
-
-const LiveAnomalyChart = lazy(() =>
-  import('../components/dashboard/LiveAnomalyChart').then((m) => ({ default: m.LiveAnomalyChart }))
-);
 
 const POLL_INTERVAL_MS = 15_000;
 
@@ -63,7 +57,6 @@ export function DashboardPage() {
   const protocol = useAsyncData(useCallback(() => getProtocolDistribution(), []));
   const sources = useAsyncData(useCallback(() => getTopSources(5), []));
   const idsStatus = useAsyncData(useCallback(() => getIDSStatus(), []));
-  const detection = useAsyncData(useCallback(() => getDetectionSettings(), []));
 
   // IDS OFF (known) → no live values anywhere on the dashboard
   const idsOff = idsStatus.data !== null && !idsStatus.data.enabled;
@@ -146,6 +139,16 @@ export function DashboardPage() {
           />
         </section>
 
+        {/* ── Attack trend over time ───────────────────────────────────────── */}
+        <section aria-label="Attack trend">
+          <AttackTrendCard trend={idsStatus.data?.verdicts?.trend} idsOff={idsOff} />
+        </section>
+
+        {/* ── Monitoring session summary ───────────────────────────────────── */}
+        <section aria-label="Monitoring session">
+          <SessionStatsCard idsStatus={idsStatus.data ?? null} idsOff={idsOff} />
+        </section>
+
         {/* ── Row 1: KPI Cards ─────────────────────────────────────────────── */}
         <section
           className={styles.kpiGrid}
@@ -172,13 +175,6 @@ export function DashboardPage() {
             accent="high"
             isLoading={kpiLoading}
           />
-          <KPICard
-            title="Avg Anomaly Score"
-            value={kpiValue(s ? formatScore(s.averageAnomalyScore) : null)}
-            icon={<BarChart2 size={16} />}
-            accent="default"
-            isLoading={kpiLoading}
-          />
         </section>
 
         {/* ── Row 2: Status cards ──────────────────────────────────────────── */}
@@ -190,13 +186,6 @@ export function DashboardPage() {
             onRetry={host.refetch}
             idsOff={idsOff}
           />
-          <SecuritySummaryCard
-            data={summary.data}
-            isLoading={idsPending || summary.isLoading}
-            isError={summary.isError}
-            onRetry={summary.refetch}
-            idsOff={idsOff}
-          />
           <ProtocolDistributionCard
             data={protocol.data}
             isLoading={idsPending || protocol.isLoading}
@@ -206,14 +195,7 @@ export function DashboardPage() {
           />
         </section>
 
-        {/* ── Row 3: Live chart ────────────────────────────────────────────── */}
-        <section aria-label="Live anomaly monitoring">
-          <Suspense fallback={<LoadingState message="Loading live chart..." />}>
-            <LiveAnomalyChart threshold={idsStatus.data?.threshold ?? detection.data?.anomalyThreshold ?? 0.5} idsOff={idsOff} />
-          </Suspense>
-        </section>
-
-        {/* ── Row 4: Detection reason + Top sources ────────────────────────── */}
+        {/* ── Row 3: Detection reason + Top sources ────────────────────────── */}
         <section className={styles.detailGrid} aria-label="Detection details">
           <DetectionReasonCard
             reason={topRecentEvent?.detectionReason ?? null}
