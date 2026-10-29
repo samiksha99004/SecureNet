@@ -3,7 +3,7 @@
  *
  * One box per day that had attacks: counts by severity, most common attack,
  * number of attacking sources, first/last detection time, and downloads of
- * that day's report (.txt, .csv, .pdf).
+ * that day's report (.txt, .pdf).
  */
 
 import { useState } from 'react';
@@ -15,7 +15,6 @@ import styles from './DailyReportCard.module.css';
 
 const FORMATS: { id: DailyReportFormat; label: string }[] = [
   { id: 'txt', label: '.txt' },
-  { id: 'csv', label: '.csv' },
   { id: 'pdf', label: '.pdf' },
 ];
 

@@ -4,7 +4,7 @@
  * A daily report exists for every (local) day on which attacks were detected.
  */
 
-export type DailyReportFormat = 'txt' | 'csv' | 'pdf';
+export type DailyReportFormat = 'txt' | 'pdf';
 
 export interface DailyReport {
   date: string;          // YYYY-MM-DD, local calendar day

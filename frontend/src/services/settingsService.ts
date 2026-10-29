@@ -40,23 +40,18 @@ export async function getAdvancedProtection(): Promise<AdvancedProtection> {
   return apiClient.get<AdvancedProtection>('/settings/advanced-protection');
 }
 
-/** PUT /settings/advanced-protection — only turns it OFF (ON needs the emailed code below). */
-export async function updateAdvancedProtection(enabled: boolean): Promise<AdvancedProtection> {
-  return apiClient.put<AdvancedProtection>('/settings/advanced-protection', { enabled });
-}
-
 export interface AdvancedProtectionChallenge {
   confirmToken: string;
   sentTo: string;
   message: string;
 }
 
-/** POST /settings/advanced-protection/request-code — emails a confirmation code to the admin. */
-export async function requestAdvancedProtectionCode(): Promise<AdvancedProtectionChallenge> {
-  return apiClient.post<AdvancedProtectionChallenge>('/settings/advanced-protection/request-code', {});
+/** POST /settings/advanced-protection/request-code — emails a code to confirm turning protection on OR off. */
+export async function requestAdvancedProtectionCode(enabled: boolean): Promise<AdvancedProtectionChallenge> {
+  return apiClient.post<AdvancedProtectionChallenge>('/settings/advanced-protection/request-code', { enabled });
 }
 
-/** POST /settings/advanced-protection/confirm — turns protection ON with the emailed code. */
+/** POST /settings/advanced-protection/confirm — applies the change (on or off) with the emailed code. */
 export async function confirmAdvancedProtection(token: string, otp: string): Promise<AdvancedProtection> {
   return apiClient.post<AdvancedProtection>('/settings/advanced-protection/confirm', { token, otp });
 }

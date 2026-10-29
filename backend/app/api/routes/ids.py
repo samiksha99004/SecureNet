@@ -35,6 +35,7 @@ class IDSStatusResponse(CamelModel):
     anomalies_detected: int
     attacks_detected: int
     blocked_ips: int
+    rule_hits: int = 0                    # behavioural-rule alerts since the IDS was turned on
     uptime_seconds: int
     alerts_not_stored: int = 0           # attack-storm incidents counted but not stored
     verdicts: Optional["VerdictSummary"] = None

@@ -15,26 +15,43 @@ from __future__ import annotations
 import asyncio
 import ipaddress
 import platform
+import socket
 import subprocess
 import time
 from typing import Dict, Tuple
 
+from app.core.config import settings
 from app.utils.logger import logger
 
 RULE_PREFIX = "SecureNet_Block_"
 
 
 def _own_addresses() -> set[str]:
+    """Every IP this computer has — these must NEVER be blocked, or the IDS would cut off
+    its own host. psutil is the primary source; a socket lookup is a fallback so the host's
+    own address is still protected even if psutil is unavailable. Loopback always included."""
+    addrs: set[str] = {"127.0.0.1", "::1", "0.0.0.0"}
     try:
         import psutil
-        return {
-            addr.address.split("%")[0]
-            for addrs in psutil.net_if_addrs().values()
-            for addr in addrs
-            if addr.address
-        }
+        for iface in psutil.net_if_addrs().values():
+            for a in iface:
+                if a.address:
+                    addrs.add(a.address.split("%")[0])
+    except Exception as exc:
+        logger.warning(f"Could not enumerate own addresses via psutil: {exc}")
+    try:
+        host = socket.gethostname()
+        for info in socket.getaddrinfo(host, None):
+            addrs.add(info[4][0].split("%")[0])
+        addrs.add(socket.gethostbyname(host))
     except Exception:
-        return set()
+        pass
+    return addrs
+
+
+def _config_never_block() -> set[str]:
+    raw = getattr(settings, "PROTECTION_NEVER_BLOCK", "") or ""
+    return {p.strip() for p in raw.split(",") if p.strip()}
 
 
 def _run(cmd: list[str]) -> Tuple[bool, str]:
@@ -51,20 +68,33 @@ class FirewallBlocker:
         self.system = platform.system()
         self.blocked: Dict[str, float] = {}  # ip -> expiry (epoch seconds)
         self._lock = asyncio.Lock()
+        self._safe: set[str] = set()         # this host's own IPs + config never-block (cached)
+        self._safe_at: float = 0.0
 
     @property
     def supported(self) -> bool:
         return self.system in ("Windows", "Linux")
 
+    def safe_addresses(self) -> set[str]:
+        """This host's own IPs (+ the configured never-block list), refreshed at most once a minute
+        so `is_protected` can run on every flow without re-scanning the interfaces each time."""
+        now = time.time()
+        if not self._safe or now - self._safe_at > 60:
+            self._safe = _own_addresses() | _config_never_block()
+            self._safe_at = now
+        return self._safe
+
     def is_protected(self, ip: str) -> bool:
-        """Addresses that must never be blocked."""
+        """Addresses that must NEVER be blocked: loopback/link-local/multicast, this PC's own
+        IPs, and anything in PROTECTION_NEVER_BLOCK. (The attacking VM is not among these, so it
+        is still blocked; the host itself can never be cut off.)"""
         try:
             addr = ipaddress.ip_address(ip)
         except ValueError:
             return True
         if addr.is_loopback or addr.is_link_local or addr.is_multicast or addr.is_unspecified:
             return True
-        return ip in _own_addresses()
+        return ip in self.safe_addresses()
 
     def _block_cmd(self, ip: str) -> list[str]:
         if self.system == "Windows":

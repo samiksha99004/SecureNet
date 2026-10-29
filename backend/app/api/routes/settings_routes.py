@@ -191,44 +191,31 @@ async def get_advanced_protection(current_user: User = Depends(get_current_user)
         return AdvancedProtectionResponse(enabled=_advanced_enabled(row))
 
 
-@router.put("/advanced-protection", response_model=AdvancedProtectionResponse)
-async def set_advanced_protection(
+@router.post("/advanced-protection/request-code", response_model=AdvancedProtectionChallenge)
+async def request_advanced_protection_code(
     updates: AdvancedProtectionUpdate,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Turn Advanced Protection OFF. Turning it ON needs the emailed-code flow below."""
-    if updates.enabled:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Turning Advanced Protection on needs email confirmation — request a code first.",
-        )
-    row = await _set_advanced(db, False, current_user)
-    return AdvancedProtectionResponse(enabled=_advanced_enabled(row))
-
-
-@router.post("/advanced-protection/request-code", response_model=AdvancedProtectionChallenge)
-async def request_advanced_protection_code(
-    current_user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
-):
-    """User asks to turn protection ON → email a 6-digit confirmation code to that user."""
+    """User asks to turn protection ON or OFF → email a 6-digit confirmation code. BOTH
+    directions need confirmation: the target state (`enabled`) is confirmed by the code."""
     from app.api.routes.auth import _issue_otp, _check_resend_cooldown  # reuse the OTP machinery
     email = current_user.email.strip().lower()
+    action = "on" if updates.enabled else "off"
     await _check_resend_cooldown(db, email)
     code = await _issue_otp(db, email)
     await db.commit()
     try:
         await _send_code(email, code, "Advanced Protection",
-                         "Enter it in Settings → Advanced Protection to turn protection on.")
-    except Exception as exc:  # delivery failed — don't leave the admin waiting on a code that never comes
+                         f"Enter it in Settings → Advanced Protection to turn protection {action}.")
+    except Exception as exc:  # delivery failed — don't leave the user waiting on a code that never comes
         logger.error(f"Advanced Protection code email failed: {exc}")
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                             detail="We could not send the confirmation email right now. Please try again.")
     return AdvancedProtectionChallenge(
-        confirm_token=create_protect_token(str(current_user.id)),
+        confirm_token=create_protect_token(str(current_user.id), updates.enabled),
         sent_to=_mask_email(email),
-        message="Enter the code we emailed you to turn Advanced Protection on.",
+        message=f"Enter the code we emailed you to turn Advanced Protection {action}.",
     )
 
 
@@ -239,15 +226,16 @@ async def confirm_advanced_protection(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Confirm with the emailed code → protection turns ON."""
+    """Confirm with the emailed code → protection changes to the state asked for (on or off)."""
     from app.api.routes.auth import _consume_otp
     data = decode_token(payload.token, PROTECT_TOKEN_TYPE)
     if not data or data.get("sub") != str(current_user.id):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
                             detail="This confirmation has expired. Please request a new code.")
+    enabled = bool(data.get("en"))
     await _consume_otp(db, current_user.email.strip().lower(), payload.otp, http)
     await db.commit()
-    row = await _set_advanced(db, True, current_user)
+    row = await _set_advanced(db, enabled, current_user)
     return AdvancedProtectionResponse(enabled=_advanced_enabled(row))
 
 

@@ -11,8 +11,10 @@ export interface NotificationItem {
   eventId: string;
   timestamp: string;          // ISO 8601 (UTC, "Z")
   severity: SeverityLevel;
-  /** always "abnormal": only abnormal traffic becomes an alert */
-  verdict?: 'abnormal';
+  /** "abnormal" for a detected attack; "protection" for a success/failure outcome notice */
+  verdict?: 'abnormal' | 'protection';
+  /** only on a protection notice: did the block work (network benign again)? */
+  success?: boolean;
   attackType: string | null;  // null = the model could not name it
   confidence?: number | null;
   /** the model's best guess, e.g. "DDoS (97%)" */

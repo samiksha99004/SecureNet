@@ -14,7 +14,6 @@ import { useAsyncData } from '../../hooks/useAsyncData';
 import { useToast } from '../common/Toast';
 import {
   getAdvancedProtection,
-  updateAdvancedProtection,
   requestAdvancedProtectionCode,
   confirmAdvancedProtection,
   type AdvancedProtectionChallenge,
@@ -35,39 +34,26 @@ export function AdvancedProtectionTab() {
   const [enabled, setEnabled] = useState(false);
   const [isBusy, setIsBusy] = useState(false);
   const [challenge, setChallenge] = useState<AdvancedProtectionChallenge | null>(null);
+  const [target, setTarget] = useState(false);     // the on/off state we're confirming
   const [otp, setOtp] = useState('');
 
   useEffect(() => {
     if (data) setEnabled(data.enabled);
   }, [data]);
 
+  // BOTH turning on and off need an emailed code — ask for one, then show the confirm panel.
   async function handleToggle(next: boolean) {
-    if (next) {
-      // turning ON → ask the backend to email a confirmation code
-      setIsBusy(true);
-      try {
-        const c = await requestAdvancedProtectionCode();
-        setChallenge(c);
-        setOtp('');
-        showToast({ message: `Confirmation code sent to ${c.sentTo}.`, variant: 'success' });
-      } catch (err) {
-        showToast({ message: errorMessage(err, 'Could not send the confirmation code.'), variant: 'error' });
-      } finally {
-        setIsBusy(false);
-      }
-    } else {
-      // turning OFF → immediate
-      setIsBusy(true);
-      try {
-        const res = await updateAdvancedProtection(false);
-        setEnabled(res.enabled);
-        setChallenge(null);
-        showToast({ message: 'Advanced Protection is OFF — detection only.', variant: 'success' });
-      } catch (err) {
-        showToast({ message: errorMessage(err, 'Could not turn protection off.'), variant: 'error' });
-      } finally {
-        setIsBusy(false);
-      }
+    setIsBusy(true);
+    try {
+      const c = await requestAdvancedProtectionCode(next);
+      setTarget(next);
+      setChallenge(c);
+      setOtp('');
+      showToast({ message: `Confirmation code sent to ${c.sentTo}.`, variant: 'success' });
+    } catch (err) {
+      showToast({ message: errorMessage(err, 'Could not send the confirmation code.'), variant: 'error' });
+    } finally {
+      setIsBusy(false);
     }
   }
 
@@ -79,7 +65,12 @@ export function AdvancedProtectionTab() {
       setEnabled(res.enabled);
       setChallenge(null);
       setOtp('');
-      showToast({ message: 'Advanced Protection is ON — attackers will be blocked.', variant: 'success' });
+      showToast({
+        message: res.enabled
+          ? 'Advanced Protection is ON — attackers will be blocked.'
+          : 'Advanced Protection is OFF — detection only.',
+        variant: 'success',
+      });
     } catch (err) {
       showToast({ message: errorMessage(err, 'That code was not accepted.'), variant: 'error' });
     } finally {
@@ -95,7 +86,7 @@ export function AdvancedProtectionTab() {
   async function handleResend() {
     setIsBusy(true);
     try {
-      const c = await requestAdvancedProtectionCode();
+      const c = await requestAdvancedProtectionCode(target);
       setChallenge(c);
       setOtp('');
       showToast({ message: `New code sent to ${c.sentTo}.`, variant: 'success' });
@@ -123,7 +114,7 @@ export function AdvancedProtectionTab() {
         title="Advanced Protection"
         description={
           'When OFF, SecureNet watches the network and alerts you — it only detects. '
-          + 'When ON, it also acts: once an attack takes over the traffic it blocks the attacker at your firewall, and every block is added to the report. Turning it on asks for a code emailed to the admin.'
+          + 'When ON, it also acts: once an attack takes over the traffic it blocks the attacker at your firewall, and every block is added to the report. Changing this either way asks for a code emailed to you.'
         }
       >
         <SettingsField
@@ -140,7 +131,7 @@ export function AdvancedProtectionTab() {
       {challenge && (
         <SettingsSection
           title="Confirm by email"
-          description={`We emailed a 6-digit code to ${challenge.sentTo}. Enter it to turn Advanced Protection on.`}
+          description={`We emailed a 6-digit code to ${challenge.sentTo}. Enter it to turn Advanced Protection ${target ? 'on' : 'off'}.`}
         >
           <SettingsField
             id="advanced-protection-code"
@@ -162,7 +153,7 @@ export function AdvancedProtectionTab() {
                 fontWeight: 600, opacity: isBusy || otp.trim().length < 4 ? 0.6 : 1,
               }}
             >
-              Turn protection on
+              {target ? 'Turn protection on' : 'Turn protection off'}
             </button>
             <button
               type="button"

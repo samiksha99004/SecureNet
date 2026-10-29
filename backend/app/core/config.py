@@ -107,6 +107,12 @@ class Settings(BaseSettings):
     ANOMALY_THRESHOLD: float = 0.5
     CLASSIFICATION_CONFIDENCE_THRESHOLD: float = 0.7
     DETECTION_MODE: str = "monitor"
+    # Additive behavioural rule layer (Zeek/Suricata-style threshold rules for scan/sweep/
+    # brute-force/flood). Helps the model catch cross-flow attacks; never overrides it.
+    IDS_RULES_ENABLED: bool = True
+    # Extra IPs Protection must NEVER block (comma-separated), on top of this PC's own
+    # addresses + loopback/link-local, which are always protected. Keeps the host safe.
+    PROTECTION_NEVER_BLOCK: str = ""
 
     # Packet capture / flow assembly
     CAPTURE_SOURCE: str = "scapy"        # "scapy" (built-in) or "local_csv" (our CICFlowMeter-4.0 pipeline)

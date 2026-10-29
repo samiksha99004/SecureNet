@@ -32,7 +32,7 @@ MAX_REPORT_EVENTS = 50_000
 
 TZ_OFFSET = Query(0, alias="tzOffset", ge=-840, le=840,
                   description="Minutes east of UTC of the viewer's time zone (India = 330)")
-DAILY_FORMATS = {"txt": "text/plain; charset=utf-8", "csv": "text/csv", "pdf": "application/pdf"}
+DAILY_FORMATS = {"txt": "text/plain; charset=utf-8", "pdf": "application/pdf"}
 
 
 @router.get("/daily", response_model=list[DailyReport])
@@ -83,12 +83,12 @@ async def _daily_reports(tz_offset: int) -> list[DailyReport]:
 @router.get("/daily/{day}/download")
 async def download_daily_report(
     day: date,
-    format: str = Query("txt", pattern="^(txt|csv|pdf)$"),
+    format: str = Query("txt", pattern="^(txt|pdf)$"),
     tz_offset: int = TZ_OFFSET,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """That day's report (local time) as .txt, .csv or .pdf."""
+    """That day's report (local time) as .txt or .pdf."""
     start, end = incident_report.local_day_bounds_utc(day, tz_offset)
     events = (await db.execute(
         select(SecurityEvent).where(SecurityEvent.timestamp >= start, SecurityEvent.timestamp < end)
@@ -103,11 +103,9 @@ async def download_daily_report(
         text = await asyncio.to_thread(incident_report.render_text, events, title, tz_offset,
                                        f"{label} 00:00 - 23:59")
         content = text.encode("utf-8")
-    elif format == "csv":
-        content = await asyncio.to_thread(exporters.to_csv, events)
     else:
-        content = await asyncio.to_thread(exporters.to_pdf, events, f"SecureNet {title}",
-                                          f"{len(events)} attack(s) - times in UTC")
+        content = await asyncio.to_thread(exporters.to_pdf, events, title,
+                                          f"{label} · {len(events)} alert(s) · times in UTC")
     filename = incident_report.report_filename("daily-report", day.isoformat(), format)
     return Response(content=content, media_type=DAILY_FORMATS[format],
                     headers={"Content-Disposition": f'attachment; filename="{filename}"'})

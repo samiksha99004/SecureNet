@@ -34,16 +34,19 @@ from app.ml.detector import Detection, get_detector
 from app.ml.features import FlowRecord
 from app.ml.network_monitor import CaptureUnavailable, NetworkMonitor
 from app.ml.protection import FirewallBlocker
+from app.ml.rule_engine import RuleEngine, RuleHit
 from app.models.security_event import (
     ActionTaken, DetectionMode, EventState, Protocol, SecurityEvent, SeverityLevel,
 )
 from app.models.settings import (
-    DetectionSensitivity, DetectionSettings, ProtectionSettings, WhitelistEntry, WhitelistEntryType,
+    DetectionSensitivity, DetectionSettings, NotificationSettings, ProtectionSettings,
+    WhitelistEntry, WhitelistEntryType,
 )
 from app.utils.logger import logger
 from app.utils.timeutil import to_iso_z, utcnow
 from app.services.cache import events_changed
-from app.services.notifier import get_notifier
+from app.services.notifier import get_notifier, get_recipients
+from app.utils.email import send_email
 from app.utils.desktop import notify_desktop   # backend-native Windows toast (works with the app closed)
 from app.services.verdict import ABNORMAL, BENIGN_NAMES, possible_attack
 from app.websocket.manager import manager
@@ -55,6 +58,9 @@ ABNORMAL_PCT_THRESHOLD = 30  # attacks must exceed this % of recent flows to cou
 DESKTOP_ALERT_INTERVAL = 180 # desktop pop: first immediately, then every 3 min while abnormal
 TREND_POINTS = 72            # attack-% history for the dashboard trend chart (72 x 5s = last 6 min)
 STORE_THROTTLE_SECONDS = 300 # store/alert at most ONE event per attack type per 5 min (not per flow)
+PROTECTION_VERDICT_DELAY = 15    # wait this long (s) after a block before judging success/failure
+SUCCESS_CHECK_WINDOW = 12        # attacks in the last N s decide it: ~none => network benign again
+PROTECTION_NOTIFY_COOLDOWN = 300 # at most one "protection successful/failed" notice per 5 min
 
 # When the loaded model brings the threshold it was tested with, the Low / Medium /
 # High presets are placed around it (Medium = exactly the tested value); "Custom"
@@ -120,6 +126,10 @@ class IDSService:
         self.enabled = False
         self.monitor: Optional[NetworkMonitor] = None
         self.blocker = FirewallBlocker()
+        # Additive behavioural rule layer (scan/sweep/brute-force/flood). Second opinion only —
+        # it raises an extra alert when the model said Benign; it never overrides the model.
+        self.rule_engine = RuleEngine()
+        self.rule_engine.enabled = settings.IDS_RULES_ENABLED
         self.capture_error: Optional[str] = None
         self.started_at: Optional[float] = None
         # Who turned the IDS on (shown in the admin's alert email)
@@ -156,6 +166,12 @@ class IDSService:
         self._abn_last_desktop = 0.0      # last desktop pop (epoch)
         self.trend: deque = deque(maxlen=TREND_POINTS)   # (epoch, attack%) for the dashboard trend chart
         self._last_store: dict = {}       # attack_type -> last epoch an event was stored (5-min throttle)
+        # Protection outcome tracking: after a block we wait, then tell the user whether the
+        # network went benign again (success) or the attack is still active (failed).
+        self._protection_pending: Optional[dict] = None   # {"ips": set, "verdict_at": epoch}
+        self._protection_last_notice = 0.0
+        self._last_blocked_event_id: Optional[str] = None
+        self.rule_engine.reset()          # behavioural-rule windows start fresh with each IDS run
 
     # ── lifecycle ────────────────────────────────────────────────────────────
 
@@ -341,6 +357,7 @@ class IDSService:
             "anomalies_detected": self.anomalies_detected,
             "attacks_detected": self.attacks_detected,
             "blocked_ips": len(self.blocker.blocked),
+            "rule_hits": self.rule_engine.hits,
             "uptime_seconds": int(time.time() - self.started_at) if self.started_at else 0,
             "alerts_not_stored": self.alerts_not_stored,
             "verdicts": self.verdict_summary(),
@@ -433,7 +450,105 @@ class IDSService:
             await asyncio.sleep(5)
             await self.blocker.unblock_expired()
             await self._evaluate_abnormal_state()
+            await self._check_protection_outcome()
             await self.broadcast_status()
+
+    def _arm_protection(self, ip: str) -> None:
+        """A block just happened — remember it so we can judge the outcome shortly after."""
+        now = time.time()
+        if self._protection_pending is None:
+            self._protection_pending = {"ips": {ip}, "verdict_at": now + PROTECTION_VERDICT_DELAY}
+        else:
+            self._protection_pending["ips"].add(ip)
+
+    def _recent_attack_count(self, seconds: float) -> int:
+        cutoff = time.time() - seconds
+        return sum(1 for t, lbl in self.recent_labels if t >= cutoff and lbl.lower() not in BENIGN_NAMES)
+
+    async def _check_protection_outcome(self) -> None:
+        """A few seconds after Protection blocked an attacker, tell the user whether it worked:
+        SUCCESS if the network went benign again (≈no attack flows in the last few seconds),
+        otherwise the attack is still active. Exactly ONE notice per episode (desktop + popup +
+        email), rate-limited so it can't spam."""
+        pend = self._protection_pending
+        if not pend:
+            return
+        now = time.time()
+        if now < pend["verdict_at"]:
+            return
+        self._protection_pending = None
+        if now - self._protection_last_notice < PROTECTION_NOTIFY_COOLDOWN:
+            return
+        self._protection_last_notice = now
+        success = self._recent_attack_count(SUCCESS_CHECK_WINDOW) <= 1
+        try:
+            await self._send_protection_verdict(success, sorted(pend["ips"]))
+        except Exception as exc:
+            logger.error(f"Protection verdict notice failed: {exc}")
+
+    async def _send_protection_verdict(self, success: bool, ips: list) -> None:
+        ip_text = ", ".join(ips) if ips else "the attacker"
+        if success:
+            title = "SecureNet protection successful"
+            body = f"SecureNet blocked {ip_text} and your network is back to normal."
+            action = "Action taken successfully — click to view what was done."
+            severity = "medium"
+        else:
+            title = "SecureNet protection — attack still active"
+            body = f"SecureNet blocked {ip_text}, but abnormal traffic is still being detected."
+            action = "Click to view what SecureNet has done."
+            severity = "high"
+        payload = {
+            "eventId": self._last_blocked_event_id or f"protection-{int(time.time())}",
+            "timestamp": to_iso_z(utcnow()),
+            "severity": severity,
+            "verdict": "protection",
+            "success": success,
+            "attackType": None,
+            "confidence": None,
+            "possibleAttack": None,
+            "sourceIp": ips[0] if ips else "",
+            "sourcePort": 0,
+            "destinationIp": "",
+            "destinationPort": 0,
+            "protocol": "OTHER",
+            "anomalyScore": 0.0,
+            "actionTaken": "blocked",
+            "message": f"{title}. {action}",
+            "desktopPop": True,          # in-app popup + sound when the app is open
+        }
+        await manager.send_alert(payload)
+        await notify_desktop(title, f"{body} {action}")   # OS toast — shows even with the app closed
+        await self._email_protection_verdict(title, body, action, ips)
+
+    async def _email_protection_verdict(self, title: str, body: str, action: str, ips: list) -> None:
+        try:
+            async with AsyncSessionLocal() as db:
+                prefs = (await db.execute(select(NotificationSettings).limit(1))).scalars().first()
+                recipients = await get_recipients(db, prefs)
+        except Exception as exc:
+            logger.warning(f"Could not resolve protection-email recipients: {exc}")
+            return
+        if not recipients:
+            return
+        link = f"{settings.DASHBOARD_URL}/history"
+        blocked = ", ".join(ips) if ips else "the attacker"
+        subject = f"[{settings.APP_NAME}] {title}"
+        text = "\n".join([f"{settings.APP_NAME}: {title}", "", body, "", f"Blocked: {blocked}", "",
+                          action, f"View in {settings.APP_NAME}: {link}"])
+        html_body = (
+            "<!DOCTYPE html><html><body style='margin:0;padding:24px;font-family:Arial,Helvetica,sans-serif;color:#1f2328'>"
+            f"<p style='font-size:20px;font-weight:bold;color:#c2562f;margin:0 0 4px'>&#128737; {settings.APP_NAME}</p>"
+            f"<h2 style='margin:4px 0 8px'>{title}</h2><p style='font-size:15px'>{body}</p>"
+            f"<p style='color:#59636e'>Blocked: <b>{blocked}</b></p>"
+            f"<p style='margin:16px 0'><a href='{link}' style='background:#c2410c;color:#fff;padding:10px 18px;"
+            f"border-radius:8px;text-decoration:none;font-weight:bold'>View what SecureNet did</a></p>"
+            f"<p style='color:#8c959f;font-size:12px'>{action}</p></body></html>"
+        )
+        try:
+            await send_email(recipients, subject, text, html_body)
+        except Exception as exc:
+            logger.warning(f"Protection verdict email failed: {exc}")
 
     async def _evaluate_abnormal_state(self) -> None:
         """Drive the abnormal-traffic notifications (desktop every 3 min; the email is gated in
@@ -512,10 +627,32 @@ class IDSService:
             detections = [await asyncio.to_thread(self.detector.analyze, flows[i].features, cfg.anomaly_threshold,
                                                   cfg.stage2_enabled, cfg.stage2_confidence) for i in todo]
         for i, detection in zip(todo, detections):
-            if detection is not None:
-                self._count_verdict(detection)
-                results[i] = await self._handle(flows[i], detection)
+            if detection is None:
+                continue
+            # Additive behavioural rules: always update the sliding windows; if a cross-flow
+            # pattern fires on a flow the MODEL called Benign, raise it to an alert. The model's
+            # own attack calls are left exactly as they are (rules never override the model).
+            if self.rule_engine.enabled:
+                hit = self.rule_engine.update_and_check(flows[i])
+                if hit is not None and not detection.is_alert:
+                    detection = self._rule_detection(hit)
+            self._count_verdict(detection)
+            results[i] = await self._handle(flows[i], detection)
         return results
+
+    def _rule_detection(self, hit: RuleHit) -> Detection:
+        """Turn a behavioural-rule hit into a Detection so it flows through the normal
+        count/store/alert/block path. Marked as a rule hit in the reason."""
+        return Detection(
+            anomaly_score=hit.score,
+            is_alert=True,
+            attack_type=hit.label,
+            confidence=None,
+            reason=hit.reason,
+            top_features=[],
+            flagged=True,
+            guesses=[{"label": hit.label, "probability": 1.0}],
+        )
 
     def _count_verdict(self, detection: Detection) -> None:
         self.flows_scored += 1
@@ -582,6 +719,7 @@ class IDSService:
             ok, note = await self.blocker.block(flow.src_ip, cfg.block_duration_seconds, cfg.max_blocked_ips)
             if ok:
                 logger.info(f"Advanced Protection blocked attacker {flow.src_ip}: {note}")
+                self._arm_protection(flow.src_ip)   # judge success/failure in a few seconds
             else:
                 logger.warning(f"Advanced Protection could not block {flow.src_ip}: {note}")
 
@@ -638,6 +776,8 @@ class IDSService:
             await db.commit()
             await db.refresh(event)
         events_changed()   # dashboard / reports / bell show it straight away
+        if action == ActionTaken.BLOCKED:
+            self._last_blocked_event_id = str(event.id)   # so "click to view" opens the block
 
         await self._broadcast_score(flow, detection, severity, throttle=False)
         await manager.send_alert(alert_payload(event))

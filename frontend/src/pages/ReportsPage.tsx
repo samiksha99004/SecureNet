@@ -2,7 +2,7 @@
  * SecureNet — Reports Page
  *
  * Empty until an attack is detected. Then one box per day with attacks,
- * each with a download of that day's report (.txt, .csv or .pdf). The list
+ * each with a download of that day's report (.txt or .pdf). The list
  * refreshes by itself when a new attack arrives over the live connection.
  */
 
@@ -31,7 +31,7 @@ export function ReportsPage() {
       <div className={styles.page}>
         <PageHeader
           title="Reports"
-          description="A report is created automatically for every day an attack is detected. Download it as .txt, .csv or .pdf."
+          description="A report is created automatically for every day an attack is detected. Download it as .txt or .pdf."
         />
 
         {reports.isLoading && <LoadingState message="Loading reports…" />}

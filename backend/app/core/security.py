@@ -124,9 +124,11 @@ def create_login_token(user_id: str, password_hash: Optional[str]) -> str:
                    timedelta(minutes=SIGNUP_TOKEN_MINUTES))
 
 
-def create_protect_token(user_id: str) -> str:
-    """Short-lived proof that this admin asked to enable Advanced Protection; the emailed code confirms it."""
-    return _encode({"sub": user_id}, PROTECT_TOKEN_TYPE, timedelta(minutes=SIGNUP_TOKEN_MINUTES))
+def create_protect_token(user_id: str, enabled: bool) -> str:
+    """Short-lived proof that this user asked to change Advanced Protection; the emailed code confirms it.
+    `enabled` (the target on/off state) is carried in the token so it can't be tampered with."""
+    return _encode({"sub": user_id, "en": bool(enabled)}, PROTECT_TOKEN_TYPE,
+                   timedelta(minutes=SIGNUP_TOKEN_MINUTES))
 
 
 def decode_token(token: str, expected_type: str = ACCESS_TOKEN_TYPE) -> Optional[Dict[str, Any]]:

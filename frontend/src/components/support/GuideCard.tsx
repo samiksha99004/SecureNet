@@ -26,7 +26,7 @@ const STEPS: { title: string; text: string }[] = [
   },
   {
     title: 'Download reports',
-    text: 'Reports lists every day that had attacks. Download that day’s report as .txt, .csv or .pdf.',
+    text: 'Reports lists every day that had attacks. Download that day’s report as .txt or .pdf.',
   },
   {
     title: 'Make it yours',
