@@ -30,6 +30,13 @@ export interface ProtectionSettings {
   notifyOnBlock: boolean;
 }
 
+// ── Advanced Protection ─────────────────────────────────────────────────────
+// One switch: ON = detect and auto-block attackers; OFF = detection only (normal IDS).
+
+export interface AdvancedProtection {
+  enabled: boolean;
+}
+
 // ── Notification Settings ─────────────────────────────────────────────────────
 
 export interface NotificationSettings {

@@ -197,6 +197,13 @@ export async function confirmProfileChange(changeToken: string, otp: string): Pr
   return user;
 }
 
+/** PUT /auth/profile — verify and update name / phone / email directly (no emailed code). */
+export async function updateProfile(request: ProfileChangeRequest): Promise<User> {
+  const user = await apiClient.put<User>('/auth/profile', request);
+  storeUser(user);
+  return user;
+}
+
 /** PUT /auth/me/preferences — attack alert emails on/off; returns the updated profile. */
 export async function updatePreferences(emailAlerts: boolean): Promise<User> {
   const user = await apiClient.put<User>('/auth/me/preferences', { emailAlerts });

@@ -638,6 +638,56 @@ async def confirm_profile_change(
     return UserResponse.model_validate(user)
 
 
+@router.put("/profile", response_model=UserResponse)
+async def update_profile(
+    request: ProfileChangeRequest,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Update name / phone / email directly — the input is validated and saved at once
+    (no emailed code). The schema already checks the phone/email format ("verify"),
+    and a changed email is still checked for uniqueness. The old address is notified."""
+    changes: dict[str, str] = {}
+    if request.full_name is not None and request.full_name != current_user.full_name:
+        changes["full_name"] = request.full_name
+    if request.phone_number is not None and request.phone_number != (current_user.phone_number or ""):
+        changes["phone_number"] = request.phone_number
+    if request.email is not None:
+        new_email = normalize_email(request.email)
+        if new_email != normalize_email(current_user.email):
+            changes["email"] = new_email
+    if not changes:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
+                            detail="Nothing to change — your details are the same.")
+
+    user = (await db.execute(select(User).where(User.id == current_user.id))).scalar_one()
+    old_email = user.email
+    if "email" in changes:
+        taken = (await db.execute(
+            select(User).where(func.lower(User.email) == changes["email"], User.id != user.id)
+        )).scalar_one_or_none()
+        if taken:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
+                                detail="This email is already used by another account.")
+    for field in ("full_name", "phone_number", "email"):
+        if field in changes:
+            setattr(user, field, changes[field])
+    await db.commit()
+    await db.refresh(user)
+    forget_user(user.id)
+    logger.info(f"Profile updated for {old_email}: {sorted(changes)}")
+
+    if "email" in changes:  # tell the old address (best effort)
+        text = (f"The email address of your {settings.APP_NAME} account was changed from {old_email} "
+                f"to {user.email}. If you did not do this, contact the {settings.APP_NAME} admin.")
+        try:
+            await send_email([old_email], f"{settings.APP_NAME} - Your email address was changed", text,
+                             f"<html><body style='font-family:Arial,sans-serif'><p>{text}</p></body></html>")
+        except EmailDeliveryError as exc:
+            logger.warning(f"Email-change notice to {old_email} failed: {exc}")
+    return UserResponse.model_validate(user)
+
+
 # ── Change password (signed in) — current password + a code emailed to the registered address ──
 
 @router.post("/change-password", response_model=ProfileChangeStarted)

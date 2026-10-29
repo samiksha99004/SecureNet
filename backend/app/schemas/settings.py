@@ -69,6 +69,32 @@ class ProtectionSettingsUpdate(CamelModel):
         return value
 
 
+# ── Advanced Protection (one on/off switch over the protection settings) ───────
+
+class AdvancedProtectionResponse(CamelModel):
+    """Advanced Protection: ON = detect AND auto-block attackers; OFF = detection only."""
+    enabled: bool
+
+
+class AdvancedProtectionUpdate(CamelModel):
+    """Turn Advanced Protection on or off. (Only `enabled=false` is accepted here —
+    turning it ON needs the emailed-code flow below.)"""
+    enabled: bool
+
+
+class AdvancedProtectionChallenge(CamelModel):
+    """Returned when an admin asks to turn Advanced Protection ON: a code was emailed."""
+    confirm_token: str
+    sent_to: str
+    message: str
+
+
+class AdvancedProtectionConfirm(CamelModel):
+    """Confirm turning Advanced Protection ON with the emailed code."""
+    token: str = Field(..., min_length=10)
+    otp: str = Field(..., min_length=4, max_length=10)
+
+
 # ── Notification Settings ─────────────────────────────────────────────────────
 
 class NotificationSettingsResponse(CamelModel):

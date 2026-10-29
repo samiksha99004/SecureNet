@@ -67,9 +67,13 @@ export function IDSControlWidget({
       void run(stopIDS, 'IDS stopped');
     } else {
       if (prefs.desktop) void requestDesktopNotifications();   // only asks the browser once
-      void run(() => startIDS('monitor'), 'IDS started');
+      // no mode => the backend uses the saved Advanced Protection choice (Settings → Advanced Protection)
+      void run(() => startIDS(), 'IDS started');
     }
   }
+
+  // Advanced Protection on/off (read-only here; the switch lives in Settings → Advanced Protection)
+  const protectionOn = idsStatus?.mode === 'protect';
 
   // Live verdict from the rolling window (what the CLI printed each refresh) — not sticky.
   const isOff = !isEnabled;
@@ -105,7 +109,9 @@ export function IDSControlWidget({
             <h2 className={styles.title}>Intrusion Detection System</h2>
             <p className={styles.subtitle}>
               {isEnabled
-                ? 'Running' + (idsStatus?.uptimeSeconds ? ` · up ${formatDuration(idsStatus.uptimeSeconds)}` : '')
+                ? 'Running'
+                  + (idsStatus?.uptimeSeconds ? ` · up ${formatDuration(idsStatus.uptimeSeconds)}` : '')
+                  + (protectionOn ? ' · Advanced Protection ON' : ' · Advanced Protection off')
                 : 'Stopped'}
             </p>
           </div>

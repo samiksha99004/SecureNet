@@ -94,21 +94,25 @@ async def get_ids_status(current_user: User = Depends(get_current_user)):
 async def control_ids(request: IDSControlRequest, current_user: User = Depends(get_current_user)):
     """Turn the IDS ON or OFF (any signed-in user; its settings stay admin-only).
 
-    The IDS has two states only: ON = capture, detect, alert and email;
-    OFF = stopped. Automatic firewall blocking (the old "protection" mode) is
-    not used, so the mode is always "monitor" whatever the request says.
-    The choice is remembered: if the computer is shut down while the IDS is
-    ON, it turns itself back on at the next start (services/autostart.py).
+    ON = capture, detect, alert and email; OFF = stopped. The mode follows the
+    Advanced Protection switch (Settings → Advanced Protection): OFF ⇒ "monitor"
+    (detection only), ON ⇒ "protect" (detect and auto-block attackers). When the
+    request does not name a mode the IDS uses the saved Advanced Protection choice.
+    The choice is remembered: if the computer is shut down while the IDS is ON,
+    it turns itself back on at the next start (services/autostart.py).
     """
     ids = get_ids_service()
     if request.enabled:
         try:
             if ids.enabled:
-                if ids.mode.value != "monitor":
-                    await ids.set_mode("monitor")
+                # already running: match the saved Advanced Protection choice (or the request)
+                await ids.reload_config()
+                desired = request.mode or ids.config.default_mode.value
+                if ids.mode.value != desired:
+                    await ids.set_mode(desired)
                     await ids.broadcast_status()
             else:
-                await ids.start("monitor")
+                await ids.start(request.mode)   # None ⇒ start() uses the saved mode (reload_config)
                 ids.started_by = {"name": current_user.full_name, "email": current_user.email,
                                   "phone": current_user.phone_number, "role": current_user.role.value}
                 logger.info(f"IDS started by {current_user.email} (mode={ids.mode.value})")

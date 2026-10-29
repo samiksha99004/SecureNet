@@ -13,12 +13,13 @@
  * The IDS itself is turned on/off from the Dashboard.
  */
 
-import { Activity, Bell, List, Cpu, Server, SlidersHorizontal } from 'lucide-react';
+import { Activity, Bell, List, Cpu, Server, SlidersHorizontal, ShieldCheck } from 'lucide-react';
 import { MainLayout } from '../components/layout/MainLayout';
 import { PageHeader } from '../components/common/PageHeader';
 import { SettingsLayout, type SettingsTab } from '../components/settings/SettingsLayout';
 import { PreferencesTab }   from '../components/settings/PreferencesTab';
 import { DetectionTab }     from '../components/settings/DetectionTab';
+import { AdvancedProtectionTab } from '../components/settings/AdvancedProtectionTab';
 import { NotificationsTab } from '../components/settings/NotificationsTab';
 import { WhitelistTab }     from '../components/settings/WhitelistTab';
 import { ModelTab }         from '../components/settings/ModelTab';
@@ -29,6 +30,7 @@ import styles from './SettingsPage.module.css';
 
 const USER_TABS: SettingsTab[] = [
   { id: 'preferences', label: 'Preferences', icon: <SlidersHorizontal size={15} /> },
+  { id: 'protection',  label: 'Advanced Protection', icon: <ShieldCheck size={15} /> },
 ];
 
 const ADMIN_TABS: SettingsTab[] = [
@@ -49,6 +51,7 @@ export function SettingsPage() {
   function renderTab() {
     switch (activeTab) {
       case 'detection':     return <DetectionTab />;
+      case 'protection':    return <AdvancedProtectionTab />;
       case 'notifications': return <NotificationsTab />;
       case 'whitelist':     return <WhitelistTab />;
       case 'model':         return <ModelTab />;

@@ -8,17 +8,20 @@ Every change is pushed to the running IDS immediately.
 
 from typing import Type, TypeVar
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 import uuid
 
 from app.api.dependencies import get_current_user, require_admin
+from app.core.security import PROTECT_TOKEN_TYPE, create_protect_token, decode_token
 from app.db.base import AsyncSessionLocal, get_db
 from app.ml.ids_service import get_ids_service
+from app.utils.email import _send_code
 from app.models.settings import (
     DetectionSettings,
     NotificationSettings,
+    ProtectionMode,
     ProtectionSettings,
     SystemSettings,
     WhitelistEntry,
@@ -26,6 +29,10 @@ from app.models.settings import (
 from app.models.user import User
 from app.schemas.common import MessageResponse
 from app.schemas.settings import (
+    AdvancedProtectionChallenge,
+    AdvancedProtectionConfirm,
+    AdvancedProtectionResponse,
+    AdvancedProtectionUpdate,
     AllSettingsResponse,
     CreateWhitelistEntryRequest,
     DetectionSettingsResponse,
@@ -133,6 +140,115 @@ async def update_protection_settings(
         await ids.set_mode(updates.mode.value)
         await ids.broadcast_status()
     return ProtectionSettingsResponse.model_validate(row)
+
+
+# ── Advanced Protection (one switch) ───────────────────────────────────────────
+# ON  ⇒ protection mode "protect" + auto-block high/medium attackers.
+# OFF ⇒ "monitor" (normal IDS: detect and alert only, no blocking).
+
+_ADVANCED_SEVERITIES = ["high", "medium"]
+
+
+def _advanced_enabled(row: ProtectionSettings) -> bool:
+    return row.mode == ProtectionMode.PROTECT and bool(row.auto_block)
+
+
+def _mask_email(email: str) -> str:
+    name, _, domain = email.partition("@")
+    masked = (name[0] + "***") if name else "***"
+    return f"{masked}@{domain}" if domain else masked
+
+
+async def _set_advanced(db: AsyncSession, enabled: bool, user: User) -> ProtectionSettings:
+    """Flip the protection mode and apply it to the running IDS at once."""
+    row = await get_or_create(db, ProtectionSettings)
+    if enabled:
+        row.mode = ProtectionMode.PROTECT
+        row.auto_block = True
+        row.auto_block_severities = list(_ADVANCED_SEVERITIES)
+    else:
+        row.mode = ProtectionMode.MONITOR
+        row.auto_block = False
+    row.updated_at = utcnow()
+    row.updated_by = user.id
+    await db.commit()
+    await db.refresh(row)
+    settings_changed()
+
+    ids = get_ids_service()
+    await ids.reload_config()
+    if ids.enabled:                       # apply to the running IDS right away
+        await ids.set_mode(row.mode.value)
+        await ids.broadcast_status()
+    logger.info(f"Advanced Protection {'ENABLED' if enabled else 'disabled'} by {user.email}")
+    return row
+
+
+@router.get("/advanced-protection", response_model=AdvancedProtectionResponse)
+async def get_advanced_protection(current_user: User = Depends(get_current_user)):
+    async with AsyncSessionLocal() as db:
+        row = await get_or_create(db, ProtectionSettings)
+        return AdvancedProtectionResponse(enabled=_advanced_enabled(row))
+
+
+@router.put("/advanced-protection", response_model=AdvancedProtectionResponse)
+async def set_advanced_protection(
+    updates: AdvancedProtectionUpdate,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Turn Advanced Protection OFF. Turning it ON needs the emailed-code flow below."""
+    if updates.enabled:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Turning Advanced Protection on needs email confirmation — request a code first.",
+        )
+    row = await _set_advanced(db, False, current_user)
+    return AdvancedProtectionResponse(enabled=_advanced_enabled(row))
+
+
+@router.post("/advanced-protection/request-code", response_model=AdvancedProtectionChallenge)
+async def request_advanced_protection_code(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """User asks to turn protection ON → email a 6-digit confirmation code to that user."""
+    from app.api.routes.auth import _issue_otp, _check_resend_cooldown  # reuse the OTP machinery
+    email = current_user.email.strip().lower()
+    await _check_resend_cooldown(db, email)
+    code = await _issue_otp(db, email)
+    await db.commit()
+    try:
+        await _send_code(email, code, "Advanced Protection",
+                         "Enter it in Settings → Advanced Protection to turn protection on.")
+    except Exception as exc:  # delivery failed — don't leave the admin waiting on a code that never comes
+        logger.error(f"Advanced Protection code email failed: {exc}")
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                            detail="We could not send the confirmation email right now. Please try again.")
+    return AdvancedProtectionChallenge(
+        confirm_token=create_protect_token(str(current_user.id)),
+        sent_to=_mask_email(email),
+        message="Enter the code we emailed you to turn Advanced Protection on.",
+    )
+
+
+@router.post("/advanced-protection/confirm", response_model=AdvancedProtectionResponse)
+async def confirm_advanced_protection(
+    payload: AdvancedProtectionConfirm,
+    http: Request,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Confirm with the emailed code → protection turns ON."""
+    from app.api.routes.auth import _consume_otp
+    data = decode_token(payload.token, PROTECT_TOKEN_TYPE)
+    if not data or data.get("sub") != str(current_user.id):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
+                            detail="This confirmation has expired. Please request a new code.")
+    await _consume_otp(db, current_user.email.strip().lower(), payload.otp, http)
+    await db.commit()
+    row = await _set_advanced(db, True, current_user)
+    return AdvancedProtectionResponse(enabled=_advanced_enabled(row))
 
 
 @router.get("/notifications", response_model=NotificationSettingsResponse)

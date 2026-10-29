@@ -10,6 +10,7 @@ import type {
   AllSettings,
   DetectionSettings,
   ProtectionSettings,
+  AdvancedProtection,
   NotificationSettings,
   SystemSettings,
   WhitelistEntry,
@@ -32,6 +33,32 @@ export async function getDetectionSettings(): Promise<DetectionSettings> {
 /** GET /settings/protection */
 export async function getProtectionSettings(): Promise<ProtectionSettings> {
   return apiClient.get<ProtectionSettings>('/settings/protection');
+}
+
+/** GET /settings/advanced-protection */
+export async function getAdvancedProtection(): Promise<AdvancedProtection> {
+  return apiClient.get<AdvancedProtection>('/settings/advanced-protection');
+}
+
+/** PUT /settings/advanced-protection — only turns it OFF (ON needs the emailed code below). */
+export async function updateAdvancedProtection(enabled: boolean): Promise<AdvancedProtection> {
+  return apiClient.put<AdvancedProtection>('/settings/advanced-protection', { enabled });
+}
+
+export interface AdvancedProtectionChallenge {
+  confirmToken: string;
+  sentTo: string;
+  message: string;
+}
+
+/** POST /settings/advanced-protection/request-code — emails a confirmation code to the admin. */
+export async function requestAdvancedProtectionCode(): Promise<AdvancedProtectionChallenge> {
+  return apiClient.post<AdvancedProtectionChallenge>('/settings/advanced-protection/request-code', {});
+}
+
+/** POST /settings/advanced-protection/confirm — turns protection ON with the emailed code. */
+export async function confirmAdvancedProtection(token: string, otp: string): Promise<AdvancedProtection> {
+  return apiClient.post<AdvancedProtection>('/settings/advanced-protection/confirm', { token, otp });
 }
 
 /** GET /settings/notifications */

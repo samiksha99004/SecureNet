@@ -38,6 +38,8 @@ PASSWORD_CHANGE_TOKEN_TYPE = "password"
 # Issued after the right email + password; only lets the holder finish signing
 # in with the emailed code (never an access token).
 LOGIN_TOKEN_TYPE = "login"
+# proves the admin asked to turn Advanced Protection ON; the emailed code completes it
+PROTECT_TOKEN_TYPE = "protect"
 
 
 def hash_password(password: str) -> str:
@@ -120,6 +122,11 @@ def create_login_token(user_id: str, password_hash: Optional[str]) -> str:
     Bound to the current password, so it dies if the password changes meanwhile."""
     return _encode({"sub": user_id, "pwv": password_fingerprint(password_hash)}, LOGIN_TOKEN_TYPE,
                    timedelta(minutes=SIGNUP_TOKEN_MINUTES))
+
+
+def create_protect_token(user_id: str) -> str:
+    """Short-lived proof that this admin asked to enable Advanced Protection; the emailed code confirms it."""
+    return _encode({"sub": user_id}, PROTECT_TOKEN_TYPE, timedelta(minutes=SIGNUP_TOKEN_MINUTES))
 
 
 def decode_token(token: str, expected_type: str = ACCESS_TOKEN_TYPE) -> Optional[Dict[str, Any]]:

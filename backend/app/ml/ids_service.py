@@ -569,6 +569,22 @@ class IDSService:
         self.anomalies_detected += 1
         if detection.attack_type:
             self.attacks_detected += 1
+
+        # Advanced Protection (Settings → Advanced Protection). While it is ON the IDS runs in
+        # "protect" mode and, once the network turns ABNORMAL (attacks make up more than
+        # ABNORMAL_PCT_THRESHOLD of the recent window), it blocks the ATTACKER'S SOURCE IP at the
+        # Windows Firewall — whatever the attack is (a mixed verdict still has one attacker to stop).
+        # Below that 30% gate it stays detection-only (normal IDS). Each source is blocked once.
+        if (self.mode == DetectionMode.PROTECT and cfg.auto_block and self._abnormal_now
+                and severity.value in cfg.auto_block_severities
+                and flow.src_ip not in self.blocker.blocked
+                and not self.blocker.is_protected(flow.src_ip)):
+            ok, note = await self.blocker.block(flow.src_ip, cfg.block_duration_seconds, cfg.max_blocked_ips)
+            if ok:
+                logger.info(f"Advanced Protection blocked attacker {flow.src_ip}: {note}")
+            else:
+                logger.warning(f"Advanced Protection could not block {flow.src_ip}: {note}")
+
         if not self._storm_allows(flow.src_ip):
             self.alerts_not_stored += 1
             if self.alerts_not_stored % 100 == 1:
@@ -586,16 +602,13 @@ class IDSService:
             return None
         self._last_store[store_key] = now
 
-        action = ActionTaken.ALERTED
-        reason = detection.reason
-        if (
-            self.mode == DetectionMode.PROTECT
-            and cfg.auto_block
-            and severity.value in cfg.auto_block_severities
-        ):
-            blocked, note = await self.blocker.block(flow.src_ip, cfg.block_duration_seconds, cfg.max_blocked_ips)
-            action = ActionTaken.BLOCKED if blocked else ActionTaken.ALERTED
-            reason = f"{reason}. Protection: {note}"
+        # Record in the report whether Advanced Protection has blocked this attacker's IP.
+        if flow.src_ip in self.blocker.blocked:
+            action = ActionTaken.BLOCKED
+            reason = f"{detection.reason}. Advanced Protection blocked {flow.src_ip} at the Windows Firewall."
+        else:
+            action = ActionTaken.ALERTED
+            reason = detection.reason
 
         event = SecurityEvent(
             timestamp=utcnow(),
