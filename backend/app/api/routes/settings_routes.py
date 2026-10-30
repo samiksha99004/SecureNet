@@ -191,17 +191,39 @@ async def get_advanced_protection(current_user: User = Depends(get_current_user)
         return AdvancedProtectionResponse(enabled=_advanced_enabled(row))
 
 
+@router.put("/advanced-protection", response_model=AdvancedProtectionResponse)
+async def set_advanced_protection(
+    updates: AdvancedProtectionUpdate,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Turn Advanced Protection ON directly — no code. Turning it OFF needs the emailed-code
+    flow below, so an attacker who got in can't just switch protection off."""
+    if not updates.enabled:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Turning Advanced Protection off needs email confirmation — request a code first.",
+        )
+    row = await _set_advanced(db, True, current_user)
+    return AdvancedProtectionResponse(enabled=_advanced_enabled(row))
+
+
 @router.post("/advanced-protection/request-code", response_model=AdvancedProtectionChallenge)
 async def request_advanced_protection_code(
     updates: AdvancedProtectionUpdate,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """User asks to turn protection ON or OFF → email a 6-digit confirmation code. BOTH
-    directions need confirmation: the target state (`enabled`) is confirmed by the code."""
+    """Emails a 6-digit code to confirm turning protection OFF (turning it ON is instant and
+    needs no code). The target state is carried in the token the response returns."""
+    if updates.enabled:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Turning Advanced Protection on does not need a code — use the switch directly.",
+        )
     from app.api.routes.auth import _issue_otp, _check_resend_cooldown  # reuse the OTP machinery
     email = current_user.email.strip().lower()
-    action = "on" if updates.enabled else "off"
+    action = "off"
     await _check_resend_cooldown(db, email)
     code = await _issue_otp(db, email)
     await db.commit()

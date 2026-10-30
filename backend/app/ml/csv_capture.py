@@ -115,8 +115,11 @@ class CsvFlowSource:
             try:
                 errf = open(self._err_log, "a", buffering=1)
                 errf.write(f"\n--- {script} @ {time.strftime('%H:%M:%S')} ---\n")
+                # CREATE_NO_WINDOW: run the capture + convert helpers with NO console window, so the
+                # user never sees terminals pop up (output still goes to DEVNULL / the stderr log).
                 p = subprocess.Popen([self.python_exe, script], cwd=self.project_dir,
-                                     stdout=subprocess.DEVNULL, stderr=errf)
+                                     stdout=subprocess.DEVNULL, stderr=errf,
+                                     creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
                 self._procs.append(p)
                 logger.info(f"launched capture subprocess: {script} (pid {p.pid})")
             except OSError as exc:

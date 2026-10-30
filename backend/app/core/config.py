@@ -170,6 +170,13 @@ class Settings(BaseSettings):
             )
         if not self.SMTP_FROM_EMAIL.strip():
             self.SMTP_FROM_EMAIL = self.SMTP_USER.strip()
+        # Serve the built dashboard by default, so opening the app shows the UI — not the API JSON —
+        # no matter which launcher started the backend (Electron, the boot-monitor, or by hand).
+        # Skipped when a FRONTEND_DIST is already given, or under the test suite (which sets it blank).
+        if not self.FRONTEND_DIST and "pytest" not in sys.modules:
+            default_dist = BACKEND_DIR.parent / "frontend" / "dist"
+            if (default_dist / "index.html").is_file():
+                self.FRONTEND_DIST = str(default_dist)
         return self
 
     def resolve_path(self, value: str) -> Path:

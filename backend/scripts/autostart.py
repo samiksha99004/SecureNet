@@ -40,6 +40,12 @@ DASHBOARD_PORT = int(saved.get("frontend") or 5173)
 os.environ["PORT"] = str(PORT)
 os.environ["CORS_ORIGINS"] = f"http://localhost:{DASHBOARD_PORT},http://127.0.0.1:{DASHBOARD_PORT}"
 os.environ["DASHBOARD_URL"] = f"http://localhost:{DASHBOARD_PORT}"
+# Serve the built dashboard from this headless backend too. Otherwise, when the app opens and
+# REUSES this already-running backend, http://localhost:8000/ returns the API JSON instead of the
+# dashboard. (The Electron launcher sets this itself; the boot-monitor backend must too.)
+_frontend_dist = BACKEND.parent / "frontend" / "dist"
+if (_frontend_dist / "index.html").is_file():
+    os.environ["FRONTEND_DIST"] = str(_frontend_dist)
 
 
 def port_in_use(port: int) -> bool:

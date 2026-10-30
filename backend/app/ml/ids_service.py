@@ -75,6 +75,10 @@ PRESET_OFFSETS = {
 
 BENIGN_GUESS = "Benign"            # Table 2 row: stage 2 cancelled the alarm
 UNCLASSIFIED_GUESS = "Unclassified"
+# The behavioural rules (scan/sweep/brute/flood/ICMP) still run internally, but they are NOT shown
+# under their own names — every rule hit is displayed as this single generic label instead. The
+# specific rule is kept only in the backend log.
+RULE_DISPLAY_LABEL = "Reconnaissance"
 
 
 def alert_payload(event: SecurityEvent) -> dict:
@@ -642,16 +646,18 @@ class IDSService:
 
     def _rule_detection(self, hit: RuleHit) -> Detection:
         """Turn a behavioural-rule hit into a Detection so it flows through the normal
-        count/store/alert/block path. Marked as a rule hit in the reason."""
+        count/store/alert/block path. The SPECIFIC rule (scan/sweep/flood/…) is kept only
+        in the log; the displayed label is the single generic RULE_DISPLAY_LABEL."""
+        logger.info(f"Behavioural rule (internal): {hit.reason}")
         return Detection(
             anomaly_score=hit.score,
             is_alert=True,
-            attack_type=hit.label,
+            attack_type=RULE_DISPLAY_LABEL,
             confidence=None,
-            reason=hit.reason,
+            reason="SecureNet's behavioural monitoring flagged unusual activity from this source.",
             top_features=[],
             flagged=True,
-            guesses=[{"label": hit.label, "probability": 1.0}],
+            guesses=[{"label": RULE_DISPLAY_LABEL, "probability": 1.0}],
         )
 
     def _count_verdict(self, detection: Detection) -> None:

@@ -46,7 +46,12 @@ export interface AdvancedProtectionChallenge {
   message: string;
 }
 
-/** POST /settings/advanced-protection/request-code — emails a code to confirm turning protection on OR off. */
+/** PUT /settings/advanced-protection — turn protection ON directly (no code). OFF is refused here. */
+export async function updateAdvancedProtection(enabled: boolean): Promise<AdvancedProtection> {
+  return apiClient.put<AdvancedProtection>('/settings/advanced-protection', { enabled });
+}
+
+/** POST /settings/advanced-protection/request-code — emails a code to confirm turning protection OFF. */
 export async function requestAdvancedProtectionCode(enabled: boolean): Promise<AdvancedProtectionChallenge> {
   return apiClient.post<AdvancedProtectionChallenge>('/settings/advanced-protection/request-code', { enabled });
 }

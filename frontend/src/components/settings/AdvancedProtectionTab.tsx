@@ -14,6 +14,7 @@ import { useAsyncData } from '../../hooks/useAsyncData';
 import { useToast } from '../common/Toast';
 import {
   getAdvancedProtection,
+  updateAdvancedProtection,
   requestAdvancedProtectionCode,
   confirmAdvancedProtection,
   type AdvancedProtectionChallenge,
@@ -41,17 +42,24 @@ export function AdvancedProtectionTab() {
     if (data) setEnabled(data.enabled);
   }, [data]);
 
-  // BOTH turning on and off need an emailed code — ask for one, then show the confirm panel.
+  // Turning ON is instant (no code — more security needs no gate). Turning OFF needs an emailed
+  // code so an attacker who got in can't just switch protection off.
   async function handleToggle(next: boolean) {
     setIsBusy(true);
     try {
-      const c = await requestAdvancedProtectionCode(next);
-      setTarget(next);
-      setChallenge(c);
-      setOtp('');
-      showToast({ message: `Confirmation code sent to ${c.sentTo}.`, variant: 'success' });
+      if (next) {
+        const res = await updateAdvancedProtection(true);
+        setEnabled(res.enabled);
+        showToast({ message: 'Advanced Protection is ON — attackers will be blocked.', variant: 'success' });
+      } else {
+        const c = await requestAdvancedProtectionCode(false);
+        setTarget(false);
+        setChallenge(c);
+        setOtp('');
+        showToast({ message: `Confirmation code sent to ${c.sentTo}.`, variant: 'success' });
+      }
     } catch (err) {
-      showToast({ message: errorMessage(err, 'Could not send the confirmation code.'), variant: 'error' });
+      showToast({ message: errorMessage(err, 'Could not change Advanced Protection.'), variant: 'error' });
     } finally {
       setIsBusy(false);
     }
@@ -114,7 +122,7 @@ export function AdvancedProtectionTab() {
         title="Advanced Protection"
         description={
           'When OFF, SecureNet watches the network and alerts you — it only detects. '
-          + 'When ON, it also acts: once an attack takes over the traffic it blocks the attacker at your firewall, and every block is added to the report. Changing this either way asks for a code emailed to you.'
+          + 'When ON, it also acts: once an attack takes over the traffic it blocks the attacker at your firewall, and every block is added to the report. Turning it on is instant; turning it off needs a code emailed to you, so an attacker can’t disable protection.'
         }
       >
         <SettingsField
