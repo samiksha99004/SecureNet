@@ -108,8 +108,9 @@ class Settings(BaseSettings):
     CLASSIFICATION_CONFIDENCE_THRESHOLD: float = 0.7
     DETECTION_MODE: str = "monitor"
     # Additive behavioural rule layer (Zeek/Suricata-style threshold rules for scan/sweep/
-    # brute-force/flood). Helps the model catch cross-flow attacks; never overrides it.
-    IDS_RULES_ENABLED: bool = True
+    # brute-force/flood). OFF by owner's choice — only the model's trained labels are shown
+    # (no "Reconnaissance"). Flip to true to re-enable the cross-flow rules.
+    IDS_RULES_ENABLED: bool = False
     # Extra IPs Protection must NEVER block (comma-separated), on top of this PC's own
     # addresses + loopback/link-local, which are always protected. Keeps the host safe.
     PROTECTION_NEVER_BLOCK: str = ""

@@ -178,7 +178,7 @@ export function IDSControlWidget({
               </span>
               <span style={{ fontSize: 12, opacity: 0.6 }}>last 90s · {recentTotal} flows</span>
             </div>
-            {recentRows.map((r) => {
+            {recentRows.filter((r) => r.pct >= 0.1).map((r) => {
               const color = isBenignLabel(r.label) ? '#22c55e' : '#ef4444';
               return (
                 <div key={r.label} style={{ display: 'flex', alignItems: 'center', gap: 10, margin: '5px 0' }}>
