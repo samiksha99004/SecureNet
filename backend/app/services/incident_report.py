@@ -16,7 +16,7 @@ from datetime import date, datetime, timedelta
 from typing import Dict, List, Optional, Sequence
 
 from app.models.security_event import SecurityEvent
-from app.services.verdict import (ABNORMAL, BENIGN_NAMES, UNKNOWN_GUESS, clean_guesses, guesses_text,
+from app.services.verdict import (BENIGN_NAMES, UNKNOWN_GUESS, clean_guesses, guesses_text,
                                   possible_attack)
 from app.utils.timeutil import utcnow
 
