@@ -179,12 +179,13 @@ def summarize_alerts(alerts: Sequence[AlertInfo]) -> dict:
 
 # what each kind of email says first
 EMAIL_KINDS = {
-    "new": ("Abnormal traffic detected",
-            "Your network was normal until {first_clock}. SecureNet has now detected abnormal traffic."),
-    "continuing": ("Abnormal traffic is continuing",
-                   "SecureNet is still detecting abnormal traffic on your network. This is a summary of the "
-                   "last few minutes."),
-    "digest": ("Security summary", "A summary of the abnormal traffic SecureNet detected recently."),
+    "new": ("Possible abnormal traffic",
+            "Around {first_clock}, SecureNet's model flagged some traffic as possibly abnormal. "
+            "The attack name below is the model's guess, not a confirmed attack."),
+    "continuing": ("Abnormal traffic still flagged",
+                   "SecureNet's model is still flagging traffic as possibly abnormal. This is a summary "
+                   "of the last few minutes."),
+    "digest": ("Security summary", "A summary of the traffic SecureNet recently flagged as possibly abnormal."),
     "test": ("Test alert", "This is a test. Email alerts from SecureNet are working."),
 }
 
@@ -211,13 +212,16 @@ def render_alert_email(alerts: Sequence[AlertInfo], kind: str = "new") -> tuple[
         "",
         intro,
         "",
-        f"Most likely attack : {info['attack']}{guess_note} - the model's best guess",
-        f"Alerts             : {alerts_line}" + (f" ({split})" if split else ""),
-        f"When               : {info['when']}",
-        f"Coming from        : {info['source']}",
+        f"Model's guess   : {info['attack']}{guess_note} - a guess, may be a false positive",
+        f"Flags           : {alerts_line}" + (f" ({split})" if split else ""),
+        f"When            : {info['when']}",
+        f"Involving       : {info['source']}",
+        "",
+        "Note: on normal internet traffic some flags are false positives (e.g. ordinary HTTPS to a",
+        "web service). Treat each as a lead to verify, not a confirmed attack.",
         "",
         "The full report is attached - open or print it for every detail.",
-        f"See each alert in SecureNet: {link}",
+        f"See each flag in SecureNet: {link}",
         "",
         f"You get at most one alert email every {interval_min} minutes. Alerts on your screen are not affected.",
     ])
@@ -228,11 +232,11 @@ def render_alert_email(alerts: Sequence[AlertInfo], kind: str = "new") -> tuple[
                 f'<td style="padding:6px 0;font-size:14px;color:#1f2328">{value}</td></tr>')
 
     rows = "".join([
-        row("Most likely attack", f"<b>{_esc(info['attack'])}</b>{_esc(guess_note)}"
-            f'<br><span style="color:#8c959f;font-size:12px">the model\'s best guess</span>'),
-        row("Alerts", f"{_esc(alerts_line)}" + (f' <span style="color:#59636e">({_esc(split)})</span>' if split else "")),
+        row("Model's guess", f"<b>{_esc(info['attack'])}</b>{_esc(guess_note)}"
+            f'<br><span style="color:#8c959f;font-size:12px">a guess &ndash; may be a false positive</span>'),
+        row("Flags", f"{_esc(alerts_line)}" + (f' <span style="color:#59636e">({_esc(split)})</span>' if split else "")),
         row("When", _esc(info["when"])),
-        row("Coming from", _esc(info["source"])),
+        row("Involving", _esc(info["source"])),
     ])
     body = f"""<!DOCTYPE html>
 <html><body style="margin:0;padding:0;background:#ffffff;font-family:Arial,Helvetica,sans-serif;color:#1f2328">
@@ -245,14 +249,13 @@ def render_alert_email(alerts: Sequence[AlertInfo], kind: str = "new") -> tuple[
       <tr><td style="font-size:14px;line-height:1.5;color:#3d444d;padding:0 0 16px">{_esc(intro)}</td></tr>
       <tr><td style="background:#eef1f6;border-left:4px solid {color};border-radius:12px;padding:16px 20px">
         <div style="display:inline-block;background:{color};color:#ffffff;font-size:12px;font-weight:bold;
-                    letter-spacing:0.05em;border-radius:999px;padding:4px 10px;margin:0 0 10px">ABNORMAL TRAFFIC</div>
+                    letter-spacing:0.05em;border-radius:999px;padding:4px 10px;margin:0 0 10px">POSSIBLE &ndash; MODEL'S GUESS</div>
         <table role="presentation" cellpadding="0" cellspacing="0">{rows}</table>
       </td></tr>
-      <tr><td style="padding:20px 0 0">
-        <a href="{_esc(link)}" style="display:inline-block;background:#c2562f;color:#ffffff;text-decoration:none;
-           font-size:14px;font-weight:bold;border-radius:6px;padding:10px 18px">Open SecureNet</a>
-      </td></tr>
-      <tr><td style="font-size:14px;line-height:1.5;padding:16px 2px 0;color:#3d444d">
+      <tr><td style="font-size:13px;line-height:1.5;padding:14px 2px 0;color:#8c959f">
+        On normal internet traffic some flags are false positives (e.g. ordinary HTTPS to a web service).
+        Treat each as a lead to verify, not a confirmed attack.</td></tr>
+      <tr><td style="font-size:14px;line-height:1.5;padding:14px 2px 0;color:#3d444d">
         The full report is attached &mdash; open or print it for every detail.</td></tr>
       <tr><td style="font-size:12px;line-height:1.5;color:#8c959f;padding:24px 2px 0;border-top:1px solid #e6e9ee">
         You get at most one alert email every {interval_min} minutes; alerts on your screen are not affected.
@@ -267,10 +270,10 @@ def render_alert_email(alerts: Sequence[AlertInfo], kind: str = "new") -> tuple[
 
 def alert_subject(alerts: Sequence[AlertInfo], kind: str = "new") -> str:
     info = summarize_alerts(alerts)
-    count = f"{info['total']} alert{'' if info['total'] == 1 else 's'}"
+    count = f"{info['total']} flag{'' if info['total'] == 1 else 's'}"
     if kind == "continuing":
-        return f"[{settings.APP_NAME}] Abnormal traffic continues - {count}, most likely {info['attack']}"
-    return f"[{settings.APP_NAME}] {ABNORMAL} - most likely {info['attack']} ({count})"
+        return f"[{settings.APP_NAME}] Possible abnormal traffic continues - {count}, model's guess {info['attack']}"
+    return f"[{settings.APP_NAME}] Possible abnormal traffic - model's guess {info['attack']} ({count})"
 
 
 # ── Notifier service ─────────────────────────────────────────────────────────

@@ -258,9 +258,14 @@ def to_pdf(events: Sequence[SecurityEvent], title: str, subtitle: str = "",
             story += [wrap, Spacer(1, 3 * mm)]
         story.append(Spacer(1, 3 * mm))
 
-    story.append(Paragraph("Detected alerts", h2))
+    story.append(Paragraph("Flagged flows (the model's guesses)", h2))
+    story.append(Paragraph(
+        "Each row is a flow the model flagged as possibly abnormal. The attack is a guess, not confirmed "
+        "— on normal internet traffic some are false positives, and for one flow either end may be the source.",
+        ParagraphStyle("snNote", fontName="Helvetica-Oblique", fontSize=8,
+                       textColor=colors.HexColor(_PDF_GRAY), spaceAfter=6)))
     cols = ["timestamp", "source_ip", "destination_ip", "destination_port", "protocol",
-            "anomaly_score", "severity", "verdict", "attack_type", "state", "action_taken"]
+            "severity", "attack_type", "state", "action_taken"]
     labels = dict(COLUMNS)
     rows = [[labels[c] for c in cols]]
     sev_rows: list = []
