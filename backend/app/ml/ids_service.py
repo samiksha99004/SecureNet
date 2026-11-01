@@ -157,6 +157,13 @@ class IDSService:
 
     def reset_verdicts(self) -> None:
         """Counters behind the dashboard's verdict tables (since the IDS was turned on)."""
+        # Per-session stats shown on the dashboard — reset on every ON so a new session does not
+        # inherit a previous run's totals (otherwise "FLOWS ANALYZED" keeps climbing from old
+        # captures while NORMAL/ABNORMAL read 0, which looks stuck/broken right after turning ON).
+        self.flows_analyzed = 0
+        self.flows_dropped = 0
+        self.anomalies_detected = 0
+        self.attacks_detected = 0
         self.flows_scored = 0
         self.flows_normal = 0          # stage 1: not unusual
         self.flows_flagged = 0         # stage 1: abnormal

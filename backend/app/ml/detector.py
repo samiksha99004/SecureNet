@@ -53,6 +53,12 @@ HYBRID_METRICS = "hybrid_metrics.json"
 
 BENIGN_LABELS = {"benign", "normal", "0"}
 MIN_GUESS = 0.005        # guesses below 0.5 % are not worth showing
+# The local model must be at least this sure of a specific attack class before it raises an alert.
+# This is a FLOOR applied on top of the admin's confidence setting (it only ever raises the bar,
+# never lowers it), so even if the stored setting drifts low the model can't fire on a weak guess —
+# the classic false positive (argmax lands on an attack class at ~20-40% while Benign is close
+# behind). Real attacks score ~99% here, so this never costs a true detection.
+MIN_LOCAL_CONFIDENCE = 0.70
 
 
 @dataclass
@@ -435,6 +441,7 @@ class Detector:
         proba, ok = self.local.score_batch(features_list)
         classes = self._classes()
         binx = self.local.benign_index()
+        floor = max(stage2_confidence, MIN_LOCAL_CONFIDENCE)   # never fire on a weak guess
         out: List[Optional[Detection]] = []
         for i in range(len(features_list)):
             if not ok[i]:
@@ -447,7 +454,7 @@ class Detector:
             conf = float(p[idx])
             benign_p = float(p[binx]) if binx >= 0 else None
             anomaly = (1.0 - benign_p) if benign_p is not None else conf
-            is_attack = label.lower() not in BENIGN_LABELS and conf >= stage2_confidence
+            is_attack = label.lower() not in BENIGN_LABELS and conf >= floor
             out.append(Detection(
                 anomaly_score=anomaly,
                 is_alert=is_attack,

@@ -85,11 +85,16 @@ export function IDSControlWidget({
   const ABNORMAL_THRESHOLD = 30;
   const liveAbnormal = isEnabled && recentTotal > 0 && recentAbnormalPct > ABNORMAL_THRESHOLD;
   const attackRows = recentRows.filter((r) => !isBenignLabel(r.label));
+  // Has ANY flow been scored since the IDS was turned on? `scored` only grows during a session
+  // (reset to 0 on each ON). We show "WAITING FOR TRAFFIC" ONLY before that first flow — once the
+  // IDS has seen any traffic, a momentary lull (empty 90s window) is just quiet NORMAL, never a
+  // flip back to "waiting". That mid-session flip was the reported bug.
+  const seenTraffic = (idsStatus?.verdicts?.scored ?? 0) > 0;
   const statusLabel = !idsStatus
     ? (isLoading ? 'CHECKING…' : 'STATUS UNKNOWN')
     : isOff
       ? 'IDS IS OFF'
-      : recentTotal === 0
+      : (recentTotal === 0 && !seenTraffic)
         ? 'WAITING FOR TRAFFIC…'
         : liveAbnormal
           ? 'ABNORMAL TRAFFIC DETECTED'

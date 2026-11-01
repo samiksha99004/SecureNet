@@ -91,7 +91,7 @@ class Settings(BaseSettings):
 
     # Alert emails: alerts are collected for this many seconds and sent as one
     # email per recipient (prevents an attack burst from flooding inboxes).
-    ALERT_EMAIL_BATCH_SECONDS: int = 30
+    ALERT_EMAIL_BATCH_SECONDS: int = 60   # wait ~1 min after abnormality starts before the first email (groups that minute's flags)
     # at most one attack email per this many seconds while the network stays abnormal
     ALERT_EMAIL_INTERVAL_SECONDS: int = 300
     ALERT_EMAIL_MAX_EVENTS: int = 50

@@ -80,8 +80,9 @@ def summarize(events: Sequence[SecurityEvent]) -> Dict[str, object]:
 
 
 def render_text(events: Sequence[SecurityEvent], title: str, offset_minutes: int,
-                period: Optional[str] = None) -> str:
-    """Plain-text report (oldest incident first)."""
+                period: Optional[str] = None, breakdown: Optional[Sequence[dict]] = None,
+                abnormal_pct: Optional[float] = None) -> str:
+    """Plain-text report (oldest incident first), with the live dashboard breakdown on top."""
     ordered = sorted(events, key=lambda e: e.timestamp)
     tz = tz_label(offset_minutes)
     now_local = to_local(utcnow(), offset_minutes).strftime("%d %b %Y, %H:%M:%S")
@@ -106,6 +107,19 @@ def render_text(events: Sequence[SecurityEvent], title: str, offset_minutes: int
         f"Top addresses    : {_counts([e.source_ip for e in ordered])}",
         f"Between hosts    : {_counts([e.destination_ip for e in ordered])}",
         "",
+    ]
+    # Live dashboard breakdown: every traffic class and its share (even 0.1%) — same as the app.
+    if breakdown:
+        lines += ["LIVE TRAFFIC BREAKDOWN (same as the dashboard - every class, even 0.1%)", LINE]
+        if abnormal_pct is not None:
+            lines.append(f"Attacks were {abnormal_pct:.1f}% of recent traffic.")
+        for r in breakdown:
+            label = str(r.get("label", "?"))
+            pct = float(r.get("pct", 0.0))
+            tag = "" if label.lower() in ("benign", "normal") else "  (attack)"
+            lines.append(f"    {label:<28} {pct:5.1f}%{tag}")
+        lines.append("")
+    lines += [
         "HOW TO READ THIS",
         LINE,
         "Each item below is a flow SecureNet's model flagged as POSSIBLY an attack. The attack name is",
