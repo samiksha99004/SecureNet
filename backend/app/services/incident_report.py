@@ -17,7 +17,7 @@ from typing import Dict, List, Optional, Sequence
 
 from app.models.security_event import SecurityEvent
 from app.services.verdict import (BENIGN_NAMES, UNKNOWN_GUESS, clean_guesses, guesses_text,
-                                  possible_attack)
+                                  possible_attack, pretty_label)
 from app.utils.timeutil import utcnow
 
 RULE = "=" * 72
@@ -73,7 +73,7 @@ def summarize(events: Sequence[SecurityEvent]) -> Dict[str, object]:
         "high": severities.get("high", 0),
         "medium": severities.get("medium", 0),
         "low": severities.get("low", 0),
-        "top_attack": Counter(_guess_name(e) for e in events).most_common(1)[0][0]
+        "top_attack": pretty_label(Counter(_guess_name(e) for e in events).most_common(1)[0][0])
         if events else None,
         "sources": len({e.source_ip for e in events}),
     }
@@ -103,7 +103,7 @@ def render_text(events: Sequence[SecurityEvent], title: str, offset_minutes: int
         LINE,
         f"Flagged flows    : {info['total']}",
         f"By severity      : High {info['high']} | Medium {info['medium']} | Low {info['low']}",
-        f"Model's guesses  : {_counts([_guess_name(e) for e in ordered])} (guesses, may be false positives)",
+        f"Model's guesses  : {_counts([pretty_label(_guess_name(e)) for e in ordered])} (guesses, may be false positives)",
         f"Top addresses    : {_counts([e.source_ip for e in ordered])}",
         f"Between hosts    : {_counts([e.destination_ip for e in ordered])}",
         "",
@@ -114,10 +114,10 @@ def render_text(events: Sequence[SecurityEvent], title: str, offset_minutes: int
         if abnormal_pct is not None:
             lines.append(f"Attacks were {abnormal_pct:.1f}% of recent traffic.")
         for r in breakdown:
-            label = str(r.get("label", "?"))
+            raw = str(r.get("label", "?"))
             pct = float(r.get("pct", 0.0))
-            tag = "" if label.lower() in ("benign", "normal") else "  (attack)"
-            lines.append(f"    {label:<28} {pct:5.1f}%{tag}")
+            tag = "" if raw.lower() in ("benign", "normal") else "  (attack)"
+            lines.append(f"    {pretty_label(raw):<28} {pct:5.1f}%{tag}")
         lines.append("")
     lines += [
         "HOW TO READ THIS",

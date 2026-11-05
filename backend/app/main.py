@@ -200,6 +200,11 @@ _frontend_dist = settings.resolve_path(settings.FRONTEND_DIST) if settings.FRONT
 if _frontend_dist and (_frontend_dist / "index.html").is_file():
     app.mount("/assets", StaticFiles(directory=_frontend_dist / "assets"), name="assets")
 
+    # index.html must NEVER be cached, so a rebuilt dashboard loads on the next reload (the
+    # hashed /assets are immutable and cache fine). Without this the browser/Electron app keeps
+    # an old index.html that still points at the old JS bundle, and new UI never appears.
+    _NO_CACHE = {"Cache-Control": "no-cache, no-store, must-revalidate", "Pragma": "no-cache", "Expires": "0"}
+
     @app.get("/{full_path:path}", include_in_schema=False)
     async def spa(full_path: str):
         """Serve static files, falling back to index.html for client-side routes."""
@@ -207,8 +212,8 @@ if _frontend_dist and (_frontend_dist / "index.html").is_file():
             return error_response(404, "Not Found")
         candidate = (_frontend_dist / full_path).resolve()
         if full_path and candidate.is_file() and Path(_frontend_dist) in candidate.parents:
-            return FileResponse(candidate)
-        return FileResponse(_frontend_dist / "index.html")
+            return FileResponse(candidate, headers=_NO_CACHE if candidate.name == "index.html" else None)
+        return FileResponse(_frontend_dist / "index.html", headers=_NO_CACHE)
 else:
     @app.get("/")
     async def root():

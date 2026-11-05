@@ -48,7 +48,7 @@ from app.services.cache import events_changed
 from app.services.notifier import get_notifier, get_recipients
 from app.utils.email import send_email
 from app.utils.desktop import notify_desktop   # backend-native Windows toast (works with the app closed)
-from app.services.verdict import ABNORMAL, BENIGN_NAMES, possible_attack
+from app.services.verdict import ABNORMAL, BENIGN_NAMES, possible_attack, pretty_label
 from app.websocket.manager import manager
 
 QUEUE_SIZE = 10_000
@@ -176,7 +176,8 @@ class IDSService:
         self._abn_episode = False         # currently inside an abnormal episode
         self._abn_last_desktop = 0.0      # last desktop pop (epoch)
         self.trend: deque = deque(maxlen=TREND_POINTS)   # (epoch, attack%) for the dashboard trend chart
-        self._last_store: dict = {}       # attack_type -> last epoch an event was stored (5-min throttle)
+        self._last_store_time = 0.0       # last epoch a (majority) event was stored (global 5-min throttle)
+        self._majority_attack: Optional[str] = None   # dominant attack in the recent window (only one stored to History)
         # Protection outcome tracking: after a block we wait, then tell the user whether the
         # network went benign again (success) or the attack is still active (failed).
         self._protection_pending: Optional[dict] = None   # {"ips": set, "verdict_at": epoch}
@@ -568,6 +569,10 @@ class IDSService:
         summary = self.verdict_summary()
         abnormal = summary["recent_total"] > 0 and summary["recent_abnormal_pct"] > ABNORMAL_PCT_THRESHOLD
         self._abnormal_now = abnormal
+        # Dominant (majority) attack in the recent window — the ONLY attack written to History and
+        # shown as the "Latest Unresolved Incident". Recomputed every maintenance tick (~5s).
+        _recent_attacks = [r for r in summary["recent"] if r["label"].lower() not in BENIGN_NAMES]
+        self._majority_attack = _recent_attacks[0]["label"] if _recent_attacks else None
         self.trend.append((time.time(), summary["recent_abnormal_pct"]))   # 5s-spaced attack-% history
         if not abnormal:
             self._abn_episode = False      # back to normal -> next abnormal starts a fresh episode
@@ -587,9 +592,9 @@ class IDSService:
     async def _send_desktop_abnormal(self, summary: dict) -> None:
         """Pop one desktop notification summarising the current abnormal traffic (every 3 min)."""
         attacks = [r for r in summary["recent"] if r["label"].lower() not in ("benign", "normal")]
-        top = attacks[0]["label"] if attacks else "Unknown"
+        top = pretty_label(attacks[0]["label"]) if attacks else "Unknown"   # display name only
         pct = summary["recent_abnormal_pct"]
-        breakdown = ", ".join(f"{r['label']} {r['pct']:.0f}%" for r in attacks[:3])
+        breakdown = ", ".join(f"{pretty_label(r['label'])} {r['pct']:.0f}%" for r in attacks[:3])
         payload = {
             "eventId": f"network-{int(time.time())}",
             "timestamp": to_iso_z(utcnow()),
@@ -744,14 +749,17 @@ class IDSService:
             await self._broadcast_score(flow, detection, severity, throttle=True)
             return None
 
-        # Store/alert at most ONE event per attack type per 5 min (history gets a row every ~5 min,
-        # not every second). Scoring/trend/breakdown are unaffected — they count every flow elsewhere.
-        store_key = detection.attack_type or "unclassified"
+        # Store ONLY the DOMINANT (majority) attack of the current abnormal episode, at most once
+        # per STORE_THROTTLE_SECONDS (~5 min). So History and the "Latest Unresolved Incident" show
+        # the main attack (e.g. DoS-GoldenEye at 68%), not one row per attack type. Scoring, the live
+        # breakdown and the trend still count every flow elsewhere and are unaffected.
         now = time.time()
-        if now - self._last_store.get(store_key, 0) < STORE_THROTTLE_SECONDS:
+        is_majority = (self._abnormal_now and self._majority_attack is not None
+                       and detection.attack_type == self._majority_attack)
+        if not is_majority or (now - self._last_store_time) < STORE_THROTTLE_SECONDS:
             await self._broadcast_score(flow, detection, severity, throttle=True)
             return None
-        self._last_store[store_key] = now
+        self._last_store_time = now
 
         # Record in the report whether Advanced Protection has blocked this attacker's IP.
         if flow.src_ip in self.blocker.blocked:

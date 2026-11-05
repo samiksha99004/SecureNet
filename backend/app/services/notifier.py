@@ -39,7 +39,7 @@ from app.models.user import AccountStatus, User, UserRole
 from app.services.incident_report import render_text, report_filename, server_offset_minutes, to_local, tz_label
 from app.utils.email import Attachment, EmailDeliveryError, send_email
 from app.utils.logger import logger
-from app.services.verdict import ABNORMAL, guesses_text, possible_attack
+from app.services.verdict import ABNORMAL, guesses_text, possible_attack, pretty_label
 from app.utils.timeutil import parse_iso_utc, to_iso_z, utcnow
 
 SEVERITY_COLORS = {"high": "#dc2626", "medium": "#d97706", "low": "#059669"}
@@ -198,10 +198,11 @@ def breakdown_lines(breakdown: Optional[Sequence[dict]]) -> list[str]:
     """Plain-text rows of the dashboard's live breakdown: every class with its %, biggest first."""
     rows: list[str] = []
     for r in (breakdown or []):
-        label = str(r.get("label", "?"))
+        raw = str(r.get("label", "?"))
+        label = pretty_label(raw)            # display name only
         pct = float(r.get("pct", 0.0))
-        tag = "" if _is_benign(label) else "  (attack)"
-        rows.append(f"  {label:<26} {pct:5.1f}%{tag}")
+        tag = "" if _is_benign(raw) else "  (attack)"
+        rows.append(f"  {label:<28} {pct:5.1f}%{tag}")
     return rows
 
 
@@ -241,9 +242,10 @@ def render_alert_email(alerts: Sequence[AlertInfo], kind: str = "new",
     ])
 
     def brow(r: dict) -> str:
-        label = str(r.get("label", "?"))
+        raw = str(r.get("label", "?"))
+        label = pretty_label(raw)            # display name only
         pct = float(r.get("pct", 0.0))
-        benign = _is_benign(label)
+        benign = _is_benign(raw)
         color = "#059669" if benign else "#dc2626"
         bar = max(2, min(100, round(pct)))
         return (
