@@ -52,6 +52,7 @@ from app.schemas.auth import (
     LoginRequest,
     LoginResendRequest,
     LoginVerifyRequest,
+    LogoutConfirm,
     OtpResendRequest,
     OtpVerifyRequest,
     OtpVerifyResponse,
@@ -509,11 +510,43 @@ async def refresh_tokens(request: RefreshRequest, db: AsyncSession = Depends(get
     return create_auth_response(user)
 
 
+async def _stop_ids_for_logout(email: str) -> None:
+    """Logging out turns monitoring OFF: stop detection, drop any protection blocks,
+    and remember OFF so it does not auto-start again at the next sign-in."""
+    from app.ml.ids_service import get_ids_service        # lazy: avoid an import cycle
+    from app.services.autostart import remember_ids_state
+    ids = get_ids_service()
+    try:
+        if ids.enabled:
+            await ids.stop()            # stops capture/detection and unblocks protection
+            ids.started_by = None
+        await remember_ids_state(False)  # don't come back on at the next start
+        logger.info(f"IDS + protection turned off on logout by: {email}")
+    except Exception as exc:            # logout must still succeed even if the IDS hiccups
+        logger.error(f"Could not fully stop IDS on logout for {email}: {exc}")
+
+
 @router.post("/logout", response_model=MessageResponse)
-async def logout(current_user: User = Depends(get_current_user)):
-    """Logout (tokens are discarded client-side)."""
-    logger.info(f"User logged out: {current_user.email}")
-    return MessageResponse(message="Logged out successfully")
+async def logout(
+    request: LogoutConfirm,
+    http: Request,
+    current_user: User = Depends(get_current_user),
+):
+    """Sign out: confirm with the account password.
+
+    On success monitoring is turned OFF (detection + Advanced Protection) and the
+    session tokens are discarded client-side. The password is required so an
+    attacker who reached an open session cannot sign out to disable the IDS.
+    """
+    if not current_user.password_hash or not await asyncio.to_thread(
+        verify_password, request.password, current_user.password_hash
+    ):
+        ratelimit.enforce("login-fail", http)
+        ratelimit.record("login-fail", http)
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Incorrect password")
+    await _stop_ids_for_logout(current_user.email)
+    logger.info(f"User logged out (password confirmed): {current_user.email}")
+    return MessageResponse(message="Logged out. Detection and protection are now off.")
 
 
 @router.get("/me", response_model=UserResponse)

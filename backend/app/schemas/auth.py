@@ -170,6 +170,12 @@ class LoginResendRequest(CamelModel):
     login_token: str = Field(..., min_length=10)
 
 
+class LogoutConfirm(CamelModel):
+    """Logging out needs the account password, so an attacker on an open session
+    cannot sign out to stop detection/protection."""
+    password: str = Field(..., min_length=1)
+
+
 class ChangePasswordRequest(CamelModel):
     """Step 1 of a password change: checked, then a code is emailed to the registered address."""
     current_password: str = Field(..., min_length=1)
