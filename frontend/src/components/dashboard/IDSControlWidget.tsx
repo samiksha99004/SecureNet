@@ -85,6 +85,12 @@ export function IDSControlWidget({
   const ABNORMAL_THRESHOLD = 30;
   const liveAbnormal = isEnabled && recentTotal > 0 && recentAbnormalPct > ABNORMAL_THRESHOLD;
   const attackRows = recentRows.filter((r) => !isBenignLabel(r.label));
+  // The "Latest Unresolved Incident" analysis always names the MAJORITY attack of the live
+  // window — `recent` is sorted by share, so attackRows[0] is the dominant class — shown with
+  // its breakdown %. This keeps the Possible Attack consistent with the LIVE TRAFFIC BREAKDOWN
+  // and never surfaces a stale or secondary class (e.g. a one-off Bot flow) while FTP is the
+  // real majority. Falls back to the stored event's own guess only if the window has no attack.
+  const topAttack = attackRows[0] ?? null;
   // Has ANY flow been scored since the IDS was turned on? `scored` only grows during a session
   // (reset to 0 on each ON). We show "WAITING FOR TRAFFIC" ONLY before that first flow — once the
   // IDS has seen any traffic, a momentary lull (empty 90s window) is just quiet NORMAL, never a
@@ -275,7 +281,10 @@ export function IDSControlWidget({
             <h3 className={styles.incidentTitle}>Latest Unresolved Incident</h3>
             <div className={styles.incidentGrid}>
               <DetailRow label="Verdict" value="Abnormal traffic" highlight />
-              <DetailRow label="Possible attack" value={possibleAttack(latestEvent)} />
+              <DetailRow
+                label="Possible attack"
+                value={topAttack ? `${prettyLabel(topAttack.label)} (${topAttack.pct.toFixed(1)}%)` : possibleAttack(latestEvent)}
+              />
               <DetailRow label="Severity" value={latestEvent.severity.toUpperCase()} />
               <DetailRow label="Source" value={`${latestEvent.sourceIp}:${latestEvent.sourcePort}`} />
               <DetailRow label="Destination" value={`${latestEvent.destinationIp}:${latestEvent.destinationPort}`} />
@@ -287,10 +296,16 @@ export function IDSControlWidget({
                 highlight={latestEvent.actionTaken === 'blocked'}
               />
             </div>
-            {latestEvent.detectionReason && (
+            {(topAttack || latestEvent.detectionReason) && (
               <div className={styles.reasonBox}>
                 <span className={styles.reasonLabel}>Detection Reason</span>
-                <p className={styles.reasonText}>{plainReason(latestEvent.detectionReason)}</p>
+                {/* Reason follows the LIVE majority too, so it never names a stale/secondary
+                    class (e.g. "Bot") while the real dominant attack is something else. */}
+                <p className={styles.reasonText}>
+                  {topAttack
+                    ? `Matches the pattern of ${prettyLabel(topAttack.label)} — ${topAttack.pct.toFixed(1)}% of recent traffic.`
+                    : plainReason(latestEvent.detectionReason)}
+                </p>
               </div>
             )}
           </div>
