@@ -49,6 +49,10 @@ async def test_verdict_tables_count_stage1_and_stage2(client, admin):
 
     ids = IDSService()
     ids.detector = SequenceDetector([normal(), normal(), cancelled(), ddos()])
+    # Incidents are stored only for the abnormal window's majority attack; set that state
+    # (normally computed by the maintenance loop) so the one confirmed DDoS flow is stored.
+    ids._abnormal_now = True
+    ids._majority_attack = "DDoS"
     await ids.process_flows([make_flow() for _ in range(4)])
 
     summary = ids.verdict_summary()
@@ -90,7 +94,9 @@ async def test_counters_restart_with_the_ids():
     assert ids.verdict_summary()["scored"] == 1
     ids.reset_verdicts()
     assert ids.verdict_summary() == {"scored": 0, "normal": 0, "abnormal": 0, "guesses": [],
-                                     "final_normal": 0, "final_abnormal": 0}
+                                     "final_normal": 0, "final_abnormal": 0,
+                                     "recent": [], "recent_total": 0, "recent_abnormal_pct": 0.0,
+                                     "trend": []}
 
 
 def test_possible_attack_wording():
@@ -105,8 +111,13 @@ def test_possible_attack_wording():
 
 async def test_attack_storm_cannot_flood_the_database(monkeypatch):
     monkeypatch.setattr(settings, "ALERT_STORE_MAX_PER_SOURCE_PER_MINUTE", 5)
+    # Isolate the per-source storm limiter from the 5-min majority throttle so this test
+    # exercises the storm cap specifically (the throttle is covered elsewhere).
+    monkeypatch.setattr("app.ml.ids_service.STORE_THROTTLE_SECONDS", 0)
     ids = IDSService()
     ids.detector = SequenceDetector([ddos() for _ in range(40)])
+    ids._abnormal_now = True
+    ids._majority_attack = "DDoS"
     await ids.process_flows([make_flow() for _ in range(40)])
     async with AsyncSessionLocal() as db:
         stored = (await db.execute(select(func.count()).select_from(SecurityEvent))).scalar_one()

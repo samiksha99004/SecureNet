@@ -82,7 +82,8 @@ async def test_securenet_user_can_switch_ids_but_nothing_else(client, admin, cap
     monkeypatch.setattr(ids, "stop", fake_stop)
     monkeypatch.setattr(network_monitor, "check_capture_available", lambda *a, **k: None)
     r = await client.post("/api/ids/control", headers=headers, json={"enabled": True})
-    assert r.status_code == 200 and calls == [("start", "monitor")]
+    # No mode in the request => start(None); start() then uses the saved Advanced Protection choice.
+    assert r.status_code == 200 and calls == [("start", None)]
 
     denied = [
         client.put("/api/settings/detection", headers=headers, json={"anomalyThreshold": 0.9}),
