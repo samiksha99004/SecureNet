@@ -73,6 +73,31 @@ PRESET_OFFSETS = {
 }
 
 
+# ── active owner (the logged-in account that owns new detections) ──────────────
+# Persisted next to the IDS on/off state so it survives a backend restart: the IDS stamps every
+# stored event with it, and each account's dashboard/alerts are filtered to its own events.
+
+def _active_owner_file():
+    return settings.ids_state_file.with_name("active-owner.txt")
+
+
+def _load_active_owner() -> Optional[str]:
+    try:
+        value = _active_owner_file().read_text(encoding="utf-8").strip()
+        return value or None
+    except OSError:
+        return None
+
+
+def _save_active_owner(owner_id: Optional[str]) -> None:
+    try:
+        path = _active_owner_file()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(owner_id or "", encoding="utf-8")
+    except OSError as exc:
+        logger.warning(f"Could not persist active owner: {exc}")
+
+
 BENIGN_GUESS = "Benign"            # Table 2 row: stage 2 cancelled the alarm
 UNCLASSIFIED_GUESS = "Unclassified"
 # The behavioural rules (scan/sweep/brute/flood/ICMP) still run internally, but they are NOT shown
@@ -138,6 +163,10 @@ class IDSService:
         self.started_at: Optional[float] = None
         # Who turned the IDS on (shown in the admin's alert email)
         self.started_by: Optional[dict] = None
+        # The account that currently owns detections: whoever is logged in (set on login / when the
+        # IDS is turned on). Every stored event is stamped with it, so each account sees only its own
+        # data and its alerts go only to that user. Persisted so it survives a backend restart.
+        self.active_owner_id: Optional[str] = _load_active_owner()
 
         self._queue: Optional[asyncio.Queue] = None
         self._loop: Optional[asyncio.AbstractEventLoop] = None
@@ -288,6 +317,23 @@ class IDSService:
             raise ValueError(f"Unknown mode '{mode}' (expected 'monitor' or 'protect')")
         if self.mode != DetectionMode.PROTECT:
             await self.blocker.unblock_all()
+
+    def set_active_owner(self, owner_id: Optional[str]) -> None:
+        """Remember which logged-in account owns new detections (and gets the alerts). Set on
+        sign-in and when the IDS is turned on; persisted so a backend restart keeps the owner."""
+        owner_id = str(owner_id) if owner_id else None
+        if owner_id != self.active_owner_id:
+            self.active_owner_id = owner_id
+            _save_active_owner(owner_id)
+            logger.info(f"IDS active owner set to {owner_id}")
+
+    def _owner_uuid(self):
+        """active_owner_id as a UUID for the SecurityEvent FK (None if unset/invalid)."""
+        try:
+            import uuid as _uuid
+            return _uuid.UUID(self.active_owner_id) if self.active_owner_id else None
+        except (TypeError, ValueError):
+            return None
 
     # ── configuration ────────────────────────────────────────────────────────
 
@@ -771,6 +817,7 @@ class IDSService:
 
         event = SecurityEvent(
             timestamp=utcnow(),
+            owner_id=self._owner_uuid(),     # the logged-in account this detection belongs to
             source_ip=flow.src_ip,
             source_port=flow.src_port,
             destination_ip=flow.dst_ip,

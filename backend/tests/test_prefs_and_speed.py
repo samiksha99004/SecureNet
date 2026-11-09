@@ -131,6 +131,7 @@ async def test_history_and_recipients_are_never_stale(client, captured_otps):
 
     ids = IDSService()
     ids.detector = FakeDetector(Detection(0.95, True, "DDoS", 0.99))
+    ids.active_owner_id = admin["user"]["id"]                        # the event belongs to boss2
     ids._abnormal_now = True                                         # abnormal window with DDoS majority
     ids._majority_attack = "DDoS"
     await ids.process_flow(make_flow())

@@ -78,6 +78,16 @@ def _reset_rate_limits():
     limiter.reset()
 
 
+@pytest.fixture(autouse=True)
+def _reset_active_owner():
+    """The IDS 'active owner' (who owns new detections) is process-wide and persisted; clear it
+    before each test so ownership never leaks between tests."""
+    from app.ml.ids_service import get_ids_service
+    get_ids_service().set_active_owner(None)
+    yield
+    get_ids_service().set_active_owner(None)
+
+
 @pytest.fixture
 def captured_otps(monkeypatch):
     """Capture OTP codes instead of emailing/logging them."""

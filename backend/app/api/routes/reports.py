@@ -42,20 +42,16 @@ async def list_daily_reports(
     db: AsyncSession = Depends(get_db),
 ):
     """Days with detected attacks, newest first (empty when nothing has happened; cached until events change)."""
-    return await cached(f"events:daily:{tz_offset}", lambda: _daily_reports(tz_offset), ttl=300)
+    owner_id = current_user.id
+    return await cached(f"events:daily:{owner_id}:{tz_offset}", lambda: _daily_reports(owner_id, tz_offset), ttl=300)
 
 
-async def cached_daily_local() -> list[DailyReport]:
-    """The daily reports in this computer's time zone (what its browser asks for), prepared ahead."""
-    offset = incident_report.server_offset_minutes()
-    return await cached(f"events:daily:{offset}", lambda: _daily_reports(offset), ttl=300)
-
-
-async def _daily_reports(tz_offset: int) -> list[DailyReport]:
+async def _daily_reports(owner_id: str, tz_offset: int) -> list[DailyReport]:
     async with AsyncSessionLocal() as db:
         rows = (await db.execute(
             select(SecurityEvent.timestamp, SecurityEvent.severity, SecurityEvent.attack_type, SecurityEvent.source_ip,
                    SecurityEvent.attack_guesses)
+            .where(SecurityEvent.owner_id == owner_id)
             .order_by(SecurityEvent.timestamp)
         )).all()
     days: dict[date, list] = defaultdict(list)
@@ -91,7 +87,8 @@ async def download_daily_report(
     """That day's report (local time) as .txt or .pdf."""
     start, end = incident_report.local_day_bounds_utc(day, tz_offset)
     events = (await db.execute(
-        select(SecurityEvent).where(SecurityEvent.timestamp >= start, SecurityEvent.timestamp < end)
+        select(SecurityEvent).where(SecurityEvent.timestamp >= start, SecurityEvent.timestamp < end,
+                                    SecurityEvent.owner_id == current_user.id)
         .order_by(SecurityEvent.timestamp).limit(MAX_REPORT_EVENTS)
     )).scalars().all()
     if not events:

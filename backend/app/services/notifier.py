@@ -62,11 +62,13 @@ class AlertInfo:
     reason: Optional[str]
     confidence: Optional[float] = None
     guesses: Optional[list] = None
+    owner_id: Optional[str] = None
 
     @classmethod
     def from_event(cls, e: SecurityEvent) -> "AlertInfo":
         return cls(
             event_id=str(e.id),
+            owner_id=str(e.owner_id) if e.owner_id else None,
             timestamp=to_iso_z(e.timestamp),
             severity=e.severity.value,
             attack_type=e.attack_type,
@@ -102,16 +104,28 @@ def wanted(alert: AlertInfo, prefs: NotificationSettings) -> bool:
     )
 
 
-async def get_recipients(db, prefs: Optional[NotificationSettings]) -> List[str]:
-    """Who gets attack emails: every active SecureNet user who has them switched on, plus
-    the optional extra address from Settings. Admins never do — the admin sends the alerts
-    (from SMTP_USER); an extra address that belongs to an admin is ignored too."""
-    users = (await db.execute(
-        select(User.email, User.role, User.email_alerts).where(User.account_status == AccountStatus.ACTIVE)
-    )).all()
-    # Abnormal-traffic alerts go to every active user who has email alerts on — INCLUDING admins
-    # (owner's request 2026-10-27: the admin account projectids99 must receive the alert too).
-    recipients = {email.strip().lower() for email, role, wants in users if email and wants}
+async def get_recipients(db, prefs: Optional[NotificationSettings], owner_id: Optional[str] = None) -> List[str]:
+    """Who gets attack emails, plus the optional extra address from Settings.
+
+    Per-account model: when `owner_id` is given (the account that owns the events, i.e. the user
+    who was logged in when they were detected), the alert goes ONLY to that account — so each user
+    gets their own attacks. Without an owner (e.g. a shared status view or events with no owner) it
+    falls back to every active account with email alerts on."""
+    if owner_id is not None:
+        try:
+            owner_uuid = uuid.UUID(str(owner_id))      # the User.id column is a UUID
+        except (TypeError, ValueError):
+            owner_uuid = None
+        row = (await db.execute(
+            select(User.email, User.email_alerts).where(
+                User.id == owner_uuid, User.account_status == AccountStatus.ACTIVE)
+        )).first() if owner_uuid else None
+        recipients = {row[0].strip().lower()} if (row and row[0] and row[1]) else set()
+    else:
+        users = (await db.execute(
+            select(User.email, User.email_alerts).where(User.account_status == AccountStatus.ACTIVE)
+        )).all()
+        recipients = {email.strip().lower() for email, wants in users if email and wants}
     if prefs is not None and prefs.email_address:
         recipients.add(prefs.email_address.strip().lower())
     return sorted(recipients)
@@ -406,7 +420,10 @@ class AlertNotifier:
             alerts = [a for a in pending if wanted(a, prefs)]
             if not alerts:
                 return 0
-            recipients = await get_recipients(db, prefs)
+            # Per-account: the email goes to the account that owns these events (whoever was logged
+            # in when they were detected). One user is logged in at a time, so all share one owner.
+            owner_id = next((a.owner_id for a in alerts if a.owner_id), None)
+            recipients = await get_recipients(db, prefs, owner_id)
             if not recipients:
                 return 0
             events = await fetch_events(db, alerts)

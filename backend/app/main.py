@@ -56,11 +56,11 @@ async def lifespan(app: FastAPI):
     resume = asyncio.create_task(resume_after_restart(), name="ids-resume")
     # open database connections now, prepare the dashboard answers before the first page,
     # and keep the cloud database awake while SecureNet is in use
+    # Only GLOBAL answers are primed; the event-based dashboard/feed/report answers are now
+    # per-account (owner-scoped), so they load on each account's first request instead.
     cache.set_primers([
-        dashboard.cached_summary, dashboard.cached_protocols, dashboard.cached_top_sources,
-        notifications.cached_feed, settings_routes.cached_detection_settings, support.cached_contact,
-        reports.cached_daily_local, settings_routes.cached_all_settings, settings_routes.cached_whitelist,
-        notifications.cached_recipients,
+        settings_routes.cached_detection_settings, support.cached_contact,
+        settings_routes.cached_all_settings, settings_routes.cached_whitelist,
     ])
     prepare = asyncio.create_task(_prepare(), name="prepare-dashboard")
     awake = asyncio.create_task(

@@ -8,10 +8,15 @@ from app.models.security_event import (
 )
 
 
-async def add_event(ts: datetime, severity=SeverityLevel.HIGH, attack="DDoS", src="203.0.113.9"):
+async def add_event(ts: datetime, severity=SeverityLevel.HIGH, attack="DDoS", src="203.0.113.9", owner=None):
+    import uuid as _uuid
+    from app.ml.ids_service import get_ids_service
+    if owner is None:                                   # default: the account that is "logged in"
+        oid = get_ids_service().active_owner_id
+        owner = _uuid.UUID(oid) if oid else None
     async with AsyncSessionLocal() as db:
         db.add(SecurityEvent(
-            timestamp=ts, source_ip=src, source_port=40000, destination_ip="192.168.1.10",
+            timestamp=ts, owner_id=owner, source_ip=src, source_port=40000, destination_ip="192.168.1.10",
             destination_port=443, protocol=Protocol.TCP, anomaly_score=0.91, severity=severity,
             attack_type=attack, confidence=0.9, mode=DetectionMode.MONITOR, state=EventState.ACTIVE,
             action_taken=ActionTaken.ALERTED, detection_reason="unit test",

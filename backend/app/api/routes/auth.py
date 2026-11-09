@@ -102,6 +102,11 @@ def normalize_email(email: str) -> str:
 def create_auth_response(user: User) -> AuthResponse:
     """Create authentication response with a fresh token pair"""
     remember_user(user)   # the dashboard that opens next needs no user lookup
+    try:
+        from app.ml.ids_service import get_ids_service   # lazy: avoid an import cycle
+        get_ids_service().set_active_owner(str(user.id))  # this account now owns new detections + alerts
+    except Exception as exc:
+        logger.warning(f"Could not set IDS active owner for {user.email}: {exc}")
     return AuthResponse(
         user=UserResponse.model_validate(user),
         tokens=AuthTokens(

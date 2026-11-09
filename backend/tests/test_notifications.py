@@ -13,10 +13,15 @@ from tests.conftest import register
 
 
 async def make_event(severity=SeverityLevel.HIGH, action=ActionTaken.ALERTED, attack="DDoS",
-                     src="203.0.113.7") -> SecurityEvent:
+                     src="203.0.113.7", owner=None) -> SecurityEvent:
+    import uuid as _uuid
+    from app.ml.ids_service import get_ids_service
+    if owner is None:                                   # default: the account that is "logged in"
+        oid = get_ids_service().active_owner_id
+        owner = _uuid.UUID(oid) if oid else None
     async with AsyncSessionLocal() as db:
         event = SecurityEvent(
-            timestamp=utcnow(), source_ip=src, source_port=50000,
+            timestamp=utcnow(), owner_id=owner, source_ip=src, source_port=50000,
             destination_ip="192.168.1.5", destination_port=80, protocol=Protocol.TCP,
             anomaly_score=0.9, severity=severity, attack_type=attack, confidence=0.95,
             mode=DetectionMode.PROTECT, state=EventState.ACTIVE, action_taken=action,
@@ -48,11 +53,12 @@ def sent(monkeypatch):
     return mails
 
 
-async def test_alerts_are_batched_to_all_registered_users(client, captured_otps, sent):
-    """Alerts go to every active SecureNet user who has them on — including the admin — plus
-    the optional extra address."""
+async def test_alerts_go_to_the_event_owner(client, captured_otps, sent):
+    """Per-account: an attack email goes to the account that owns the events (the user who was
+    logged in when they were detected), plus the optional extra address — not to other accounts.
+    `analyst` registers last, so they are the active owner here."""
     await register(client, captured_otps, email="admin@example.com", name="Owner Admin")       # first = admin
-    await register(client, captured_otps, email="analyst@example.com", name="Asha Rao")
+    await register(client, captured_otps, email="analyst@example.com", name="Asha Rao")         # active owner
     await set_prefs(email_enabled=True, email_address="soc@example.com",
                     alert_on_high=True, alert_on_medium=False, alert_on_low=False, alert_on_block=True)
 
@@ -62,10 +68,11 @@ async def test_alerts_are_batched_to_all_registered_users(client, captured_otps,
     notifier.enqueue(await make_event(SeverityLevel.LOW, ActionTaken.BLOCKED, "SSH-Bruteforce"))  # blocked -> kept
     assert await notifier.flush() == 2
 
-    # one email: every active user with alerts on (incl. the admin) + the extra address
+    # one email: the owner (analyst) + the extra address — NOT the admin / other accounts
     assert len(sent) == 1
     [mail] = sent
-    assert mail["to"] == ["admin@example.com", "analyst@example.com", "soc@example.com"]
+    assert mail["to"] == ["analyst@example.com", "soc@example.com"]
+    assert "admin@example.com" not in mail["to"]
     assert mail["subject"].startswith("[SecureNet] Abnormal network found")
     assert not mail["subject"].startswith("[SecureNet Admin]")
     assert "Bot" not in mail["text"]                    # the filtered-out medium alert
