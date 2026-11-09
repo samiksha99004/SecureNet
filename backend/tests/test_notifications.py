@@ -50,7 +50,7 @@ def sent(monkeypatch):
 async def test_alerts_are_batched_to_all_registered_users(client, captured_otps, sent):
     """Alerts go from the admin's Gmail to every SecureNet user; the admin gets none."""
     await register(client, captured_otps, email="admin@example.com", name="Owner Admin")       # first = admin
-    await register(client, captured_otps, email="analyst@example.com", name="Asha Rao", phone="+919000000001")
+    await register(client, captured_otps, email="analyst@example.com", name="Asha Rao")
     await set_prefs(email_enabled=True, email_address="soc@example.com",
                     alert_on_high=True, alert_on_medium=False, alert_on_low=False, alert_on_block=True)
 

@@ -84,7 +84,6 @@ function normaliseUser(raw: Record<string, unknown>): User | null {
     createdAt: str('createdAt', 'created_at') ?? '',
     lastLoginAt: str('lastLoginAt', 'last_login_at'),
     avatarUrl: str('avatarUrl', 'avatar_url'),
-    phoneNumber: str('phoneNumber', 'phone_number'),
     emailAlerts: (raw.emailAlerts ?? raw.email_alerts) !== false,
   };
 }
@@ -196,7 +195,7 @@ export async function confirmProfileChange(changeToken: string, otp: string): Pr
   return user;
 }
 
-/** PUT /auth/profile — verify and update name / phone / email directly (no emailed code). */
+/** PUT /auth/profile — verify and update name / email directly (no emailed code). */
 export async function updateProfile(request: ProfileChangeRequest): Promise<User> {
   const user = await apiClient.put<User>('/auth/profile', request);
   storeUser(user);

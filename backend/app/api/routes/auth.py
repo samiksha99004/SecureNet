@@ -187,7 +187,7 @@ def _email_failure_detail() -> str:
 
 @router.post("/signup", response_model=MessageResponse)
 async def signup(request: SignupRequest, http: Request, db: AsyncSession = Depends(get_db)):
-    """Registration step 1: full name, email and phone number -> a code is emailed.
+    """Registration step 1: full name and email -> a code is emailed.
 
     Steps 2-3 are /otp/verify (code) and /signup/complete (password). The
     account only becomes usable once the password is set.
@@ -201,13 +201,11 @@ async def signup(request: SignupRequest, http: Request, db: AsyncSession = Depen
     if existing:
         # Unfinished registration: refresh the details and send a new code.
         existing.full_name = request.full_name
-        existing.phone_number = request.phone_number
         existing.password_hash = None
     else:
         db.add(User(
             email=email,
             full_name=request.full_name,
-            phone_number=request.phone_number,
             password_hash=None,
             role=UserRole.VIEWER,  # decided when the account is completed
             account_status=AccountStatus.PENDING_VERIFICATION,
@@ -571,9 +569,9 @@ async def update_preferences(
     return UserResponse.model_validate(user)
 
 
-# ── Change your own details (name / phone / email) — confirmed by an emailed code ──
+# ── Change your own details (name / email) — confirmed by an emailed code ──
 
-PROFILE_FIELDS = {"full_name": "name", "phone_number": "phone number", "email": "email address"}
+PROFILE_FIELDS = {"full_name": "name", "email": "email address"}
 
 
 def _mask(email: str) -> str:
@@ -592,8 +590,6 @@ async def request_profile_change(
     changes: dict[str, str] = {}
     if request.full_name is not None and request.full_name != current_user.full_name:
         changes["full_name"] = request.full_name
-    if request.phone_number is not None and request.phone_number != (current_user.phone_number or ""):
-        changes["phone_number"] = request.phone_number
     if request.email is not None:
         new_email = normalize_email(request.email)
         if new_email != normalize_email(current_user.email):
@@ -652,7 +648,7 @@ async def confirm_profile_change(
             await db.commit()  # keep the used code used
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
                                 detail="This email is already used by another account.")
-    for field in ("full_name", "phone_number", "email"):
+    for field in ("full_name", "email"):
         if field in changes:
             setattr(user, field, changes[field])
     await db.commit()
@@ -677,14 +673,12 @@ async def update_profile(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Update name / phone / email directly — the input is validated and saved at once
-    (no emailed code). The schema already checks the phone/email format ("verify"),
+    """Update name / email directly — the input is validated and saved at once
+    (no emailed code). The schema already checks the email format ("verify"),
     and a changed email is still checked for uniqueness. The old address is notified."""
     changes: dict[str, str] = {}
     if request.full_name is not None and request.full_name != current_user.full_name:
         changes["full_name"] = request.full_name
-    if request.phone_number is not None and request.phone_number != (current_user.phone_number or ""):
-        changes["phone_number"] = request.phone_number
     if request.email is not None:
         new_email = normalize_email(request.email)
         if new_email != normalize_email(current_user.email):
@@ -702,7 +696,7 @@ async def update_profile(
         if taken:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
                                 detail="This email is already used by another account.")
-    for field in ("full_name", "phone_number", "email"):
+    for field in ("full_name", "email"):
         if field in changes:
             setattr(user, field, changes[field])
     await db.commit()

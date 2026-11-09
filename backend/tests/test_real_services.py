@@ -55,7 +55,7 @@ async def test_disabled_email_raises_instead_of_pretending(monkeypatch):
 
 async def test_signup_without_email_setup_is_refused(client):
     r = await client.post("/api/auth/signup", json={
-        "fullName": "Real Person", "email": "real.person@gmail.com", "phoneNumber": "+919876543210",
+        "fullName": "Real Person", "email": "real.person@gmail.com",
     })
     assert r.status_code == 503
     assert "can't send emails yet" in r.json()["message"] and ".env" not in r.json()["message"]

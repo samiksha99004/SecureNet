@@ -22,7 +22,7 @@ async def test_second_user_is_viewer(client, captured_otps):
 async def test_otp_resend_then_verify(client, captured_otps, monkeypatch):
     """Regression: a resend used to leave two OTP rows → HTTP 500 on verify."""
     email = "resend@example.com"
-    r = await client.post("/api/auth/signup", json={"fullName": "Re Send", "email": email, "phoneNumber": "9876543210"})
+    r = await client.post("/api/auth/signup", json={"fullName": "Re Send", "email": email})
     assert r.status_code == 200
     first = captured_otps[email]
 
@@ -71,17 +71,11 @@ async def test_validation_error_message(client):
     assert "Passwords do not match" in r.json()["message"]
 
 
-async def test_signup_rejects_bad_phone(client, captured_otps):
-    r = await client.post("/api/auth/signup", json={"fullName": "Pho Ne", "email": "p@example.com", "phoneNumber": "12ab"})
-    assert r.status_code == 422
-    assert "phone number" in r.json()["message"]
-
-
 async def test_full_registration_flow(client, captured_otps):
     """Details -> code -> password -> signed in; afterwards email + password works."""
     email = "new.user@example.com"
     r = await client.post("/api/auth/signup", json={
-        "fullName": "  New User ", "email": email, "phoneNumber": "+91 98765-43210"})
+        "fullName": "  New User ", "email": email})
     assert r.status_code == 200, r.text
     assert email in r.json()["message"]
 
@@ -107,14 +101,14 @@ async def test_full_registration_flow(client, captured_otps):
         "setupToken": token, "password": "NewPassw0rd", "confirmPassword": "NewPassw0rd"})
     assert r.status_code == 200, r.text
     user = r.json()["user"]
-    assert user["fullName"] == "New User" and user["phoneNumber"] == "+919876543210"
+    assert user["fullName"] == "New User"
     assert user["accountStatus"] == "active" and user["role"] == "admin"  # first account
 
     # Token cannot be reused; the email cannot register again
     r = await client.post("/api/auth/signup/complete", json={
         "setupToken": token, "password": "Other0000", "confirmPassword": "Other0000"})
     assert r.status_code == 400
-    r = await client.post("/api/auth/signup", json={"fullName": "Again", "email": email, "phoneNumber": "9876543210"})
+    r = await client.post("/api/auth/signup", json={"fullName": "Again", "email": email})
     assert r.status_code == 400 and "already registered" in r.json()["message"]
 
     # Next time: email + password
@@ -124,7 +118,7 @@ async def test_full_registration_flow(client, captured_otps):
 
 async def test_access_token_cannot_complete_signup(client, admin, captured_otps):
     auth, _ = admin
-    await client.post("/api/auth/signup", json={"fullName": "Pending", "email": "pend@example.com", "phoneNumber": "9876543210"})
+    await client.post("/api/auth/signup", json={"fullName": "Pending", "email": "pend@example.com"})
     r = await client.post("/api/auth/signup/complete", json={
         "setupToken": auth["tokens"]["accessToken"], "password": "Passw0rd1", "confirmPassword": "Passw0rd1"})
     assert r.status_code == 400

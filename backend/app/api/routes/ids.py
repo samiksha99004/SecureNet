@@ -115,7 +115,7 @@ async def control_ids(request: IDSControlRequest, current_user: User = Depends(g
             else:
                 await ids.start(request.mode)   # None ⇒ start() uses the saved mode (reload_config)
                 ids.started_by = {"name": current_user.full_name, "email": current_user.email,
-                                  "phone": current_user.phone_number, "role": current_user.role.value}
+                                  "role": current_user.role.value}
                 logger.info(f"IDS started by {current_user.email} (mode={ids.mode.value})")
                 await remember_ids_state(True, ids.started_by)
         except CaptureUnavailable as exc:

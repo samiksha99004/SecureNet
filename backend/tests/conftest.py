@@ -93,10 +93,9 @@ def captured_otps(monkeypatch):
     return codes
 
 
-async def register(client, captured_otps, email="admin@example.com", password="Passw0rd!", name="Admin",
-                   phone="+919876543210"):
+async def register(client, captured_otps, email="admin@example.com", password="Passw0rd!", name="Admin"):
     """Full registration: details -> emailed code -> password. Returns the auth response JSON."""
-    r = await client.post("/api/auth/signup", json={"fullName": name, "email": email, "phoneNumber": phone})
+    r = await client.post("/api/auth/signup", json={"fullName": name, "email": email})
     assert r.status_code == 200, r.text
     r = await client.post("/api/auth/otp/verify", json={"email": email, "otp": captured_otps[email]})
     assert r.status_code == 200, r.text
