@@ -16,7 +16,7 @@ from datetime import date, datetime, timedelta
 from typing import Dict, List, Optional, Sequence
 
 from app.models.security_event import SecurityEvent
-from app.services.verdict import (BENIGN_NAMES, UNKNOWN_GUESS, clean_guesses,
+from app.services.verdict import (BENIGN_NAMES, UNKNOWN_GUESS, clean_guesses, guesses_text,
                                   possible_attack, pretty_label)
 from app.utils.timeutil import utcnow
 
@@ -130,6 +130,13 @@ def render_text(events: Sequence[SecurityEvent], title: str, offset_minutes: int
         lines += [
             f"#{number}  {_fmt_time(event.timestamp, offset_minutes)}",
             f"    Attack        : {possible_attack(event.attack_type, event.confidence, event.attack_guesses)}",
+        ]
+        # Every attack detected in this incident with its exact share of traffic (the real
+        # breakdown, not a single guess) — e.g. "FTP-BruteForce 51%, Cross Site Scripting 48%, Bot 1%".
+        all_attacks = guesses_text(event.attack_guesses)
+        if all_attacks and all_attacks != "-":
+            lines.append(f"    All attacks   : {all_attacks}")
+        lines += [
             f"    Severity      : {event.severity.value.upper()}",
             f"    Source        : {event.source_ip}:{event.source_port}",
             f"    Destination   : {event.destination_ip}:{event.destination_port} ({event.protocol.value})",

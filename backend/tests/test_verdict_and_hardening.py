@@ -74,16 +74,17 @@ async def test_verdict_tables_count_stage1_and_stage2(client, admin):
     assert body["verdicts"]["abnormal"] == 2 and body["verdicts"]["finalNormal"] == 3
     assert {"label": "Benign", "flows": 1, "cancelled": True} in body["verdicts"]["guesses"]
 
-    # only the confirmed abnormal flow became an incident, with its guesses kept
+    # only the confirmed abnormal flow became an incident; its stored guesses are the LIVE breakdown
+    # (every attack's exact share of the window) — DDoS was 1 of 4 flows = 25%.
     async with AsyncSessionLocal() as db:
         events = (await db.execute(select(SecurityEvent))).scalars().all()
     assert len(events) == 1 and events[0].attack_guesses[0]["label"] == "DDoS"
 
-    # the incident is worded as abnormal traffic with a possible attack
+    # the incident is worded as abnormal traffic with the attack at its real % of traffic
     event = (await client.get("/api/events", headers=headers)).json()["data"][0]
-    assert event["attackGuesses"][0] == {"label": "DDoS", "probability": 0.97}
+    assert event["attackGuesses"][0] == {"label": "DDoS", "probability": 0.25}
     feed = (await client.get("/api/notifications", headers=headers)).json()
-    assert feed[0]["verdict"] == "abnormal" and feed[0]["possibleAttack"] == "DDoS (97%)"
+    assert feed[0]["verdict"] == "abnormal" and feed[0]["possibleAttack"] == "DDoS (25%)"
     assert feed[0]["message"].startswith("Abnormal traffic detected from")
 
 
@@ -262,4 +263,4 @@ def test_csv_export_cannot_run_formulas():
     event.state, event.action_taken = EventState.ACTIVE, ActionTaken.ALERTED
     text = exporters.to_csv([event]).decode("utf-8-sig")
     assert "'=HYPERLINK" in text and "'@SUM(A1)" in text and "'+1" in text and "'-2+3" in text
-    assert "Abnormal traffic detected" in text and "Possible Attack" in text
+    assert "Abnormal traffic detected" in text and "Top Attack" in text

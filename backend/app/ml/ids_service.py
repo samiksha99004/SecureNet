@@ -829,6 +829,15 @@ class IDSService:
             action = ActionTaken.ALERTED
             reason = detection.reason
 
+        # Store the REAL live breakdown (every attack class and its exact % of the recent window) with
+        # this incident, and set the confidence to the majority attack's actual share — so the report /
+        # PDF show the exact mix (e.g. "FTP 51%, XSS 48%, Bot 1%"), not a single per-flow guess.
+        _recent = self.verdict_summary().get("recent", [])
+        breakdown_guesses = [{"label": r["label"], "probability": round(float(r["pct"]) / 100.0, 4)}
+                             for r in _recent if str(r["label"]).lower() not in BENIGN_NAMES]
+        majority_share = next((round(float(r["pct"]) / 100.0, 4) for r in _recent
+                               if r["label"] == self._majority_attack), None)
+
         event = SecurityEvent(
             timestamp=utcnow(),
             owner_id=self._owner_uuid(),     # the logged-in account this detection belongs to
@@ -840,13 +849,13 @@ class IDSService:
             anomaly_score=round(detection.anomaly_score, 6),
             severity=severity,
             attack_type=detection.attack_type,
-            confidence=detection.confidence,
+            confidence=majority_share if majority_share is not None else detection.confidence,
             mode=self.mode,
             state=EventState.ACTIVE,
             action_taken=action,
             detection_reason=reason,
             contributing_features=detection.top_features or None,
-            attack_guesses=detection.guesses or None,
+            attack_guesses=breakdown_guesses or detection.guesses or None,
             flow_duration_ms=flow.duration_ms,
             bytes_sent=flow.fwd_bytes,
             bytes_received=flow.bwd_bytes,
