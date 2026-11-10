@@ -575,7 +575,7 @@ class IDSService:
             "message": f"{title}. {action}",
             "desktopPop": True,          # in-app popup + sound when the app is open
         }
-        await manager.send_alert(payload)
+        await manager.send_alert(payload, self.active_owner_id)   # only the logged-in account
         await notify_desktop(title, f"{body} {action}")   # OS toast — shows even with the app closed
         await self._email_protection_verdict(title, body, action, ips)
 
@@ -659,7 +659,7 @@ class IDSService:
             "message": f"Abnormal network traffic — attacks are {pct:.0f}% of recent flows ({breakdown}).",
             "desktopPop": True,          # in-app popup when the app is open
         }
-        await manager.send_alert(payload)
+        await manager.send_alert(payload, self.active_owner_id)   # only the logged-in account
         # OS desktop toast straight from the backend → shows even when SecureNet is NOT open
         await notify_desktop("Abnormal network traffic detected",
                              f"Attacks are {pct:.0f}% of recent flows ({breakdown}). Open SecureNet to see why.")
@@ -848,7 +848,7 @@ class IDSService:
             self._last_blocked_event_id = str(event.id)   # so "click to view" opens the block
 
         await self._broadcast_score(flow, detection, severity, throttle=False)
-        await manager.send_alert(alert_payload(event))
+        await manager.send_alert(alert_payload(event), str(event.owner_id) if event.owner_id else None)
         # email only while the network is ABNORMAL (attacks > 40% of recent flows); the notifier
         # then sends at episode start + every ALERT_EMAIL_INTERVAL_SECONDS (10 min) while it lasts.
         if self._abnormal_now:

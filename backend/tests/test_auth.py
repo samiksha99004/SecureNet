@@ -3,6 +3,31 @@
 from tests.conftest import register
 
 
+async def test_single_session_signs_out_the_previous_user(client, captured_otps, monkeypatch):
+    """Only one account may be signed in at a time: a new sign-in invalidates the previous
+    user's tokens (their browser is signed out), and a sign-out invalidates its own."""
+    from app.core.config import settings
+    monkeypatch.setattr(settings, "SINGLE_SESSION_ENFORCED", True)
+
+    a = await register(client, captured_otps, email="a@example.com")
+    ha = {"Authorization": f"Bearer {a['tokens']['accessToken']}"}
+    assert (await client.get("/api/auth/me", headers=ha)).status_code == 200
+
+    # a second account signs in -> the first account's access + refresh tokens stop working
+    b = await register(client, captured_otps, email="b@example.com", name="Bee")
+    hb = {"Authorization": f"Bearer {b['tokens']['accessToken']}"}
+    assert (await client.get("/api/auth/me", headers=ha)).status_code == 401   # first user signed out
+    assert (await client.get("/api/auth/me", headers=hb)).status_code == 200   # second user active
+    assert (await client.post("/api/auth/refresh",
+                              json={"refreshToken": a["tokens"]["refreshToken"]})).status_code == 401
+
+    # the active (second) user can still refresh, and the refreshed token keeps working
+    r = await client.post("/api/auth/refresh", json={"refreshToken": b["tokens"]["refreshToken"]})
+    assert r.status_code == 200
+    hb2 = {"Authorization": f"Bearer {r.json()['tokens']['accessToken']}"}
+    assert (await client.get("/api/auth/me", headers=hb2)).status_code == 200
+
+
 async def test_first_user_is_admin_and_camelcase(client, captured_otps):
     auth = await register(client, captured_otps)
     user = auth["user"]

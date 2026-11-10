@@ -31,6 +31,7 @@ os.environ["IDS_ON_AT_STARTUP"] = "false"   # tests start the IDS themselves
 # subprocess). Tests mock NetworkMonitor / capture availability, so force this path.
 os.environ["CAPTURE_SOURCE"] = "scapy"
 os.environ["ALERT_EMAIL_INTERVAL_SECONDS"] = "300"   # deterministic email spacing in tests
+os.environ["SINGLE_SESSION_ENFORCED"] = "false"      # tests use several users' tokens at once
 os.environ["ALLOWED_HOSTS"] = "localhost,127.0.0.1,::1,test,testserver"
 
 import pytest  # noqa: E402

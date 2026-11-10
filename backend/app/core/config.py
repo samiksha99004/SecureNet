@@ -115,6 +115,10 @@ class Settings(BaseSettings):
     # addresses + loopback/link-local, which are always protected. Keeps the host safe.
     PROTECTION_NEVER_BLOCK: str = ""
 
+    # Only ONE account may be signed in at a time: a new sign-in (or sign-out) invalidates every
+    # other session's tokens, so other browsers are signed out automatically. Off in tests.
+    SINGLE_SESSION_ENFORCED: bool = True
+
     # Packet capture / flow assembly
     CAPTURE_SOURCE: str = "scapy"        # "scapy" (built-in) or "local_csv" (our CICFlowMeter-4.0 pipeline)
     LIVE_CSV_DIR: str = r"F:\Intrusion_Detection-System\live_ids\csv"  # CsvFlowSource watches this (used when CAPTURE_SOURCE=local_csv)

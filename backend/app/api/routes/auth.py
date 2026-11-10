@@ -10,6 +10,7 @@ import secrets
 import string
 import uuid
 from datetime import timedelta
+from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy import func, select, update
@@ -39,6 +40,7 @@ from app.core.security import (
     verify_password,
 )
 from app.db.base import get_db
+from app.services import active_session
 from app.models.otp import OTP
 from app.models.user import AccountStatus, AuthProvider, User, UserRole
 from app.schemas.auth import (
@@ -99,9 +101,15 @@ def normalize_email(email: str) -> str:
     return email.strip().lower()
 
 
-def create_auth_response(user: User) -> AuthResponse:
-    """Create authentication response with a fresh token pair"""
+def create_auth_response(user: User, sid: Optional[str] = None) -> AuthResponse:
+    """Create authentication response with a fresh token pair.
+
+    `sid` is the single-session id embedded in the tokens. On sign-in it is left None so a NEW
+    session starts (signing out every other browser); on token refresh the caller passes the
+    still-current sid so the session is kept (not rotated)."""
     remember_user(user)   # the dashboard that opens next needs no user lookup
+    if sid is None:
+        sid = active_session.start(str(user.id))   # new sign-in: become the one active session
     try:
         from app.ml.ids_service import get_ids_service   # lazy: avoid an import cycle
         get_ids_service().set_active_owner(str(user.id))  # this account now owns new detections + alerts
@@ -110,8 +118,8 @@ def create_auth_response(user: User) -> AuthResponse:
     return AuthResponse(
         user=UserResponse.model_validate(user),
         tokens=AuthTokens(
-            access_token=create_access_token(data={"sub": str(user.id)}),
-            refresh_token=create_refresh_token(data={"sub": str(user.id)}),
+            access_token=create_access_token(data={"sub": str(user.id), "sid": sid}),
+            refresh_token=create_refresh_token(data={"sub": str(user.id), "sid": sid}),
             expires_in=settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60,
         ),
     )
@@ -510,7 +518,12 @@ async def refresh_tokens(request: RefreshRequest, db: AsyncSession = Depends(get
     user = (await db.execute(select(User).where(User.id == user_id))).scalar_one_or_none()
     if user is None or user.account_status != AccountStatus.ACTIVE:
         raise unauthorized
-    return create_auth_response(user)
+    # Single session: the refresh token must belong to the CURRENT session (another sign-in has
+    # not replaced it). If so, keep that session (don't rotate it); otherwise this browser is out.
+    sid = payload.get("sid")
+    if not active_session.is_valid(sid):
+        raise unauthorized
+    return create_auth_response(user, sid=sid)
 
 
 async def _stop_ids_for_logout(email: str) -> None:
@@ -548,6 +561,7 @@ async def logout(
         ratelimit.record("login-fail", http)
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Incorrect password")
     await _stop_ids_for_logout(current_user.email)
+    active_session.invalidate()      # end the single session so the discarded token can't be reused
     logger.info(f"User logged out (password confirmed): {current_user.email}")
     return MessageResponse(message="Logged out. Detection and protection are now off.")
 

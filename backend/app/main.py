@@ -181,7 +181,7 @@ async def websocket_live(websocket: WebSocket):
         await websocket.accept()
         await websocket.close(code=status.WS_1013_TRY_AGAIN_LATER, reason="Too many live connections")
         return
-    await manager.connect(websocket)
+    await manager.connect(websocket, str(user.id))
     try:
         await get_ids_service().broadcast_status()
         while True:

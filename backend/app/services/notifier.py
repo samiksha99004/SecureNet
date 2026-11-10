@@ -466,29 +466,41 @@ class AlertNotifier:
                 return
             self._last_digest = time.time()
             since = utcnow() - timedelta(seconds=interval)
-            events = (await db.execute(
-                select(SecurityEvent).where(SecurityEvent.timestamp >= since)
-                .order_by(SecurityEvent.timestamp.desc()).limit(settings.ALERT_EMAIL_MAX_EVENTS)
-            )).scalars().all()
-            total = (await db.execute(
-                select(func.count()).select_from(SecurityEvent).where(SecurityEvent.timestamp >= since)
-            )).scalar() or 0
-            recipients = await get_recipients(db, prefs)
-            alerts = [AlertInfo.from_event(e) for e in events]
-        if not recipients:
-            return
+            # Only the currently signed-in account (the active owner) gets mail. Its digest summarises
+            # ONLY its own events. If nobody is signed in, no digest is sent.
+            try:
+                from app.ml.ids_service import get_ids_service   # lazy: avoid import cycle
+                owner_id = get_ids_service().active_owner_id
+            except Exception:
+                owner_id = None
+            digests = []   # (email, alerts, total)
+            if owner_id:
+                row = (await db.execute(
+                    select(User.id, User.email).where(
+                        User.id == uuid.UUID(str(owner_id)), User.account_status == AccountStatus.ACTIVE,
+                        User.email_alerts.is_(True))
+                )).first()
+                if row and row[1]:
+                    events = (await db.execute(
+                        select(SecurityEvent).where(SecurityEvent.owner_id == row[0], SecurityEvent.timestamp >= since)
+                        .order_by(SecurityEvent.timestamp.desc()).limit(settings.ALERT_EMAIL_MAX_EVENTS)
+                    )).scalars().all()
+                    if events:
+                        total = (await db.execute(
+                            select(func.count()).select_from(SecurityEvent)
+                            .where(SecurityEvent.owner_id == row[0], SecurityEvent.timestamp >= since)
+                        )).scalar() or 0
+                        digests.append((row[1].strip().lower(), [AlertInfo.from_event(e) for e in events], total))
         hours = prefs.digest_interval_hours
-        if not alerts:
-            text = f"No security events were detected in the last {hours} hour(s)."
-            body = f"<html><body style='font-family:Arial'><h3>{_esc(settings.APP_NAME)} digest</h3><p>{text}</p></body></html>"
-        else:
+        for email, alerts, total in digests:
             text, body = render_alert_email(alerts, "digest")
-        try:
-            await send_email(recipients, f"[{settings.APP_NAME}] Security digest — {total} event(s) in {hours}h",
-                             text, body)
-        except EmailDeliveryError as exc:
-            self.last_error = str(exc)
-            logger.error(f"Digest email failed: {exc}")
+            try:
+                await send_email([email], f"[{settings.APP_NAME}] Security digest — {total} event(s) in {hours}h",
+                                 text, body)
+                self.emails_sent += 1
+            except EmailDeliveryError as exc:
+                self.last_error = str(exc)
+                logger.error(f"Digest email failed: {exc}")
 
 
 notifier = AlertNotifier()
