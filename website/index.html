@@ -67,44 +67,80 @@
       </div>
       <ul class="stats" aria-label="SecureNet at a glance">
         <li><strong>2</strong><span>machine-learning stages</span></li>
-        <li><strong>71</strong><span>traffic features per flow</span></li>
+        <li><strong>63</strong><span>traffic features per flow</span></li>
         <li><strong>Live</strong><span>alerts on screen, desktop &amp; email</span></li>
-        <li><strong>1-click</strong><span>daily incident reports</span></li>
+        <li><strong>1-click</strong><span>downloadable incident reports</span></li>
       </ul>
     </section>
 
     <!-- ── Download ─────────────────────────────────────────────────────── -->
     <section id="download" class="section">
       <h2>Download</h2>
-      <p class="section-lead">Get SecureNet for your Windows computer.</p>
+      <p class="section-lead">SecureNet runs on your Windows PC. It's released as source you set up with one
+        script — a one-click installer is on the way.</p>
       <div class="download-card">
         <div class="download-main">
           <svg class="windows-logo" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 5.5 10.5 4.4v7.1H3zM11.5 4.3 21 3v8.5h-9.5zM3 12.5h7.5v7.1L3 18.5zM11.5 12.5H21V21l-9.5-1.3z" /></svg>
           <div>
             <h3>SecureNet for Windows</h3>
-            <p>Windows 10 and 11 · 64-bit</p>
+            <p>Windows 10 and 11 · 64-bit · source release</p>
           </div>
         </div>
-        <button class="button primary" type="button" disabled aria-describedby="download-note">
+        <a class="button primary" href="https://github.com/samiksha99004/Download_SecureNet/archive/refs/heads/main.zip">
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12m0 0-4-4m4 4 4-4M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2" /></svg>
-          Download for Windows
-        </button>
-        <p class="badge" id="download-note">The installer is coming soon.</p>
+          Download (.zip)
+        </a>
+        <p class="badge">or <a href="https://github.com/samiksha99004/Download_SecureNet" target="_blank" rel="noopener">view the project on GitHub</a></p>
       </div>
+
+      <h3 style="margin:30px 0 14px;font-size:20px">How to set it up</h3>
+      <ol class="timeline">
+        <li>
+          <h3>Download and unzip</h3>
+          <p>Click <strong>Download (.zip)</strong> above (or clone the GitHub project) and unzip it to a
+            folder such as <code>C:\SecureNet</code>.</p>
+        </li>
+        <li>
+          <h3>Install the prerequisites</h3>
+          <p>Install <strong>Python 3.11–3.13</strong> (tick “Add to PATH”), <strong>Node.js 20+</strong> and
+            <strong><a href="https://npcap.com" target="_blank" rel="noopener">Npcap</a></strong> for live
+            traffic capture. Java 8+ with CICFlowMeter is optional, for the most accurate flow features.</p>
+        </li>
+        <li>
+          <h3>Add your settings</h3>
+          <p>Copy <code>backend\.env.example</code> to <code>backend\.env</code> and fill in the cloud
+            database link (<code>DATABASE_URL</code>) and a long <code>JWT_SECRET</code>. For sign-in codes and
+            alert emails, set <code>EMAIL_ENABLED=true</code> with a Gmail App Password. Ask us for the shared
+            database link, or make your own free one at <a href="https://neon.tech" target="_blank" rel="noopener">neon.tech</a>.</p>
+        </li>
+        <li>
+          <h3>Run the setup</h3>
+          <p>Double-click <code>SETUP.bat</code>. It creates the Python environment and installs the backend
+            and dashboard packages — you only do this once.</p>
+        </li>
+        <li>
+          <h3>Start SecureNet</h3>
+          <p>Right-click <code>START_SECURENET.ps1</code> and run it <strong>as Administrator</strong> (needed
+            for live capture). The dashboard opens in your browser — sign in and press <strong>ON</strong> to
+            start monitoring.</p>
+        </li>
+      </ol>
+
       <div class="grid two">
         <div class="card">
           <h3>What you'll need</h3>
           <ul class="checklist">
-            <li>Windows 10 or 11</li>
-            <li>An internet connection (accounts and events are stored in the cloud)</li>
+            <li>Windows 10 or 11 (64-bit)</li>
+            <li>Python 3.11–3.13 and Node.js 20+</li>
+            <li><a href="https://npcap.com" target="_blank" rel="noopener">Npcap</a>, and run as Administrator — for live traffic capture</li>
+            <li>The cloud database link — ask us for it, or use your own free <a href="https://neon.tech" target="_blank" rel="noopener">Neon</a> database</li>
             <li>An email address — sign-in codes and alerts are emailed</li>
-            <li><a href="https://npcap.com" target="_blank" rel="noopener">Npcap</a> for live traffic monitoring</li>
           </ul>
         </div>
         <div class="card">
-          <h3>Want to try it early?</h3>
-          <p>SecureNet already runs on Windows today. Write to us and we'll help you set it up on your computer
-            before the installer is ready.</p>
+          <h3>Want help setting up?</h3>
+          <p>SecureNet already runs on Windows today. Write to us and we'll walk you through setting it up on
+            your computer.</p>
           <a class="text-link" href="#contact">Contact us →</a>
         </div>
       </div>
@@ -120,7 +156,7 @@
       </p>
       <ol class="flow" aria-label="How SecureNet handles traffic">
         <li><span>1</span>Watch<small>Every network connection is captured and grouped into “flows”.</small></li>
-        <li><span>2</span>Measure<small>Each flow is described by 71 numbers: timing, sizes, flags and rates.</small></li>
+        <li><span>2</span>Measure<small>Each flow is described by 63 numbers: timing, sizes, flags and rates.</small></li>
         <li><span>3</span>Judge<small>Two models decide: is this unusual, and if so, which attack is it?</small></li>
         <li><span>4</span>Warn<small>You are alerted instantly and every incident is recorded with a report.</small></li>
       </ol>
@@ -170,7 +206,7 @@
         <div class="card"><h3>Live dashboard</h3><p>Turn the IDS on or off with one button and watch live anomaly scores, traffic and the current status.</p></div>
         <div class="card"><h3>Instant alerts</h3><p>Pop-ups, a notification bell, an alert sound and desktop notifications — each can be switched on or off.</p></div>
         <div class="card"><h3>Email alerts</h3><p>Every attack is emailed with the incident report attached. Each user decides whether they want these emails.</p></div>
-        <div class="card"><h3>Daily reports</h3><p>One report per day with attacks, ready to download as a text file, spreadsheet or PDF.</p></div>
+        <div class="card"><h3>Attack reports</h3><p>A report for each 6-hour window that had attacks, ready to download as a text file or PDF.</p></div>
         <div class="card"><h3>Incident history</h3><p>Search, filter and sort every detected event and see why it was flagged.</p></div>
         <div class="card"><h3>Safe accounts</h3><p>Every sign-in and every change to your account is confirmed with a 6-digit code sent to your email.</p></div>
         <div class="card"><h3>Always on</h3><p>Leave the IDS on and shut down: it switches itself back on when your computer starts.</p></div>
@@ -191,7 +227,7 @@
         </li>
         <li>
           <h3>Flow building</h3>
-          <p>Packets are grouped into two-way conversations (flows). When a flow ends, 71 features — durations, packet sizes, flags, rates and idle times — are calculated, the same way as the CICIDS2018 dataset.</p>
+          <p>Packets are grouped into two-way conversations (flows). When a flow ends, 63 features — durations, packet sizes, flags, rates and idle times — are calculated, the same way as the CICIDS2018 dataset.</p>
           <ul class="chips"><li>CICFlowMeter-style features</li><li>NumPy</li></ul>
         </li>
         <li>
@@ -216,7 +252,7 @@
         </li>
         <li>
           <h3>Alerts &amp; reports</h3>
-          <p>Alerts are grouped into one email per burst with the incident report attached; daily reports are built as text, CSV or PDF; Windows notifications confirm the IDS is running.</p>
+          <p>Alerts are grouped into one email per burst with the incident report attached; reports are built as text or PDF; Windows notifications confirm the IDS is running.</p>
           <ul class="chips"><li>SMTP email</li><li>ReportLab PDF</li><li>Windows notifications</li></ul>
         </li>
         <li>
@@ -248,9 +284,9 @@
           <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="2" /><path d="m4 7 8 6 8-6" /></svg>
           <h3>Email</h3><p>samiksha99004@gmail.com</p>
         </a>
-        <a class="card contact" href="tel:+911234567898">
-          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 4h4l2 5-2.5 1.5a11 11 0 0 0 5 5L15 13l5 2v4a2 2 0 0 1-2 2A16 16 0 0 1 3 6a2 2 0 0 1 2-2" /></svg>
-          <h3>Phone</h3><p>+91 12345 67898</p>
+        <a class="card contact" href="https://github.com/samiksha99004/Download_SecureNet" target="_blank" rel="noopener">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 19c-4.3 1.4-4.3-2.5-6-3m12 5v-3.5c0-1 .1-1.4-.5-2 2.8-.3 5.5-1.4 5.5-6a4.6 4.6 0 0 0-1.3-3.2 4.3 4.3 0 0 0-.1-3.2s-1.1-.3-3.5 1.3a12 12 0 0 0-6.2 0C6.5 2.8 5.4 3.1 5.4 3.1a4.3 4.3 0 0 0-.1 3.2A4.6 4.6 0 0 0 4 9.5c0 4.6 2.7 5.7 5.5 6-.6.6-.6 1.2-.5 2V21" /></svg>
+          <h3>Get the app</h3><p>github.com/samiksha99004/Download_SecureNet</p>
         </a>
         <a class="card contact" href="https://samiksha99004.github.io/securenet-site/">
           <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9" /><path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18" /></svg>
