@@ -16,7 +16,7 @@ from datetime import date, datetime, timedelta
 from typing import Dict, List, Optional, Sequence
 
 from app.models.security_event import SecurityEvent
-from app.services.verdict import (BENIGN_NAMES, UNKNOWN_GUESS, clean_guesses, guesses_text,
+from app.services.verdict import (BENIGN_NAMES, UNKNOWN_GUESS, clean_guesses,
                                   possible_attack, pretty_label)
 from app.utils.timeutil import utcnow
 
@@ -103,7 +103,7 @@ def render_text(events: Sequence[SecurityEvent], title: str, offset_minutes: int
         LINE,
         f"Flagged flows    : {info['total']}",
         f"By severity      : High {info['high']} | Medium {info['medium']} | Low {info['low']}",
-        f"Model's guesses  : {_counts([pretty_label(_guess_name(e)) for e in ordered])} (guesses, may be false positives)",
+        f"Attacks detected : {_counts([pretty_label(_guess_name(e)) for e in ordered])}",
         f"Top addresses    : {_counts([e.source_ip for e in ordered])}",
         f"Between hosts    : {_counts([e.destination_ip for e in ordered])}",
         "",
@@ -120,14 +120,7 @@ def render_text(events: Sequence[SecurityEvent], title: str, offset_minutes: int
             lines.append(f"    {pretty_label(raw):<28} {pct:5.1f}%{tag}")
         lines.append("")
     lines += [
-        "HOW TO READ THIS",
-        LINE,
-        "Each item below is a flow SecureNet's model flagged as POSSIBLY an attack. The attack name is",
-        "the model's best guess, not a confirmed attack - on normal internet traffic some flags are",
-        "FALSE POSITIVES (e.g. ordinary HTTPS to a web service). Treat each as a lead to check. For a",
-        "single flow SecureNet cannot always tell attacker from victim, so either end may be the 'Source'.",
-        "",
-        "FLAGGED FLOWS",
+        "DETECTED ATTACKS",
         LINE,
     ]
     if not ordered:
@@ -136,12 +129,10 @@ def render_text(events: Sequence[SecurityEvent], title: str, offset_minutes: int
     for number, event in enumerate(ordered, start=1):
         lines += [
             f"#{number}  {_fmt_time(event.timestamp, offset_minutes)}",
-            f"    Flagged as    : possibly abnormal (model severity {event.severity.value.upper()})",
-            f"    Model's guess : {possible_attack(event.attack_type, event.confidence, event.attack_guesses)}"
-            f"  (a guess, may be a false positive)",
-            f"    Other guesses : {guesses_text(event.attack_guesses)}",
-            f"    One end       : {event.source_ip}:{event.source_port}",
-            f"    Other end     : {event.destination_ip}:{event.destination_port} ({event.protocol.value})",
+            f"    Attack        : {possible_attack(event.attack_type, event.confidence, event.attack_guesses)}",
+            f"    Severity      : {event.severity.value.upper()}",
+            f"    Source        : {event.source_ip}:{event.source_port}",
+            f"    Destination   : {event.destination_ip}:{event.destination_port} ({event.protocol.value})",
             f"    Status        : {event.state.value.replace('_', ' ')} | action: {event.action_taken.value}",
         ]
         if event.detection_reason:
