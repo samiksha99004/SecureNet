@@ -58,6 +58,8 @@ ABNORMAL_PCT_THRESHOLD = 30  # attacks must exceed this % of recent flows to cou
 DESKTOP_ALERT_INTERVAL = 180 # desktop pop: first immediately, then every 3 min while abnormal
 TREND_POINTS = 72            # attack-% history for the dashboard trend chart (72 x 5s = last 6 min)
 STORE_THROTTLE_SECONDS = 300 # store/alert at most ONE event per attack type per 5 min (not per flow)
+INCIDENT_STORE_DELAY_SECONDS = 60  # wait this long into an abnormal episode before writing its ONE
+                                   # History entry, so the breakdown has settled on the real attack
 PROTECTION_VERDICT_DELAY = 15    # wait this long (s) after a block before judging success/failure
 SUCCESS_CHECK_WINDOW = 12        # attacks in the last N s decide it: ~none => network benign again
 PROTECTION_NOTIFY_COOLDOWN = 300 # at most one "protection successful/failed" notice per 5 min
@@ -204,6 +206,8 @@ class IDSService:
         self._abnormal_now = False        # gates the alert email (only while abnormal)
         self._abn_episode = False         # currently inside an abnormal episode
         self._abn_last_desktop = 0.0      # last desktop pop (epoch)
+        self._abn_episode_started_at = 0.0    # epoch the current abnormal episode began
+        self._abn_stored_this_episode = False # the one History entry for this episode is written
         self.trend: deque = deque(maxlen=TREND_POINTS)   # (epoch, attack%) for the dashboard trend chart
         self._last_store_time = 0.0       # last epoch a (majority) event was stored (global 5-min throttle)
         self._majority_attack: Optional[str] = None   # dominant attack in the recent window (only one stored to History)
@@ -628,6 +632,10 @@ class IDSService:
         if first:
             self._abn_episode = True
             self._abn_last_desktop = 0.0   # force an immediate desktop pop on episode start
+            # History gets ONE entry per incident, written 1 min in once the breakdown has settled on
+            # the real (majority) attack — not a new random row every few minutes.
+            self._abn_episode_started_at = now
+            self._abn_stored_this_episode = False
         if first or (now - self._abn_last_desktop) >= DESKTOP_ALERT_INTERVAL:
             self._abn_last_desktop = now
             try:
@@ -795,16 +803,22 @@ class IDSService:
             await self._broadcast_score(flow, detection, severity, throttle=True)
             return None
 
-        # Store ONLY the DOMINANT (majority) attack of the current abnormal episode, at most once
-        # per STORE_THROTTLE_SECONDS (~5 min). So History and the "Latest Unresolved Incident" show
-        # the main attack (e.g. DoS-GoldenEye at 68%), not one row per attack type. Scoring, the live
-        # breakdown and the trend still count every flow elsewhere and are unaffected.
+        # History gets ONE entry per incident (abnormal episode): written ~1 min after the episode
+        # starts, for the DOMINANT (majority) attack once the live breakdown has settled on the real
+        # one — NOT a new row every few minutes (which, with per-window misclassification, filled
+        # History with random attack types for a single attack). A fresh episode (network went normal
+        # then abnormal again) stores once more. Scoring, the live breakdown and the trend still count
+        # every flow elsewhere and are unaffected.
         now = time.time()
+        episode_age = now - getattr(self, "_abn_episode_started_at", 0.0)
         is_majority = (self._abnormal_now and self._majority_attack is not None
                        and detection.attack_type == self._majority_attack)
-        if not is_majority or (now - self._last_store_time) < STORE_THROTTLE_SECONDS:
+        ready = (is_majority and not getattr(self, "_abn_stored_this_episode", False)
+                 and episode_age >= INCIDENT_STORE_DELAY_SECONDS)
+        if not ready:
             await self._broadcast_score(flow, detection, severity, throttle=True)
             return None
+        self._abn_stored_this_episode = True
         self._last_store_time = now
 
         # Record in the report whether Advanced Protection has blocked this attacker's IP.

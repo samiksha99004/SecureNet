@@ -99,6 +99,33 @@ async def test_counters_restart_with_the_ids():
                                      "trend": []}
 
 
+async def test_history_stores_one_majority_entry_per_incident():
+    """One History row per incident, written ~1 min in for the majority attack — not a new random
+    row every few minutes."""
+    import time as _t
+    from tests.test_ids import FakeDetector
+
+    ids = IDSService()
+    ids.detector = FakeDetector(Detection(0.95, True, "DDoS", 0.99))
+    ids._abnormal_now = True
+    ids._majority_attack = "DDoS"
+
+    # episode just started -> too early (< 1 min) -> nothing written yet
+    ids._abn_episode_started_at = _t.time()
+    ids._abn_stored_this_episode = False
+    assert await ids.process_flow(make_flow()) is None
+
+    # 1 min into the episode -> the single majority entry is written
+    ids._abn_episode_started_at = _t.time() - 61
+    assert await ids.process_flow(make_flow()) is not None
+    # same episode -> not written again (no repeats)
+    assert await ids.process_flow(make_flow()) is None
+
+    async with AsyncSessionLocal() as db:
+        n = (await db.execute(select(func.count()).select_from(SecurityEvent))).scalar_one()
+    assert n == 1
+
+
 def test_possible_attack_wording():
     assert possible_attack("DDoS", 0.97, DDOS_GUESSES) == "DDoS (97%)"
     # stage 2 not sure enough to name it: still show its best non-benign guess, marked unsure
@@ -110,10 +137,8 @@ def test_possible_attack_wording():
 
 
 async def test_attack_storm_cannot_flood_the_database(monkeypatch):
-    monkeypatch.setattr(settings, "ALERT_STORE_MAX_PER_SOURCE_PER_MINUTE", 5)
-    # Isolate the per-source storm limiter from the 5-min majority throttle so this test
-    # exercises the storm cap specifically (the throttle is covered elsewhere).
-    monkeypatch.setattr("app.ml.ids_service.STORE_THROTTLE_SECONDS", 0)
+    # History gets ONE entry per abnormal episode, so a 40-flow attack burst cannot flood the DB:
+    # only the first majority flow of the episode is stored.
     ids = IDSService()
     ids.detector = SequenceDetector([ddos() for _ in range(40)])
     ids._abnormal_now = True
@@ -121,8 +146,7 @@ async def test_attack_storm_cannot_flood_the_database(monkeypatch):
     await ids.process_flows([make_flow() for _ in range(40)])
     async with AsyncSessionLocal() as db:
         stored = (await db.execute(select(func.count()).select_from(SecurityEvent))).scalar_one()
-    assert stored == 5
-    assert ids.alerts_not_stored == 35
+    assert stored == 1
     assert ids.verdict_summary()["final_abnormal"] == 40      # still counted in the tables
 
 
