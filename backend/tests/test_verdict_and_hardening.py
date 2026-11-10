@@ -131,6 +131,32 @@ async def test_history_first_row_1_min_in_then_every_5_min():
     assert n == 2
 
 
+async def test_abnormal_count_today_increments_once_per_episode(monkeypatch):
+    """Today's abnormal count: +1 when the network goes normal->abnormal (slope up), no change while
+    it stays abnormal (slope flat), +1 again when it drops and rises again (down then up)."""
+    ids = IDSService()
+
+    async def _noop(*a, **k):
+        pass
+    monkeypatch.setattr(ids, "_send_desktop_abnormal", _noop)   # avoid desktop/email side effects
+
+    def summary(pct):
+        recent = [{"label": "DDoS", "flows": 9, "pct": pct}] if pct else []
+        return {"recent": recent, "recent_total": 10, "recent_abnormal_pct": pct}
+
+    monkeypatch.setattr(ids, "verdict_summary", lambda: summary(90))   # slope up
+    await ids._evaluate_abnormal_state()
+    assert ids.get_status()["abnormal_events_today"] == 1
+    await ids._evaluate_abnormal_state()                              # still abnormal -> no change
+    assert ids.get_status()["abnormal_events_today"] == 1
+
+    monkeypatch.setattr(ids, "verdict_summary", lambda: summary(0))    # slope down (back to normal)
+    await ids._evaluate_abnormal_state()
+    monkeypatch.setattr(ids, "verdict_summary", lambda: summary(90))   # slope up again -> new episode
+    await ids._evaluate_abnormal_state()
+    assert ids.get_status()["abnormal_events_today"] == 2
+
+
 def test_possible_attack_wording():
     assert possible_attack("DDoS", 0.97, DDOS_GUESSES) == "DDoS (97%)"
     # stage 2 not sure enough to name it: still show its best non-benign guess, marked unsure

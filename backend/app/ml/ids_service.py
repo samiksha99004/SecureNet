@@ -169,6 +169,11 @@ class IDSService:
         # IDS is turned on). Every stored event is stamped with it, so each account sees only its own
         # data and its alerts go only to that user. Persisted so it survives a backend restart.
         self.active_owner_id: Optional[str] = _load_active_owner()
+        # "Today's abnormal count": number of distinct abnormal episodes detected today. Incremented
+        # once each time the network goes normal -> abnormal (not while it stays abnormal); resets at
+        # midnight (local). Kept across IDS ON/OFF within the day (not reset by reset_verdicts).
+        self._abnormal_count = 0
+        self._abnormal_count_date: Optional[str] = None
 
         self._queue: Optional[asyncio.Queue] = None
         self._loop: Optional[asyncio.AbstractEventLoop] = None
@@ -416,6 +421,9 @@ class IDSService:
             "packets_processed": monitor.packet_count if monitor else 0,
             "flows_analyzed": self.flows_analyzed,
             "active_flows": monitor.active_flow_count if monitor else 0,
+            "abnormal_events_today": (self._abnormal_count
+                                      if self._abnormal_count_date == time.strftime("%Y-%m-%d", time.localtime())
+                                      else 0),
             "anomalies_detected": self.anomalies_detected,
             "attacks_detected": self.attacks_detected,
             "blocked_ips": len(self.blocker.blocked),
@@ -636,6 +644,12 @@ class IDSService:
             # the real (majority) attack — not a new random row every few minutes.
             self._abn_episode_started_at = now
             self._abn_stored_this_episode = False
+            # count this new abnormal episode towards today's total (slope went up again)
+            today = time.strftime("%Y-%m-%d", time.localtime())
+            if self._abnormal_count_date != today:
+                self._abnormal_count_date = today
+                self._abnormal_count = 0
+            self._abnormal_count += 1
         if first or (now - self._abn_last_desktop) >= DESKTOP_ALERT_INTERVAL:
             self._abn_last_desktop = now
             try:

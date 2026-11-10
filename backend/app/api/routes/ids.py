@@ -32,6 +32,7 @@ class IDSStatusResponse(CamelModel):
     packets_processed: int
     flows_analyzed: int
     active_flows: int
+    abnormal_events_today: int = 0       # distinct abnormal episodes detected today (count++ per episode)
     anomalies_detected: int
     attacks_detected: int
     blocked_ips: int

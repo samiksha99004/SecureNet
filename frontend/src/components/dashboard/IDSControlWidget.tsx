@@ -343,9 +343,9 @@ export function IDSControlWidget({
         <div className={styles.statsRow}>
           <Stat label="Packets" value={idsStatus.packetsProcessed} />
           <Stat label="Flows Analyzed" value={idsStatus.flowsAnalyzed} />
-          <Stat label="Active Flows" value={idsStatus.activeFlows} />
           <Stat label="Normal Traffic" value={idsStatus.verdicts?.finalNormal ?? 0} />
           <Stat label="Abnormal Traffic" value={idsStatus.verdicts?.finalAbnormal ?? idsStatus.anomaliesDetected} />
+          <Stat label="Incidents Today" value={idsStatus.abnormalEventsToday ?? 0} />
         </div>
       )}
     </div>
