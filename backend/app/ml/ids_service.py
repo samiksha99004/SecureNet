@@ -803,18 +803,20 @@ class IDSService:
             await self._broadcast_score(flow, detection, severity, throttle=True)
             return None
 
-        # History gets ONE entry per incident (abnormal episode): written ~1 min after the episode
-        # starts, for the DOMINANT (majority) attack once the live breakdown has settled on the real
-        # one — NOT a new row every few minutes (which, with per-window misclassification, filled
-        # History with random attack types for a single attack). A fresh episode (network went normal
-        # then abnormal again) stores once more. Scoring, the live breakdown and the trend still count
-        # every flow elsewhere and are unaffected.
+        # History timing while abnormal: write the FIRST row ~1 min into the incident (once the live
+        # breakdown has settled on the real dominant attack), then a NEW row every STORE_THROTTLE_SECONDS
+        # (5 min) for as long as it stays abnormal. Each row is the current majority (highest-%) attack;
+        # the email is queued at the same time (below, gated on self._abnormal_now). A fresh episode
+        # (network went normal then abnormal again) starts over at the 1-min mark. Scoring, the live
+        # breakdown and the trend still count every flow elsewhere and are unaffected.
         now = time.time()
         episode_age = now - getattr(self, "_abn_episode_started_at", 0.0)
         is_majority = (self._abnormal_now and self._majority_attack is not None
                        and detection.attack_type == self._majority_attack)
-        ready = (is_majority and not getattr(self, "_abn_stored_this_episode", False)
-                 and episode_age >= INCIDENT_STORE_DELAY_SECONDS)
+        first = not getattr(self, "_abn_stored_this_episode", False)
+        ready = is_majority and (
+            (first and episode_age >= INCIDENT_STORE_DELAY_SECONDS)          # first row: 1 min in
+            or (not first and (now - self._last_store_time) >= STORE_THROTTLE_SECONDS))  # then every 5 min
         if not ready:
             await self._broadcast_score(flow, detection, severity, throttle=True)
             return None

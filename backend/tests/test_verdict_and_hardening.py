@@ -100,9 +100,9 @@ async def test_counters_restart_with_the_ids():
                                      "trend": []}
 
 
-async def test_history_stores_one_majority_entry_per_incident():
-    """One History row per incident, written ~1 min in for the majority attack — not a new random
-    row every few minutes."""
+async def test_history_first_row_1_min_in_then_every_5_min():
+    """While abnormal, History writes the FIRST majority-attack row ~1 min into the incident, then a
+    new row every 5 minutes — not on every flow in between."""
     import time as _t
     from tests.test_ids import FakeDetector
 
@@ -116,15 +116,19 @@ async def test_history_stores_one_majority_entry_per_incident():
     ids._abn_stored_this_episode = False
     assert await ids.process_flow(make_flow()) is None
 
-    # 1 min into the episode -> the single majority entry is written
+    # 1 min into the episode -> the first majority row is written
     ids._abn_episode_started_at = _t.time() - 61
     assert await ids.process_flow(make_flow()) is not None
-    # same episode -> not written again (no repeats)
+    # a few seconds later, same 5-min window -> no new row
     assert await ids.process_flow(make_flow()) is None
+
+    # 5 minutes after the last row -> a new row is written
+    ids._last_store_time = _t.time() - 301
+    assert await ids.process_flow(make_flow()) is not None
 
     async with AsyncSessionLocal() as db:
         n = (await db.execute(select(func.count()).select_from(SecurityEvent))).scalar_one()
-    assert n == 1
+    assert n == 2
 
 
 def test_possible_attack_wording():
