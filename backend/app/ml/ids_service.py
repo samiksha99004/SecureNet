@@ -809,14 +809,6 @@ class IDSService:
             else:
                 logger.warning(f"Advanced Protection could not block {flow.src_ip}: {note}")
 
-        if not self._storm_allows(flow.src_ip):
-            self.alerts_not_stored += 1
-            if self.alerts_not_stored % 100 == 1:
-                logger.warning(f"Alert storm: {self.alerts_not_stored} incidents counted but not stored "
-                               f"(limit {settings.ALERT_STORE_MAX_PER_MINUTE}/min)")
-            await self._broadcast_score(flow, detection, severity, throttle=True)
-            return None
-
         # History timing while abnormal: write the FIRST row ~1 min into the incident (once the live
         # breakdown has settled on the real dominant attack), then a NEW row every STORE_THROTTLE_SECONDS
         # (5 min) for as long as it stays abnormal. Each row is the current majority (highest-%) attack;
@@ -832,6 +824,18 @@ class IDSService:
             (first and episode_age >= INCIDENT_STORE_DELAY_SECONDS)          # first row: 1 min in
             or (not first and (now - self._last_store_time) >= STORE_THROTTLE_SECONDS))  # then every 5 min
         if not ready:
+            await self._broadcast_score(flow, detection, severity, throttle=True)
+            return None
+
+        # Anti-flood cap — checked ONLY here, AFTER the majority/timing gate, so a heavy attack's
+        # thousands of flagged flows (which won't be stored anyway during the 1-min wait) can't burn
+        # the storm budget and block the one row we DO want. We store ~1 row per 1–5 min, so this
+        # effectively never trips now; it stays as a last-resort guard.
+        if not self._storm_allows(flow.src_ip):
+            self.alerts_not_stored += 1
+            if self.alerts_not_stored % 100 == 1:
+                logger.warning(f"Alert storm: {self.alerts_not_stored} incidents counted but not stored "
+                               f"(limit {settings.ALERT_STORE_MAX_PER_MINUTE}/min)")
             await self._broadcast_score(flow, detection, severity, throttle=True)
             return None
         self._abn_stored_this_episode = True
